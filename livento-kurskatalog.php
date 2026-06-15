@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.7.5
+ * Version:           1.8.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -52,6 +52,8 @@
  *         setSafeMode() per Elementor/Plugins). Eigener Markdown-Renderer wird immer genutzt.
  * v1.7.5: [livento_kurse] unterstuetzt jetzt Attribute: limit (N Karten, kuratierter Block ohne
  *         Filter), sort (Default-Sortierung, server-seitig) und filters (yes/no).
+ * v1.8.0: Zwei neue Shortcodes: [livento_kurse_berater] (mehrstufiger Kursberater → Deep-Link in den
+ *         Katalog) und [livento_themen] (dynamische Themen-Kacheln aus der Themen-Aggregation).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -807,6 +809,227 @@ add_shortcode('livento_kurse_suche', function ($atts) {
     return $out;
 });
 
+/** Frage-Texte je Filter-Dimension fuer den Kursberater. */
+function livento_cc_berater_questions() {
+    return array(
+        'topics'       => 'Welches Thema interessiert dich?',
+        'audience'     => 'Was trifft auf dich zu?',
+        'format'       => 'Wie möchtest du lernen?',
+        'funding'      => 'Wie möchtest du finanzieren?',
+        'level'        => 'Welche Vorkenntnisse hast du?',
+        'duration'     => 'Wie viel Zeit möchtest du investieren?',
+        'recognition'  => 'Welcher Abschluss ist dir wichtig?',
+        'type'         => 'Welche Kursart suchst du?',
+        'methodology'  => 'Welche Lernform bevorzugst du?',
+        'availability' => 'Wie schnell möchtest du starten?',
+        'startmonth'   => 'Wann möchtest du beginnen?',
+        'city'         => 'An welchem Ort?',
+    );
+}
+
+/**
+ * Kursberater: mehrstufiger Assistent. Sammelt pro Schritt Vorlieben (= Filter-
+ * Dimensionen) und springt am Ende auf den Katalog mit vorbelegten Filtern.
+ * Shortcode: [livento_kurse_berater steps="topics,audience,format,funding"]
+ */
+add_shortcode('livento_kurse_berater', function ($atts) {
+    $a = shortcode_atts(array(
+        'steps' => 'topics,audience,format,funding',
+        'title' => 'Kursberater',
+        'intro' => 'In wenigen Schritten zu den passenden Weiterbildungen.',
+    ), $atts, 'livento_kurse_berater');
+
+    $offerings = livento_cc_augment(livento_cc_get_offerings());
+    if (empty($offerings)) {
+        return '<div class="lvk"><p>Aktuell sind keine Kurse verfügbar.</p></div>';
+    }
+
+    $groups = array();
+    foreach (livento_cc_filter_groups() as $g) {
+        $groups[$g['dim']] = $g;
+    }
+    $questions = livento_cc_berater_questions();
+    $want = array_filter(array_map('trim', explode(',', (string) $a['steps'])));
+
+    $steps_html = '';
+    $idx = 0;
+    foreach ($want as $dim) {
+        if (!isset($groups[$dim])) {
+            continue;
+        }
+        $g = $groups[$dim];
+        $counts = livento_cc_collect_facet($offerings, $g['field'], $g['arr']);
+        if (empty($counts)) {
+            continue;
+        }
+        $items = array();
+        foreach ($counts as $val => $cnt) {
+            $items[] = array('val' => (string) $val, 'label' => livento_cc_facet_label($g['lab'], $val));
+        }
+        if ($dim === 'startmonth') {
+            usort($items, function ($x, $y) { return strcmp($x['val'], $y['val']); });
+        } else {
+            usort($items, function ($x, $y) { return strcasecmp($x['label'], $y['label']); });
+        }
+
+        $q = isset($questions[$dim]) ? $questions[$dim] : $g['title'];
+        $steps_html .= '<div class="lvk-bx-step" data-dim="' . esc_attr($dim) . '"' . ($idx > 0 ? ' hidden' : '') . '>';
+        $steps_html .= '<h3 class="lvk-bx-q">' . esc_html($q) . '</h3>';
+        $steps_html .= '<p class="lvk-bx-hint">Mehrfachauswahl möglich – oder überspringen.</p>';
+        $steps_html .= '<div class="lvk-bx-opts">';
+        foreach ($items as $it) {
+            $steps_html .= '<button type="button" class="lvk-bx-opt" data-value="' . esc_attr($it['val']) . '">' . esc_html($it['label']) . '</button>';
+        }
+        $steps_html .= '</div></div>';
+        $idx++;
+    }
+    $total = $idx;
+    if ($total === 0) {
+        return '<div class="lvk"><p><a href="' . esc_url(livento_cc_list_url()) . '">Zum Kurskatalog</a></p></div>';
+    }
+
+    $out  = livento_cc_styles();
+    $out .= '<div class="lvk lvk-berater" id="lvk-berater" data-base="' . esc_attr(livento_cc_list_url()) . '" data-total="' . (int) $total . '">';
+    if ($a['title'] !== '') {
+        $out .= '<h2 class="lvk-bx-title">' . esc_html($a['title']) . '</h2>';
+    }
+    if ($a['intro'] !== '') {
+        $out .= '<p class="lvk-bx-intro">' . esc_html($a['intro']) . '</p>';
+    }
+    $out .= '<div class="lvk-bx-progress"><span>Schritt <b class="lvk-bx-cur">1</b> von ' . (int) $total . '</span><div class="lvk-bx-bar"><i></i></div></div>';
+    $out .= $steps_html;
+    $out .= '<div class="lvk-bx-nav">';
+    $out .= '<button type="button" class="lvk-bx-back" hidden>Zurück</button>';
+    $out .= '<span class="lvk-bx-spacer"></span>';
+    $out .= '<button type="button" class="lvk-bx-skip">Überspringen</button>';
+    $out .= '<button type="button" class="lvk-bx-next">Weiter</button>';
+    $out .= '<button type="button" class="lvk-bx-finish" hidden>Passende Kurse anzeigen</button>';
+    $out .= '</div>';
+    $out .= '<noscript><p style="margin-top:12px"><a href="' . esc_url(livento_cc_list_url()) . '">Zum vollständigen Kurskatalog →</a></p></noscript>';
+    $out .= '</div>';
+    $out .= livento_cc_berater_js();
+    return $out;
+});
+
+/** Slug → Inline-SVG-Icon fuer die Themen-Kacheln (Fallback _default). */
+function livento_cc_topic_icons() {
+    return array(
+        'soziale-betreuung'              => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 7.6a5 5 0 00-8.8-2.6A5 5 0 003.2 7.6c0 4 4.3 6.8 8.8 11 4.5-4.2 8.8-7 8.8-11z"/></svg>',
+        'verwaltung-abrechnung'          => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 17h6"/></svg>',
+        'pflegeassistenz'                => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
+        'praxisanleitung'                => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2 6 2s6-1 6-2v-5"/></svg>',
+        'leitung-management'             => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20v-6M10 20V8M15 20v-9M20 20H3"/></svg>',
+        'digitalisierung'                => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10 7V4M14 7V4M10 20v-3M14 20v-3M7 10H4M7 14H4M20 10h-3M20 14h-3"/></svg>',
+        'palliative-care'                => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-4.5-7-10a4 4 0 017-2.6A4 4 0 0119 11c0 5.5-7 10-7 10z"/><path d="M12 7v4M10 9h4"/></svg>',
+        'pflegeberatung-case-management' => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H8l-4 4V5a2 2 0 012-2h13a2 2 0 012 2z"/></svg>',
+        'pflegerecht'                    => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M7 7l-3 6a3 3 0 006 0zM17 7l-3 6a3 3 0 006 0z"/></svg>',
+        'schmerz'                        => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-5 4 10 2-5h7"/></svg>',
+        'demenz'                         => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21a5 5 0 01-2-9.5A4 4 0 0114 6a4 4 0 014 5 3.5 3.5 0 01-1 6.8"/><path d="M9 21v-4M14 17v4"/></svg>',
+        '_default'                       => '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    );
+}
+
+/**
+ * Themen-Kacheln aus der Themen-Aggregation (gleiche Quelle wie Filter „Thema").
+ * Shortcode: [livento_themen limit="6" sort="count" counts="yes" all="yes" min="1"]
+ */
+add_shortcode('livento_themen', function ($atts) {
+    $a = shortcode_atts(array(
+        'limit'  => 0,
+        'sort'   => 'count',  // count | alpha
+        'counts' => 'yes',
+        'all'    => 'yes',
+        'min'    => 1,
+    ), $atts, 'livento_themen');
+
+    $offerings = livento_cc_get_offerings();
+    if (empty($offerings)) {
+        return '';
+    }
+    $counts = livento_cc_collect_facet($offerings, 'topics', true); // slug => count
+    $min = max(1, (int) $a['min']);
+    $items = array();
+    foreach ($counts as $slug => $cnt) {
+        if ((int) $cnt < $min) {
+            continue;
+        }
+        $items[] = array('slug' => (string) $slug, 'label' => livento_cc_humanize($slug), 'count' => (int) $cnt);
+    }
+    if (empty($items)) {
+        return '';
+    }
+    if ($a['sort'] === 'alpha') {
+        usort($items, function ($x, $y) { return strcasecmp($x['label'], $y['label']); });
+    } else {
+        usort($items, function ($x, $y) { return $y['count'] - $x['count']; }); // Kursanzahl absteigend
+    }
+    $limit = max(0, (int) $a['limit']);
+    if ($limit > 0) {
+        $items = array_slice($items, 0, $limit);
+    }
+
+    $show_counts = (strtolower((string) $a['counts']) !== 'no');
+    $show_all    = (strtolower((string) $a['all']) !== 'no');
+    $icons = livento_cc_topic_icons();
+    $base  = livento_cc_list_url();
+
+    $out  = livento_cc_themen_styles();
+    $out .= '<div class="lv-topics__grid">';
+    foreach ($items as $it) {
+        $icon = isset($icons[$it['slug']]) ? $icons[$it['slug']] : $icons['_default'];
+        $url  = $base . '?topics=' . rawurlencode($it['slug']);
+        $out .= '<a class="lv-topic" href="' . esc_url($url) . '">';
+        $out .= '<span class="lv-topic__ic" aria-hidden="true">' . $icon . '</span>';
+        if ($show_counts) {
+            $out .= '<span class="lv-topic__badge">' . (int) $it['count'] . ' Kurse</span>';
+        }
+        $out .= '<h3 class="lv-topic__t">' . esc_html($it['label']) . '</h3>';
+        $out .= '<span class="lv-topic__cta">Kurse ansehen →</span>';
+        $out .= '</a>';
+    }
+    if ($show_all) {
+        $out .= '<a class="lv-topic lv-topic--all" href="' . esc_url($base) . '">';
+        $out .= '<span class="lv-topic__ic" aria-hidden="true">' . $icons['_default'] . '</span>';
+        $out .= '<h3 class="lv-topic__t">Alle Themen</h3>';
+        $out .= '<span class="lv-topic__cta">Zum gesamten Kurskatalog →</span>';
+        $out .= '</a>';
+    }
+    $out .= '</div>';
+    return $out;
+});
+
+/** CSS fuer die Themen-Kacheln (lv-topic*). Einmal pro Request. */
+function livento_cc_themen_styles() {
+    static $done = false;
+    if ($done) {
+        return '';
+    }
+    $done = true;
+    $css = '
+.lv-topics,.lv-topics__grid{--lv-green:#004D33;--lv-accent:#AAC42B;--lv-body:#334155}
+.lv-topics{font-family:"Inter",sans-serif;background:#fdf4ef;padding:72px 20px}
+.lv-topics__inner{max-width:1180px;margin:0 auto}
+.lv-topics__head{text-align:center;max-width:760px;margin:0 auto 44px}
+.lv-topics__eyebrow{display:inline-block;margin-bottom:12px;font-weight:700;font-size:16px;color:var(--lv-green)}
+.lv-topics__title{margin:0;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(26px,3.4vw,40px);line-height:1.12;color:var(--lv-green)}
+.lv-topics__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.lv-topic{position:relative;display:flex;flex-direction:column;background:#fff;border:1px solid #f0e7e0;border-radius:18px;padding:28px 26px;text-decoration:none;min-height:150px;transition:transform .2s,box-shadow .2s}
+.lv-topic:hover{transform:translateY(-4px);box-shadow:0 14px 30px rgba(0,77,51,.10)}
+.lv-topic__ic{display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:14px;margin-bottom:18px;background:rgba(170,196,43,.18);color:var(--lv-green)}
+.lv-topic__badge{position:absolute;top:22px;right:22px;background:rgba(0,77,51,.06);color:var(--lv-green);font-weight:700;font-size:12px;padding:4px 10px;border-radius:999px}
+.lv-topic__t{margin:0 0 14px;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:19px;line-height:1.25;color:var(--lv-green)}
+.lv-topic__cta{margin-top:auto;font-weight:700;font-size:15px;color:var(--lv-green)}
+.lv-topic:hover .lv-topic__cta{text-decoration:underline}
+.lv-topic--all{background:var(--lv-green);border-color:var(--lv-green)}
+.lv-topic--all .lv-topic__ic{background:rgba(255,255,255,.14);color:#fff}
+.lv-topic--all .lv-topic__t,.lv-topic--all .lv-topic__cta{color:#fff}
+@media (max-width:900px){.lv-topics__grid{grid-template-columns:1fr 1fr}}
+@media (max-width:860px){.lv-topics{padding:48px 16px}.lv-topics__head{margin-bottom:30px}}
+@media (max-width:560px){.lv-topics__grid{grid-template-columns:1fr;gap:16px}}
+';
+    return '<style id="lv-topics-styles">' . $css . '</style>';
+}
+
 function livento_cc_render_notfound() {
     return '<div class="lvk"><h1>Kurs nicht gefunden</h1>'
         . '<p><a href="' . esc_url(livento_cc_list_url()) . '">Zur Kursübersicht</a></p></div>';
@@ -1400,6 +1623,70 @@ function livento_cc_filter_js() {
 JS;
 }
 
+/** JS fuer den Kursberater (Schritt-Navigation + Deep-Link zum Katalog). */
+function livento_cc_berater_js() {
+    static $done = false;
+    if ($done) {
+        return '';
+    }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  var root = document.getElementById('lvk-berater');
+  if(!root) return;
+  var total = parseInt(root.getAttribute('data-total'),10) || 0;
+  var base  = root.getAttribute('data-base') || '/';
+  var steps = root.querySelectorAll('.lvk-bx-step');
+  var sel = {};
+  var back   = root.querySelector('.lvk-bx-back'),
+      next   = root.querySelector('.lvk-bx-next'),
+      skip   = root.querySelector('.lvk-bx-skip'),
+      finish = root.querySelector('.lvk-bx-finish'),
+      curEl  = root.querySelector('.lvk-bx-cur'),
+      bar    = root.querySelector('.lvk-bx-bar i');
+  var cur = 0;
+
+  Array.prototype.forEach.call(root.querySelectorAll('.lvk-bx-opt'), function(b){
+    b.addEventListener('click', function(){
+      var step = b.parentNode.parentNode; // .lvk-bx-opts -> .lvk-bx-step
+      var dim = step.getAttribute('data-dim'), val = b.getAttribute('data-value');
+      if(!sel[dim]) sel[dim] = [];
+      var i = sel[dim].indexOf(val);
+      if(i>-1){ sel[dim].splice(i,1); b.classList.remove('on'); }
+      else { sel[dim].push(val); b.classList.add('on'); }
+    });
+  });
+
+  function show(i){
+    cur = i;
+    Array.prototype.forEach.call(steps, function(s,idx){ s.hidden = (idx!==i); });
+    if(curEl) curEl.textContent = (i+1);
+    if(bar) bar.style.width = Math.round((i+1)/total*100)+'%';
+    if(back) back.hidden = (i===0);
+    var last = (i===total-1);
+    if(next) next.hidden = last;
+    if(skip) skip.hidden = last;
+    if(finish) finish.hidden = !last;
+  }
+  if(next) next.addEventListener('click', function(){ if(cur<total-1) show(cur+1); });
+  if(skip) skip.addEventListener('click', function(){ if(cur<total-1) show(cur+1); });
+  if(back) back.addEventListener('click', function(){ if(cur>0) show(cur-1); });
+  if(finish) finish.addEventListener('click', function(){
+    var qs = [];
+    Object.keys(sel).forEach(function(dim){
+      if(sel[dim] && sel[dim].length){
+        qs.push(encodeURIComponent(dim)+'='+sel[dim].map(encodeURIComponent).join(','));
+      }
+    });
+    window.location.href = base + (qs.length ? ('?'+qs.join('&')) : '');
+  });
+  show(0);
+})();
+</script>
+JS;
+}
+
 /* ============================================================
  * 9. Styles (Livento-CI, namespaced .lvk-)
  * ============================================================ */
@@ -1492,6 +1779,24 @@ function livento_cc_styles() {
 .lvk-mod-hours{font-weight:400;color:var(--lvk-lime);font-size:.9rem}
 .lvk-cta-wrap{margin:16px 0}
 .lvk-footer{margin-top:48px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
+/* Kursberater (Assistent) */
+.lvk-berater{max-width:720px;margin:0 auto;background:#fff;border:1px solid #e1ecd6;border-radius:12px;padding:22px 24px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.lvk-bx-title{color:var(--lvk-green);margin:0 0 4px}
+.lvk-bx-intro{color:#555;margin:0 0 16px}
+.lvk-bx-progress{margin-bottom:20px;font-size:.85rem;color:var(--lvk-lime)}
+.lvk-bx-bar{height:6px;background:#e6f0e6;border-radius:99px;margin-top:6px;overflow:hidden}
+.lvk-bx-bar i{display:block;height:100%;width:0;background:var(--lvk-green);transition:width .25s}
+.lvk-bx-q{color:var(--lvk-green);font-size:1.25rem;margin:0 0 4px}
+.lvk-bx-hint{color:#777;font-size:.85rem;margin:0 0 14px}
+.lvk-bx-opts{display:flex;flex-wrap:wrap;gap:8px}
+.lvk-bx-opt{background:#fff;border:1px solid #cdd9c2;color:#2b3a2b;border-radius:8px;padding:10px 16px;font-size:.95rem;cursor:pointer;line-height:1.2}
+.lvk-bx-opt:hover{border-color:var(--lvk-lime)}
+.lvk-bx-opt.on{background:var(--lvk-green);border-color:var(--lvk-green);color:#fff}
+.lvk-bx-nav{display:flex;align-items:center;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid #eee}
+.lvk-bx-spacer{flex:1}
+.lvk-bx-back,.lvk-bx-skip{background:none;border:none;color:var(--lvk-lime);cursor:pointer;font-size:.9rem;text-decoration:underline;padding:6px}
+.lvk button.lvk-bx-next,.lvk button.lvk-bx-finish{background:var(--lvk-green)!important;color:#fff!important;border:none;border-radius:8px;padding:11px 22px;font-weight:600;font-size:.95rem;cursor:pointer}
+.lvk button.lvk-bx-next:hover,.lvk button.lvk-bx-finish:hover{background:#006644!important}
 ';
     return '<style id="lvk-styles">' . $css . '</style>';
 }
@@ -1529,6 +1834,30 @@ function livento_cc_shortcodes() {
                 'title'       => 'Optionale Überschrift über dem Feld',
                 'placeholder' => 'Platzhaltertext (Default: „Kurs oder Thema suchen…")',
                 'button'      => 'Button-Beschriftung (Default: „Kurse finden")',
+            ),
+        ),
+        array(
+            'tag'     => 'livento_kurse_berater',
+            'title'   => 'Kursberater',
+            'desc'    => 'Mehrstufiger Assistent: sammelt Vorlieben (Thema, Zielgruppe, …) und springt am Ende auf den Katalog mit passenden Filtern.',
+            'example' => '[livento_kurse_berater steps="topics,audience,format,funding"]',
+            'atts'    => array(
+                'steps' => 'Schritte als Dimensions-Liste (Default „topics,audience,format,funding"). Möglich: type, format, level, audience, funding, recognition, methodology, topics, duration, startmonth, availability, city.',
+                'title' => 'Überschrift (Default „Kursberater")',
+                'intro' => 'Einleitungstext',
+            ),
+        ),
+        array(
+            'tag'     => 'livento_themen',
+            'title'   => 'Themen-Kacheln',
+            'desc'    => 'Dynamische Themenfelder als Grid (gleiche Quelle wie der Filter „Thema"), Kurszahl + Link auf /' . LIVENTO_CC_BASE . '/?topics=<slug>.',
+            'example' => '[livento_themen limit="6"]',
+            'atts'    => array(
+                'limit'  => 'Anzahl Themen (0 = alle).',
+                'sort'   => '„count" (nach Kursanzahl, Default) oder „alpha" (alphabetisch).',
+                'counts' => 'Kurszahl-Badge anzeigen: yes/no (Default yes).',
+                'all'    => '„Alle Themen"-Kachel anhängen: yes/no (Default yes).',
+                'min'    => 'Themen mit weniger als N Kursen ausblenden (Default 1).',
             ),
         ),
     );
