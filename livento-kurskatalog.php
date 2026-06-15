@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.14.0
+ * Version:           1.15.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -71,6 +71,9 @@
  *          blaues Hover, Card-Farben explizit.
  * v1.14.0: [livento_kurse audience="…"] serverseitiger Zielgruppen-Vorfilter (kombinierbar mit
  *          topics); generischer Helper livento_cc_filter_by_field().
+ * v1.15.0: Beide Berater: natives Ein-Button-Lead-Formular → GHL Inbound-Webhook (statt iframe mit
+ *          eigenem Button). Der „Weiter"-Button sendet den Lead serverseitig (REST-Proxy) und geht
+ *          weiter. Neue Einstellungen: GHL-Webhook-URL für Kurs- und Förderberater.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -930,7 +933,7 @@ add_shortcode('livento_kurse_berater', function ($atts) {
 
     $ghl       = (string) get_option('livento_cc_berater_form', '');
     $use_start = (strtolower((string) $a['starttermin']) !== 'no');
-    $use_form  = (strtolower((string) $a['form']) !== 'no') && (trim($ghl) !== '');
+    $use_form  = (strtolower((string) $a['form']) !== 'no') && livento_cc_has_angaben('kurs', $ghl);
     $rlimit    = max(1, (int) $a['result_limit']);
 
     // Schritt-Reihenfolge fuer den Stepper.
@@ -978,12 +981,12 @@ add_shortcode('livento_kurse_berater', function ($atts) {
         $out .= '</div></div>';
     }
 
-    // Schritt 3 — Angaben (GoHighLevel-Embed, admin-trusted)
+    // Schritt 3 — Angaben (natives Lead-Formular → GHL-Webhook, sonst Embed)
     if ($use_form) {
         $out .= '<div class="lvk-bx-step" data-key="angaben" hidden>';
         $out .= '<h3 class="lvk-bx-q">Ihre Angaben</h3>';
         $out .= '<p class="lvk-bx-hint">Damit wir Ihnen Ihre persönliche Empfehlung zusenden können.</p>';
-        $out .= '<div class="lvk-bx-form">' . $ghl . '</div>';
+        $out .= livento_cc_angaben_inner('kurs', $ghl);
         $out .= '</div>';
     }
 
@@ -1008,6 +1011,7 @@ add_shortcode('livento_kurse_berater', function ($atts) {
     $out .= '<noscript><p style="margin-top:12px"><a href="' . esc_url(livento_cc_list_url()) . '">Zum vollständigen Kurskatalog →</a></p></noscript>';
     $out .= '</div>';
     $out .= livento_cc_berater_js();
+    $out .= livento_cc_lead_js();
     return $out;
 });
 
@@ -1924,6 +1928,13 @@ function livento_cc_styles() {
 .lvk-bx-row:hover{border-color:var(--lvk-lime)}
 .lvk-bx-row.on{border-color:var(--lvk-green);background:#f3f8ee;box-shadow:inset 0 0 0 1px var(--lvk-green)}
 .lvk-bx-form{margin:6px 0}
+.lvk-lead-form{display:flex;flex-direction:column;gap:12px;max-width:520px;margin:6px 0}
+.lvk-lead-row input{width:100%;padding:13px 16px;border:1px solid #cdd9c2;border-radius:10px;font-size:1rem;background:#fff;box-sizing:border-box;color:#2b3a2b}
+.lvk-lead-row input:focus{outline:none;border-color:var(--lvk-green);box-shadow:0 0 0 2px rgba(0,77,51,.12)}
+.lvk-lead-consent{display:flex;gap:8px;align-items:flex-start;font-size:.85rem;color:#555;line-height:1.4}
+.lvk-lead-consent input{accent-color:var(--lvk-green);margin-top:3px;flex:0 0 auto}
+.lvk-lead-err{color:#b3261e;font-size:.85rem;margin:0}
+.lvk-lead-note{color:#8a8a8a;font-size:.78rem;line-height:1.4;margin:0}
 .lvk-bx-results{margin-top:16px}
 .lvk-bx-count{color:var(--lvk-lime);font-size:.9rem;margin:0 0 12px}
 .lvk-bx-allcta{margin-top:20px;text-align:center}
@@ -2053,6 +2064,8 @@ function livento_cc_admin_page() {
         // sonst wuerden iframe/script entfernt.
         update_option('livento_cc_berater_form', wp_unslash($_POST['livento_cc_berater_form'] ?? ''));
         update_option('livento_cc_foerder_form', wp_unslash($_POST['livento_cc_foerder_form'] ?? ''));
+        update_option('livento_cc_berater_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_berater_webhook'] ?? ''))));
+        update_option('livento_cc_foerder_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_foerder_webhook'] ?? ''))));
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -2274,7 +2287,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<p>Ablauf: Interessen → Starttermin → Angaben → Ergebnis (passende Kurse).</p>';
     echo '<ol>';
     echo '<li><strong>Interessen:</strong> <a href="' . $tab('berater') . '">Berater</a> → „Ich möchte …"-Aussagen + Themen ankreuzen → Speichern.</li>';
-    echo '<li><strong>Formular:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „Kursberater: Kontaktformular-Embed" (GoHighLevel). Leer = kein Formular-Schritt.</li>';
+    echo '<li><strong>Formular (empfohlen, 1 Button):</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „GHL Inbound-Webhook-URL" eintragen. Das Plugin zeigt dann ein eigenes Formular und sendet den Lead beim Klick auf „Weiter" direkt an euren GHL-Workflow. Leer = kein Formular-Schritt (oder alternativ Embed-Code).</li>';
     echo '<li><strong>Seite</strong> mit <code>[livento_kurse_berater]</code> anlegen.</li>';
     echo '</ol></div></details>';
 
@@ -2297,7 +2310,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<ol>';
     echo '<li><strong>Schema:</strong> <a href="' . $tab('foerderung') . '">Förderprogramme</a> → unten „Förderberater-Schema". Status + Frage + Qualifikationen (eine Zeile <code>schlüssel | Anzeigetext</code>). Schlüssel stabil halten.</li>';
     echo '<li><strong>Zuordnung:</strong> in jeder Programm-Karte „Förderberater: passt zu …" aufklappen und Qualifikationen ankreuzen.</li>';
-    echo '<li><strong>Formular:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „Förderberater: Kontaktformular-Embed". Leer = es wird automatisch das Kursberater-Formular verwendet.</li>';
+    echo '<li><strong>Formular (empfohlen, 1 Button):</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „Förderberater: GHL Inbound-Webhook-URL". Leer = es wird automatisch der Kursberater-Webhook/das Kursberater-Formular verwendet.</li>';
     echo '</ol>';
     echo '<p>Seite mit <code>[livento_foerder_berater]</code> anlegen.</p>';
     echo '</div></details>';
@@ -2408,13 +2421,17 @@ function livento_cc_admin_tab_settings() {
     echo '<p><label><strong>Secret:</strong><br><input type="text" name="livento_cc_purge_secret" class="regular-text code" value="' . esc_attr($secret) . '" autocomplete="off" placeholder="langer Zufallsstring" style="width:420px"></label></p>';
     echo '<p class="description">Webhook-URL (in Campus Connect hinterlegen): <code>POST ' . esc_html($webhook) . '</code><br>mit Header <code>X-Livento-Purge-Secret: &lt;Secret&gt;</code></p>';
 
-    echo '<h3 style="margin-top:24px">Kursberater: Kontaktformular-Embed</h3>';
-    echo '<p>HTML-/Embed-Code (z. B. GoHighLevel-Formular) für den Schritt „Ihre Angaben" im <code>[livento_kurse_berater]</code>. Leer = kein Formular-Schritt. Wird unverändert ausgegeben.</p>';
-    echo '<textarea name="livento_cc_berater_form" class="large-text code" rows="6" placeholder="&lt;iframe src=&quot;https://api.leadconnectorhq.com/widget/form/…&quot;&gt;&lt;/iframe&gt; …">' . esc_textarea((string) get_option('livento_cc_berater_form', '')) . '</textarea>';
+    echo '<h3 style="margin-top:24px">Kursberater: Kontaktformular</h3>';
+    echo '<p><strong>Empfohlen — GoHighLevel-Webhook (nur EIN Button):</strong> Das Plugin zeigt ein schlankes Formular (Vorname, Nachname, E-Mail) und sendet die Daten beim Klick auf „Weiter" direkt an euren GHL-Workflow. So muss der Interessent nur einen Button klicken. In GHL: <em>Automation → Workflows → Trigger „Inbound Webhook" → URL kopieren</em> und hier einfügen.</p>';
+    echo '<p><label><strong>GHL Inbound-Webhook-URL:</strong><br><input type="url" name="livento_cc_berater_webhook" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_berater_webhook', '')) . '" placeholder="https://services.leadconnectorhq.com/hooks/…"></label></p>';
+    echo '<p class="description" style="margin-top:14px"><strong>Alternative</strong> — roher Embed-Code (iframe). Wird nur genutzt, wenn oben <em>keine</em> Webhook-URL steht. Hat dann allerdings einen eigenen Absende-Button (zwei Buttons).</p>';
+    echo '<textarea name="livento_cc_berater_form" class="large-text code" rows="4" placeholder="&lt;iframe src=&quot;https://api.leadconnectorhq.com/widget/form/…&quot;&gt;&lt;/iframe&gt; …">' . esc_textarea((string) get_option('livento_cc_berater_form', '')) . '</textarea>';
 
-    echo '<h3 style="margin-top:24px">Förderberater: Kontaktformular-Embed</h3>';
-    echo '<p>HTML-/Embed-Code für den Schritt „Ihre Angaben" im <code>[livento_foerder_berater]</code>. <strong>Leer = es wird automatisch das Kursberater-Formular oben verwendet.</strong> Eigenes Formular hier nur eintragen, wenn der Förder-Lead getrennt erfasst werden soll.</p>';
-    echo '<textarea name="livento_cc_foerder_form" class="large-text code" rows="6" placeholder="(leer = Kursberater-Formular verwenden)">' . esc_textarea((string) get_option('livento_cc_foerder_form', '')) . '</textarea>';
+    echo '<h3 style="margin-top:24px">Förderberater: Kontaktformular</h3>';
+    echo '<p>Wie oben für <code>[livento_foerder_berater]</code>. <strong>Beide Felder leer = es wird automatisch der Kursberater-Webhook bzw. das Kursberater-Formular verwendet.</strong> Eigenen Förder-Workflow nur eintragen, wenn der Förder-Lead getrennt erfasst werden soll.</p>';
+    echo '<p><label><strong>GHL Inbound-Webhook-URL:</strong><br><input type="url" name="livento_cc_foerder_webhook" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_foerder_webhook', '')) . '" placeholder="(leer = Kursberater-Webhook verwenden)"></label></p>';
+    echo '<p class="description" style="margin-top:14px"><strong>Alternative</strong> — eigener Embed-Code (iframe). Leer = Kursberater-Formular.</p>';
+    echo '<textarea name="livento_cc_foerder_form" class="large-text code" rows="4" placeholder="(leer = Kursberater-Formular verwenden)">' . esc_textarea((string) get_option('livento_cc_foerder_form', '')) . '</textarea>';
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
@@ -3055,7 +3072,7 @@ add_shortcode('livento_foerder_berater', function ($atts) {
     $programs = livento_cc_foerderungen();
     $icons    = livento_cc_foerder_icons();
     $ghl      = livento_cc_foerder_form();
-    $use_form = (strtolower((string) $a['form']) !== 'no') && (trim($ghl) !== '');
+    $use_form = (strtolower((string) $a['form']) !== 'no') && livento_cc_has_angaben('foerder', $ghl);
 
     $steps = array('Ihr Status', 'Ihre Qualifikation');
     if ($use_form) { $steps[] = 'Ihre Angaben'; }
@@ -3100,7 +3117,7 @@ add_shortcode('livento_foerder_berater', function ($atts) {
         $out .= '<div class="lvk-bx-step" data-key="angaben" hidden>';
         $out .= '<h3 class="lvk-bx-q">Fast geschafft!</h3>';
         $out .= '<p class="lvk-bx-hint">Nach dem Ausfüllen erhalten Sie Ihre passenden Fördermöglichkeiten.</p>';
-        $out .= '<div class="lvk-bx-form">' . $ghl . '</div></div>';
+        $out .= livento_cc_angaben_inner('foerder', $ghl) . '</div>';
     }
 
     // Schritt 4 — Ergebnis (Förder-Karten, JS filtert nach Qualifikation ∩ match)
@@ -3127,6 +3144,7 @@ add_shortcode('livento_foerder_berater', function ($atts) {
     $out .= '<noscript><p><a href="' . esc_url(livento_cc_foerder_list_url()) . '">Zu den Fördermöglichkeiten →</a></p></noscript>';
     $out .= '</div>';
     $out .= livento_cc_foerder_berater_js();
+    $out .= livento_cc_lead_js();
     return $out;
 });
 
@@ -3191,4 +3209,161 @@ function livento_cc_foerder_berater_js() {
 })();
 </script>
 JS;
+}
+
+/* ============================================================
+ * 14. Lead-Formular → GHL Inbound-Webhook (ein Button)
+ *
+ * Statt eingebettetem GHL-iframe (eigener Absende-Button) rendert das Plugin ein
+ * schlankes natives Formular. Der einzige „Weiter"-Button sendet den Lead serverseitig
+ * an den GHL-Inbound-Webhook (startet den Workflow) und geht erst dann zum Ergebnis.
+ * ============================================================ */
+
+function livento_cc_berater_webhook() {
+    return trim((string) get_option('livento_cc_berater_webhook', ''));
+}
+function livento_cc_foerder_webhook() {
+    $w = trim((string) get_option('livento_cc_foerder_webhook', ''));
+    return $w !== '' ? $w : livento_cc_berater_webhook();
+}
+function livento_cc_lead_webhook($source) {
+    return ($source === 'foerder') ? livento_cc_foerder_webhook() : livento_cc_berater_webhook();
+}
+/** Gibt es überhaupt einen „Ihre Angaben"-Schritt? (Webhook ODER Embed). */
+function livento_cc_has_angaben($source, $embed) {
+    return (livento_cc_lead_webhook($source) !== '') || (trim((string) $embed) !== '');
+}
+/** Inhalt des „Ihre Angaben"-Schritts: natives Lead-Formular (Webhook) ODER Embed (iframe). */
+function livento_cc_angaben_inner($source, $embed) {
+    if (livento_cc_lead_webhook($source) !== '') {
+        return livento_cc_lead_form($source);
+    }
+    if (trim((string) $embed) !== '') {
+        return '<div class="lvk-bx-form">' . $embed . '</div>';
+    }
+    return '';
+}
+
+/** Natives Lead-Formular — nur Felder. Der Stepper-„Weiter"-Button sendet + geht weiter. */
+function livento_cc_lead_form($source) {
+    $btn = ($source === 'foerder') ? 'Zu meinen Fördermöglichkeiten' : 'Zur persönlichen Empfehlung';
+    $h  = '<form class="lvk-lead-form" novalidate'
+        . ' data-source="' . esc_attr($source) . '"'
+        . ' data-endpoint="' . esc_url(rest_url('livento/v1/lead')) . '"'
+        . ' data-nonce="' . esc_attr(wp_create_nonce('livento_cc_lead')) . '"'
+        . ' data-btn="' . esc_attr($btn) . '">';
+    $h .= '<div class="lvk-lead-row"><input type="text" name="first_name" placeholder="Vorname" autocomplete="given-name"></div>';
+    $h .= '<div class="lvk-lead-row"><input type="text" name="last_name" placeholder="Nachname" autocomplete="family-name"></div>';
+    $h .= '<div class="lvk-lead-row"><input type="email" name="email" placeholder="E-Mail-Adresse" autocomplete="email" required></div>';
+    $h .= '<label class="lvk-lead-consent"><input type="checkbox" name="consent" value="1"> Ich möchte regelmäßig über Angebote, Aktionen und Weiterbildungsthemen von Livento per E-Mail informiert werden.</label>';
+    $h .= '<p class="lvk-lead-err" hidden>Bitte geben Sie eine gültige E-Mail-Adresse ein.</p>';
+    $h .= '<p class="lvk-lead-note">Mit „' . esc_html($btn) . '" willigen Sie ein, dass wir Ihnen Ihre Empfehlung und das Kursprogramm per E-Mail zusenden. Sie können sich jederzeit abmelden.</p>';
+    $h .= '</form>';
+    return $h;
+}
+
+/** Shared JS: fängt den „Weiter"-Klick im Angaben-Schritt ab, sendet den Lead an den
+ *  WP-REST-Proxy (→ GHL-Webhook) und geht erst bei Erfolg weiter. Ein Button. */
+function livento_cc_lead_js() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  function init(form){
+    var step=form.closest('.lvk-bx-step');
+    var root=form.closest('.lvk-berater')||document;
+    var nextBtn=root.querySelector('.lvk-bx-next');
+    var err=form.querySelector('.lvk-lead-err');
+    var lbl=form.getAttribute('data-btn')||'Weiter';
+    var orig=nextBtn?nextBtn.textContent:'';
+    var sent=false, busy=false;
+    function active(){ return step && !step.hidden; }
+    function setLbl(t){ if(nextBtn) nextBtn.textContent=t; }
+    function gather(){
+      var g=function(n){var e=form.querySelector('[name="'+n+'"]'); return e?String(e.value||'').trim():'';};
+      var sel=[].slice.call(root.querySelectorAll('.lvk-bx-row.on,.lvk-bx-single.on')).map(function(b){return b.textContent.trim();});
+      return {first_name:g('first_name'),last_name:g('last_name'),email:g('email'),
+        consent:!!(form.querySelector('[name=consent]')||{}).checked,
+        source:form.getAttribute('data-source'),nonce:form.getAttribute('data-nonce'),
+        selection:sel.join(' | '),page:location.href};
+    }
+    function submit(){
+      var d=gather();
+      if(!d.email||!/.+@.+\..+/.test(d.email)){ if(err)err.hidden=false; var em=form.querySelector('[name=email]'); if(em)em.focus(); return Promise.reject('email'); }
+      if(err)err.hidden=true; busy=true; if(nextBtn)nextBtn.disabled=true; setLbl('Senden …');
+      function done(){ busy=false; if(nextBtn)nextBtn.disabled=false; setLbl(active()?lbl:orig); }
+      return fetch(form.getAttribute('data-endpoint'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+        .then(function(r){return r.json().catch(function(){return {ok:true};});})
+        .then(function(j){ if(j&&j.ok===false&&j.error==='email'){ done(); if(err)err.hidden=false; throw 'email'; } done(); return true; })
+        .catch(function(e){ done(); if(e==='email') throw e; return true; });
+    }
+    if(nextBtn){
+      // Interceptor am Vorfahren in der CAPTURE-Phase: feuert vor dem Stepper-Handler
+      // (der am selben Button, aber in der Target-Phase haengt) und stoppt ihn bei Bedarf.
+      root.addEventListener('click',function(e){
+        var t=e.target.closest?e.target.closest('.lvk-bx-next'):null;
+        if(t!==nextBtn) return;
+        if(sent||busy||!active()) return;       // durchlassen → Stepper geht weiter
+        e.preventDefault(); e.stopImmediatePropagation();
+        submit().then(function(){ sent=true; nextBtn.click(); }).catch(function(){});
+      },true);
+      if(active()) setLbl(lbl);
+      try{
+        var obs=new MutationObserver(function(){ if(!busy&&!sent) setLbl(active()?lbl:orig); });
+        obs.observe(step,{attributes:true,attributeFilter:['hidden']});
+      }catch(e){}
+    }
+    form.addEventListener('submit',function(e){ e.preventDefault(); if(nextBtn) nextBtn.click(); });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.lvk-lead-form'), init);
+})();
+</script>
+JS;
+}
+
+/** REST-Proxy: nimmt den Lead entgegen und leitet ihn serverseitig an den GHL-Webhook
+ *  (vermeidet CORS, verbirgt die Webhook-URL). */
+add_action('rest_api_init', function () {
+    register_rest_route('livento/v1', '/lead', array(
+        'methods'             => 'POST',
+        'callback'            => 'livento_cc_rest_lead',
+        'permission_callback' => '__return_true',
+    ));
+});
+function livento_cc_rest_lead($req) {
+    $p = $req->get_json_params();
+    if (!is_array($p)) { $p = array(); }
+    if (!wp_verify_nonce(isset($p['nonce']) ? $p['nonce'] : '', 'livento_cc_lead')) {
+        return new WP_REST_Response(array('ok' => false, 'error' => 'nonce'), 403);
+    }
+    $email = isset($p['email']) ? sanitize_email($p['email']) : '';
+    if (!is_email($email)) {
+        return new WP_REST_Response(array('ok' => false, 'error' => 'email'), 200);
+    }
+    $source  = (isset($p['source']) && $p['source'] === 'foerder') ? 'foerder' : 'kurs';
+    $webhook = livento_cc_lead_webhook($source);
+    if ($webhook === '') {
+        return new WP_REST_Response(array('ok' => true, 'note' => 'no-webhook'), 200);
+    }
+    $payload = array(
+        'first_name' => isset($p['first_name']) ? sanitize_text_field($p['first_name']) : '',
+        'last_name'  => isset($p['last_name']) ? sanitize_text_field($p['last_name']) : '',
+        'email'      => $email,
+        'consent'    => !empty($p['consent']),
+        'source'     => $source === 'foerder' ? 'foerderberater' : 'kursberater',
+        'selection'  => isset($p['selection']) ? sanitize_text_field($p['selection']) : '',
+        'page'       => isset($p['page']) ? esc_url_raw($p['page']) : '',
+    );
+    $res = wp_remote_post($webhook, array(
+        'timeout' => 12,
+        'headers' => array('Content-Type' => 'application/json'),
+        'body'    => wp_json_encode($payload),
+    ));
+    if (is_wp_error($res)) {
+        error_log('[livento] GHL-Webhook fehlgeschlagen: ' . $res->get_error_message());
+        return new WP_REST_Response(array('ok' => true, 'note' => 'send-failed'), 200);
+    }
+    return new WP_REST_Response(array('ok' => true), 200);
 }

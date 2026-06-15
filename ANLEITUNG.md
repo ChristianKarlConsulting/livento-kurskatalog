@@ -169,12 +169,21 @@ Drei Stellschrauben:
 
 ---
 
-## 11. GoHighLevel-Formulare
+## 11. GoHighLevel anbinden (Lead-Erfassung)
 
-- **Kursberater:** Einstellungen → „Kursberater: Kontaktformular-Embed".
-- **Förderberater:** Einstellungen → „Förderberater: Kontaktformular-Embed" (leer = Kursberater-Formular).
-- Eingefügt wird der **rohe Embed-Code** (iframe + ggf. Script), unverändert ausgegeben. Hol ihn in GoHighLevel unter *Sites → Forms → Integrate/Embed*.
-- Hinweis: Ob der Nutzer das Formular **abgesendet** hat, kann die Seite technisch nicht sicher erkennen (Cross-Origin). Der „Weiter"-Button bleibt daher bedienbar — der Lead landet trotzdem in GoHighLevel.
+Es gibt zwei Wege für den „Ihre Angaben"-Schritt. **Empfohlen ist der Webhook** — dann muss der Interessent nur **einen** Button klicken.
+
+### A) GHL Inbound-Webhook (empfohlen, ein Button)
+Das Plugin zeigt ein eigenes schlankes Formular (Vorname, Nachname, E-Mail). Beim Klick auf **„Weiter"** sendet das Plugin die Daten serverseitig an euren GoHighLevel-**Workflow** und zeigt dann das Ergebnis — alles mit einem Button.
+
+1. In GoHighLevel: **Automation → Workflows → neuen Workflow → Trigger „Inbound Webhook"** → die angezeigte **Webhook-URL kopieren**.
+2. In WordPress: **Einstellungen → Kursberater: Kontaktformular → „GHL Inbound-Webhook-URL"** einfügen → Speichern. (Für den Förderberater analog; leer = Kursberater-Webhook wird genutzt.)
+3. Im Workflow die Felder verarbeiten (E-Mail mit Kursprogramm senden, Tag setzen usw.). Ankommende Felder: `first_name`, `last_name`, `email`, `consent`, `source` (`kursberater`/`foerderberater`), `selection` (die gewählten Interessen/Qualifikationen), `page`.
+
+### B) Embed-Code (Alternative)
+Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur genutzt, wenn **keine** Webhook-URL gesetzt ist. Nachteil: das eingebettete Formular hat einen **eigenen** Absende-Button (zwei Buttons), und ein Absenden lässt sich technisch nicht sicher erkennen.
+
+> **Empfehlung:** Webhook verwenden (A). Das ist die Ein-Button-Lösung.
 
 ---
 
