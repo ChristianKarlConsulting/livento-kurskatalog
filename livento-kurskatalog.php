@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.7.3
+ * Version:           1.7.4
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -48,6 +48,8 @@
  *         Ein-Klick-Update im WP-Dashboard. Diese Version einmal manuell installieren, danach automatisch.
  * v1.7.3: Fix Sitemap — X-Robots-Tag: noindex entfernt (Google lehnte die Sitemap sonst ab:
  *         „konnte nicht gelesen werden / 0 Seiten"). Sitemap-Dateien werden ohnehin nicht indexiert.
+ * v1.7.4: Fix Fatal Error auf Detailseiten — kein fremdes Parsedown mehr (inkompatible Forks ohne
+ *         setSafeMode() per Elementor/Plugins). Eigener Markdown-Renderer wird immer genutzt.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -412,12 +414,9 @@ function livento_cc_richtext($text) {
     if (empty($text)) {
         return '';
     }
-    if (class_exists('Parsedown')) {
-        $pd = new Parsedown();
-        $pd->setSafeMode(true);
-        return $pd->text($text);
-    }
-
+    // Bewusst KEIN globales Parsedown nutzen: Andere Plugins (z. B. via Elementor) laden
+    // teils inkompatible Parsedown-Forks ohne setSafeMode() → Fatal Error. Der eigene,
+    // escapende Markdown-Light-Renderer ist self-contained und XSS-sicher.
     $text = str_replace("\r\n", "\n", (string) $text);
     $text = esc_html($text);
 
