@@ -178,7 +178,9 @@ Das Plugin zeigt ein eigenes schlankes Formular (Vorname, Nachname, E-Mail). Bei
 
 1. In GoHighLevel: **Automation → Workflows → neuen Workflow → Trigger „Inbound Webhook"** → die angezeigte **Webhook-URL kopieren**.
 2. In WordPress: **Einstellungen → Kursberater: Kontaktformular → „GHL Inbound-Webhook-URL"** einfügen → Speichern. (Für den Förderberater analog; leer = Kursberater-Webhook wird genutzt.)
-3. Im Workflow die Felder verarbeiten (E-Mail mit Kursprogramm senden, Tag setzen usw.). Ankommende Felder: `first_name`, `last_name`, `email`, `consent`, `source` (`kursberater`/`foerderberater`), `selection` (die gewählten Interessen/Qualifikationen), `page`.
+3. Im Workflow die Felder verarbeiten (E-Mail mit Kursprogramm senden, Tag setzen usw.). Ankommende Felder: `first_name`, `last_name`, `email`, `phone` (nur wenn ausgefüllt), `consent` (immer `true` — Pflichtfeld im Formular), `source` (`kursberater`/`foerderberater`), `selection` (die gewählten Interessen/Qualifikationen), `page`.
+
+> **GHL-Hinweis:** Mappe **E-Mail** als Kontakt-Identifier (ist immer befüllt). GHLs Meldung „Email or Phone field is required" ist damit erfüllt. Das Telefonfeld ist optional und wird nur mitgesendet, wenn der Nutzer es ausfüllt. Die **Einwilligung ist Pflicht** — ohne Häkchen kommt der Nutzer nicht zum Ergebnis, `consent` ist also immer `true`.
 
 ### B) Embed-Code (Alternative)
 Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur genutzt, wenn **keine** Webhook-URL gesetzt ist. Nachteil: das eingebettete Formular hat einen **eigenen** Absende-Button (zwei Buttons), und ein Absenden lässt sich technisch nicht sicher erkennen.

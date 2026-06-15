@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.15.0
+ * Version:           1.16.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -74,6 +74,8 @@
  * v1.15.0: Beide Berater: natives Ein-Button-Lead-Formular → GHL Inbound-Webhook (statt iframe mit
  *          eigenem Button). Der „Weiter"-Button sendet den Lead serverseitig (REST-Proxy) und geht
  *          weiter. Neue Einstellungen: GHL-Webhook-URL für Kurs- und Förderberater.
+ * v1.16.0: Lead-Formular: zusätzliches Telefonfeld (optional, → GHL „E-Mail ODER Telefon") und
+ *          Einwilligung als Pflichtfeld (ohne Häkchen kein „Weiter").
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -3254,10 +3256,12 @@ function livento_cc_lead_form($source) {
         . ' data-btn="' . esc_attr($btn) . '">';
     $h .= '<div class="lvk-lead-row"><input type="text" name="first_name" placeholder="Vorname" autocomplete="given-name"></div>';
     $h .= '<div class="lvk-lead-row"><input type="text" name="last_name" placeholder="Nachname" autocomplete="family-name"></div>';
-    $h .= '<div class="lvk-lead-row"><input type="email" name="email" placeholder="E-Mail-Adresse" autocomplete="email" required></div>';
-    $h .= '<label class="lvk-lead-consent"><input type="checkbox" name="consent" value="1"> Ich möchte regelmäßig über Angebote, Aktionen und Weiterbildungsthemen von Livento per E-Mail informiert werden.</label>';
-    $h .= '<p class="lvk-lead-err" hidden>Bitte geben Sie eine gültige E-Mail-Adresse ein.</p>';
-    $h .= '<p class="lvk-lead-note">Mit „' . esc_html($btn) . '" willigen Sie ein, dass wir Ihnen Ihre Empfehlung und das Kursprogramm per E-Mail zusenden. Sie können sich jederzeit abmelden.</p>';
+    $h .= '<div class="lvk-lead-row"><input type="email" name="email" placeholder="E-Mail-Adresse *" autocomplete="email" required></div>';
+    $h .= '<div class="lvk-lead-row"><input type="tel" name="phone" placeholder="Telefon (optional)" autocomplete="tel"></div>';
+    $h .= '<label class="lvk-lead-consent"><input type="checkbox" name="consent" value="1" required> <span>Ich willige ein, dass mir meine persönliche Empfehlung sowie Informationen zu Angeboten und Weiterbildungsthemen von Livento per E-Mail zugesendet werden. *</span></label>';
+    $h .= '<p class="lvk-lead-err lvk-lead-err-email" hidden>Bitte geben Sie eine gültige E-Mail-Adresse ein.</p>';
+    $h .= '<p class="lvk-lead-err lvk-lead-err-consent" hidden>Bitte bestätigen Sie die Einwilligung, um fortzufahren.</p>';
+    $h .= '<p class="lvk-lead-note">* Pflichtfelder. Sie können sich jederzeit abmelden.</p>';
     $h .= '</form>';
     return $h;
 }
@@ -3275,7 +3279,9 @@ function livento_cc_lead_js() {
     var step=form.closest('.lvk-bx-step');
     var root=form.closest('.lvk-berater')||document;
     var nextBtn=root.querySelector('.lvk-bx-next');
-    var err=form.querySelector('.lvk-lead-err');
+    var errMail=form.querySelector('.lvk-lead-err-email');
+    var errConsent=form.querySelector('.lvk-lead-err-consent');
+    var consentEl=form.querySelector('[name=consent]');
     var lbl=form.getAttribute('data-btn')||'Weiter';
     var orig=nextBtn?nextBtn.textContent:'';
     var sent=false, busy=false;
@@ -3284,15 +3290,18 @@ function livento_cc_lead_js() {
     function gather(){
       var g=function(n){var e=form.querySelector('[name="'+n+'"]'); return e?String(e.value||'').trim():'';};
       var sel=[].slice.call(root.querySelectorAll('.lvk-bx-row.on,.lvk-bx-single.on')).map(function(b){return b.textContent.trim();});
-      return {first_name:g('first_name'),last_name:g('last_name'),email:g('email'),
-        consent:!!(form.querySelector('[name=consent]')||{}).checked,
+      return {first_name:g('first_name'),last_name:g('last_name'),email:g('email'),phone:g('phone'),
+        consent:!!(consentEl&&consentEl.checked),
         source:form.getAttribute('data-source'),nonce:form.getAttribute('data-nonce'),
         selection:sel.join(' | '),page:location.href};
     }
     function submit(){
       var d=gather();
-      if(!d.email||!/.+@.+\..+/.test(d.email)){ if(err)err.hidden=false; var em=form.querySelector('[name=email]'); if(em)em.focus(); return Promise.reject('email'); }
-      if(err)err.hidden=true; busy=true; if(nextBtn)nextBtn.disabled=true; setLbl('Senden …');
+      if(!d.email||!/.+@.+\..+/.test(d.email)){ if(errMail)errMail.hidden=false; var em=form.querySelector('[name=email]'); if(em)em.focus(); return Promise.reject('email'); }
+      if(errMail)errMail.hidden=true;
+      if(consentEl&&!consentEl.checked){ if(errConsent)errConsent.hidden=false; consentEl.focus(); return Promise.reject('consent'); }
+      if(errConsent)errConsent.hidden=true;
+      busy=true; if(nextBtn)nextBtn.disabled=true; setLbl('Senden …');
       function done(){ busy=false; if(nextBtn)nextBtn.disabled=false; setLbl(active()?lbl:orig); }
       return fetch(form.getAttribute('data-endpoint'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
         .then(function(r){return r.json().catch(function(){return {ok:true};});})
@@ -3315,6 +3324,9 @@ function livento_cc_lead_js() {
         obs.observe(step,{attributes:true,attributeFilter:['hidden']});
       }catch(e){}
     }
+    if(consentEl) consentEl.addEventListener('change',function(){ if(consentEl.checked&&errConsent) errConsent.hidden=true; });
+    var emailEl=form.querySelector('[name=email]');
+    if(emailEl) emailEl.addEventListener('input',function(){ if(errMail) errMail.hidden=true; });
     form.addEventListener('submit',function(e){ e.preventDefault(); if(nextBtn) nextBtn.click(); });
   }
   Array.prototype.forEach.call(document.querySelectorAll('.lvk-lead-form'), init);
@@ -3356,6 +3368,11 @@ function livento_cc_rest_lead($req) {
         'selection'  => isset($p['selection']) ? sanitize_text_field($p['selection']) : '',
         'page'       => isset($p['page']) ? esc_url_raw($p['page']) : '',
     );
+    // Telefon nur senden, wenn ausgefüllt (sonst leeres Feld in GHL).
+    $phone = isset($p['phone']) ? sanitize_text_field($p['phone']) : '';
+    if ($phone !== '') {
+        $payload['phone'] = $phone;
+    }
     $res = wp_remote_post($webhook, array(
         'timeout' => 12,
         'headers' => array('Content-Type' => 'application/json'),
