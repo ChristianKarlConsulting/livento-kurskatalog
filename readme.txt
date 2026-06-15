@@ -3,16 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.12.0
+Stable tag: 1.13.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+= 1.13.0 =
+* Admin-Tab "Anleitung" (Schritt-fuer-Schritt-Hilfe im Backend) + ANLEITUNG.md-Handbuch.
+* Foerder-Filter im Kurs-Look: linke Sidebar mit Checkboxen (alle Bundeslaender), kein blaues Hover.
 = 1.12.0 =
-* Foerderberater [livento_foerder_berater] (SGD-Stil: Status -> bedingte Qualifikation -> Formular -> passende Foerderungen), editierbares Schema + Programm-Zuordnung im Admin.
-* [livento_kurse topics="..."] serverseitiger Themen-Vorfilter (Komma-Liste von Slugs).
+* Foerderberater [livento_foerder_berater] + editierbares Schema. [livento_kurse topics="..."].
 = 1.11.0 =
 * Foerderprogramme als eigener Inhaltstyp: Editor, [livento_foerderungen], Detailseiten + Sitemap.
-= 1.10.0 =
-* Admin-Tab "Berater": Interessen + Themen-Mapping editierbar.

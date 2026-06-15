@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.12.0
+ * Version:           1.13.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -66,6 +66,9 @@
  *          GHL-Formular → passende Förderungen), editierbares Schema + Programm-Zuordnung im Admin,
  *          eigenes Förder-Formular (Fallback auf Kursberater). Außerdem: [livento_kurse topics="…"]
  *          serverseitiger Themen-Vorfilter (Komma-Liste von Slugs).
+ * v1.13.0: Admin-Tab „Anleitung" (Schritt-für-Schritt-Hilfe im Backend) + ANLEITUNG.md-Handbuch.
+ *          Förder-Filter im Kurs-Look: linke Sidebar mit Checkboxen (alle Bundesländer), kein
+ *          blaues Hover, Card-Farben explizit.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -2139,7 +2142,7 @@ function livento_cc_admin_page() {
     }
 
     $tab  = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
-    $tabs = array('overview' => 'Übersicht', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
+    $tabs = array('overview' => 'Übersicht', 'anleitung' => 'Anleitung', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
 
     echo '<div class="wrap"><h1>Livento Kurskatalog</h1>';
     if ($notice) {
@@ -2162,6 +2165,8 @@ function livento_cc_admin_page() {
         livento_cc_admin_tab_berater();
     } elseif ($tab === 'foerderung') {
         livento_cc_admin_tab_foerderung();
+    } elseif ($tab === 'anleitung') {
+        livento_cc_admin_tab_anleitung();
     } else {
         livento_cc_admin_tab_overview();
     }
@@ -2199,6 +2204,113 @@ function livento_cc_admin_tab_overview() {
     echo '<button type="submit" name="livento_cc_flush" value="1" class="button button-secondary">Cache jetzt leeren</button> ';
     echo '<span class="description">Liste + alle Einzelkurse neu von Campus Connect laden.</span>';
     echo '</form>';
+}
+
+/** Tab „Anleitung": Schritt-für-Schritt-Hilfe direkt im Backend. */
+function livento_cc_admin_tab_anleitung() {
+    $tab   = function ($t) { return esc_url(admin_url('admin.php?page=livento-kurskatalog&tab=' . $t)); };
+    $perma = esc_url(admin_url('options-permalink.php'));
+    $list  = esc_url(livento_cc_list_url());
+    $flist = esc_url(livento_cc_foerder_list_url());
+
+    echo '<style>
+.lvk-help{border:1px solid #dcdcde;border-radius:6px;margin:10px 0;background:#fff;max-width:880px}
+.lvk-help>summary{cursor:pointer;padding:12px 16px;font-weight:600;font-size:14px;list-style:none}
+.lvk-help>summary::-webkit-details-marker{display:none}
+.lvk-help>summary::before{content:"\\25B8";color:#2271b1;margin-right:8px;display:inline-block;transition:transform .15s}
+.lvk-help[open]>summary::before{transform:rotate(90deg)}
+.lvk-help .in{padding:0 16px 14px;border-top:1px solid #f0f0f1}
+.lvk-help ol,.lvk-help ul{margin:10px 0 10px 20px}
+.lvk-help li{margin:5px 0}
+.lvk-help code{background:#f6f7f7;padding:1px 5px;border-radius:3px}
+.lvk-help .tip{background:#f0f6fc;border-left:4px solid #2271b1;padding:8px 12px;margin:10px 0}
+</style>';
+
+    echo '<p style="margin:14px 0 6px;max-width:880px">Schritt-für-Schritt-Hilfe für das gesamte Plugin. Eine ausführliche Fassung als Dokument liegt im Plugin-Ordner unter <code>ANLEITUNG.md</code>.</p>';
+    echo '<p class="lvk-help" style="padding:12px 16px;font-weight:600">⚡ Schnellstart: anon-Key eintragen (Einstellungen) → <a href="' . $perma . '">Permalinks speichern</a> → Seiten mit den Shortcodes anlegen.</p>';
+
+    // 1) Erste Einrichtung
+    echo '<details class="lvk-help" open><summary>1 · Erste Einrichtung (Pflicht)</summary><div class="in">';
+    echo '<ol>';
+    echo '<li><strong>anon-Key:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → Feld „anon-Key" → Supabase-Anon-Key einfügen → Speichern. Kontrolle in der <a href="' . $tab('overview') . '">Übersicht</a> („✅" + Kurszahl > 0).</li>';
+    echo '<li><strong>Permalinks:</strong> einmal <a href="' . $perma . '">Einstellungen → Permalinks → Speichern</a> (aktiviert die Detail-URLs). Auch nach jedem größeren Update wiederholen.</li>';
+    echo '</ol></div></details>';
+
+    // 2) Seitenstruktur
+    echo '<details class="lvk-help"><summary>2 · Welche Seite braucht welchen Shortcode</summary><div class="in">';
+    echo '<p>Je eine WordPress-<strong>Seite</strong> anlegen und den Shortcode in den Inhalt setzen:</p>';
+    echo '<ul>';
+    echo '<li>Seite <code>kurse</code> → <code>[livento_kurse]</code> (Katalog + Kurs-Detailseiten)</li>';
+    echo '<li>Seite <code>foerdermoeglichkeiten</code> → <code>[livento_foerderungen]</code> (Förderungen + Detailseiten)</li>';
+    echo '<li>z. B. <code>kursberatung</code> → <code>[livento_kurse_berater]</code></li>';
+    echo '<li>z. B. <code>foerderberatung</code> → <code>[livento_foerder_berater]</code></li>';
+    echo '<li>Startseite o. Ä. → <code>[livento_themen]</code>, <code>[livento_kurse_suche]</code></li>';
+    echo '</ul>';
+    echo '<p class="tip"><strong>Wichtig:</strong> Der Seiten-Slug muss zur Basis passen (Katalog = <code>kurse</code>, Förderungen = <code>foerdermoeglichkeiten</code>). Detailseiten entstehen automatisch darunter.</p>';
+    echo 'Aktuelle Seiten: Katalog <a href="' . $list . '" target="_blank" rel="noopener">' . $list . '</a> · Förderungen <a href="' . $flist . '" target="_blank" rel="noopener">' . $flist . '</a>';
+    echo '</div></details>';
+
+    // 3) Kurskatalog
+    echo '<details class="lvk-help"><summary>3 · Kurskatalog &amp; Filter</summary><div class="in">';
+    echo '<ul>';
+    echo '<li><code>[livento_kurse]</code> = voller Katalog mit Filter-Sidebar.</li>';
+    echo '<li><code>[livento_kurse limit="6"]</code> = kuratierter 6er-Block ohne Filter.</li>';
+    echo '<li><code>[livento_kurse limit="6" topics="leitung-management"]</code> = Block nur mit Kursen dieses Themas (Slugs siehe <a href="' . $tab('slugs') . '">Filter &amp; Slugs</a>, mehrere mit Komma).</li>';
+    echo '<li>Deep-Links: <code>' . esc_html(livento_cc_list_url()) . '?format=online_live</code> usw.</li>';
+    echo '</ul>';
+    echo '<p>Neue Kurse erscheinen automatisch (nach Cache-Ablauf bzw. „Cache leeren"/Webhook).</p>';
+    echo '</div></details>';
+
+    // 4) Kursberater
+    echo '<details class="lvk-help"><summary>4 · Kursberater einrichten</summary><div class="in">';
+    echo '<p>Ablauf: Interessen → Starttermin → Angaben → Ergebnis (passende Kurse).</p>';
+    echo '<ol>';
+    echo '<li><strong>Interessen:</strong> <a href="' . $tab('berater') . '">Berater</a> → „Ich möchte …"-Aussagen + Themen ankreuzen → Speichern.</li>';
+    echo '<li><strong>Formular:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „Kursberater: Kontaktformular-Embed" (GoHighLevel). Leer = kein Formular-Schritt.</li>';
+    echo '<li><strong>Seite</strong> mit <code>[livento_kurse_berater]</code> anlegen.</li>';
+    echo '</ol></div></details>';
+
+    // 5) Förderprogramme
+    echo '<details class="lvk-help"><summary>5 · Förderprogramme pflegen</summary><div class="in">';
+    echo '<p>Liegen im Plugin (nicht mehr als WP-Beiträge). Pflege im Tab <a href="' . $tab('foerderung') . '">Förderprogramme</a>. Pro Programm:</p>';
+    echo '<ul>';
+    echo '<li>Titel, Slug (optional), Icon</li>';
+    echo '<li>Für (Privatpersonen/Unternehmen) · Region (Strg/Cmd-Klick = mehrere)</li>';
+    echo '<li>Kurzbeschreibung (Kachel) + ausführliche Beschreibung (Detailseite, Markdown)</li>';
+    echo '<li>Kurse-Förder-Tag (optional) → „Passende Kurse" auf der Detailseite</li>';
+    echo '<li>Offizieller Link (optional)</li>';
+    echo '</ul>';
+    echo '<p class="tip">Nach dem Anlegen neuer Programme einmal <a href="' . $perma . '">Permalinks speichern</a>.</p>';
+    echo '</div></details>';
+
+    // 6) Förderberater
+    echo '<details class="lvk-help"><summary>6 · Förderberater einrichten</summary><div class="in">';
+    echo '<p>Ablauf (SGD-Stil): Status → Qualifikation → Angaben → Ergebnis (passende Förderungen). Drei Stellschrauben:</p>';
+    echo '<ol>';
+    echo '<li><strong>Schema:</strong> <a href="' . $tab('foerderung') . '">Förderprogramme</a> → unten „Förderberater-Schema". Status + Frage + Qualifikationen (eine Zeile <code>schlüssel | Anzeigetext</code>). Schlüssel stabil halten.</li>';
+    echo '<li><strong>Zuordnung:</strong> in jeder Programm-Karte „Förderberater: passt zu …" aufklappen und Qualifikationen ankreuzen.</li>';
+    echo '<li><strong>Formular:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → „Förderberater: Kontaktformular-Embed". Leer = es wird automatisch das Kursberater-Formular verwendet.</li>';
+    echo '</ol>';
+    echo '<p>Seite mit <code>[livento_foerder_berater]</code> anlegen.</p>';
+    echo '</div></details>';
+
+    // 7) Cache / Sitemap / Updates
+    echo '<details class="lvk-help"><summary>7 · Cache, Sitemap &amp; Updates</summary><div class="in">';
+    echo '<ul>';
+    echo '<li><strong>Cache leeren:</strong> <a href="' . $tab('overview') . '">Übersicht</a> → „Cache jetzt leeren".</li>';
+    echo '<li><strong>Auto-Purge:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → Purge-Secret setzen + in Campus Connect hinterlegen.</li>';
+    echo '<li><strong>Sitemap:</strong> <a href="' . esc_url(home_url('/livento-kurse.xml')) . '" target="_blank" rel="noopener">/livento-kurse.xml</a> (enthält Kurse + Förderungen, hängt im Rank-Math-Index).</li>';
+    echo '<li><strong>Updates:</strong> Dashboard → Aktualisierungen → Erneut prüfen → Aktualisieren.</li>';
+    echo '</ul></div></details>';
+
+    // 8) Problembehebung
+    echo '<details class="lvk-help"><summary>8 · Problembehebung</summary><div class="in"><ul>';
+    echo '<li><strong>„anon-Key ❌" / keine Kurse:</strong> Key in den Einstellungen prüfen, Cache leeren.</li>';
+    echo '<li><strong>Detailseite 404:</strong> <a href="' . $perma . '">Permalinks speichern</a>.</li>';
+    echo '<li><strong>Förderberater-Ergebnis leer:</strong> in den Programmen „passt zu …" ankreuzen (gleiche Schlüssel wie im Schema).</li>';
+    echo '<li><strong>Förderberater ohne Formular-Schritt:</strong> Embed in den Einstellungen hinterlegen (Förder- oder Kursberater).</li>';
+    echo '<li><strong>Neuer Kurs fehlt:</strong> Cache leeren oder Webhook einrichten.</li>';
+    echo '</ul></div></details>';
 }
 
 /** Tab „Shortcodes": Liste mit Beispielen + Attributen. */
@@ -2545,6 +2657,7 @@ function livento_cc_render_foerder_grid($a) {
     $auds    = livento_cc_foerder_audiences();
     $icons   = livento_cc_foerder_icons();
 
+    // Optionaler Server-Vorfilter über Shortcode-Attribute.
     $fa = strtolower(trim((string) $a['audience']));
     $fr = strtolower(trim((string) $a['region']));
     if ($fa !== '') { $items = array_filter($items, function ($f) use ($fa) { return in_array($fa, (array) ($f['audience'] ?? array()), true); }); }
@@ -2556,63 +2669,70 @@ function livento_cc_render_foerder_grid($a) {
 
     $show_filter = (strtolower((string) $a['filter']) !== 'no');
 
-    // Facetten (nur vorkommende Werte)
-    $reg_present = array(); $aud_present = array();
+    // Programm-Karten.
+    $cards = '';
     foreach ($items as $f) {
-        foreach ((array) ($f['region'] ?? array()) as $r) { $reg_present[$r] = 1; }
-        foreach ((array) ($f['audience'] ?? array()) as $u) { $aud_present[$u] = 1; }
+        $cards .= livento_cc_foerder_card_html($f, $regions, $icons);
     }
 
-    $out = '<div class="lvf" id="lvf-grid-wrap">';
-    if ($show_filter && (count($reg_present) > 1 || count($aud_present) > 1)) {
-        $out .= '<div class="lvf-filter">';
-        if (count($aud_present) > 1) {
-            $out .= '<div class="lvf-fg"><span class="lvf-fl">Für</span>';
-            foreach ($auds as $k => $label) {
-                if (isset($aud_present[$k])) {
-                    $out .= '<button type="button" class="lvf-pill" data-dim="audience" data-value="' . esc_attr($k) . '">' . esc_html($label) . '</button>';
-                }
-            }
-            $out .= '</div>';
-        }
-        if (count($reg_present) > 1) {
-            $out .= '<div class="lvf-fg"><span class="lvf-fl">Region</span>';
-            foreach ($regions as $k => $label) {
-                if (isset($reg_present[$k])) {
-                    $out .= '<button type="button" class="lvf-pill" data-dim="region" data-value="' . esc_attr($k) . '">' . esc_html($label) . '</button>';
-                }
-            }
-            $out .= '</div>';
-        }
-        $out .= '<button type="button" class="lvf-reset" hidden>Zurücksetzen</button>';
-        $out .= '</div>';
+    if (!$show_filter) {
+        return '<div class="lvf"><div class="lvf-grid">' . $cards . '</div></div>';
     }
 
-    $out .= '<div class="lvf-grid">';
+    // Zähler je Wert (für die Checkbox-Badges).
+    $reg_counts = array(); $aud_counts = array();
     foreach ($items as $f) {
-        $icon = isset($icons[$f['icon']]) ? $icons[$f['icon']] : $icons['_default'];
-        $url  = livento_cc_foerder_url($f['slug']);
-        $rd   = '|' . implode('|', (array) ($f['region'] ?? array())) . '|';
-        $ad   = '|' . implode('|', (array) ($f['audience'] ?? array())) . '|';
-        $badges = array();
-        foreach ((array) ($f['region'] ?? array()) as $r) { $badges[] = isset($regions[$r]) ? $regions[$r] : $r; }
-        $out .= '<a class="lvf-card" href="' . esc_url($url) . '" data-region="' . esc_attr($rd) . '" data-audience="' . esc_attr($ad) . '">';
-        $out .= '<span class="lvf-ic" aria-hidden="true">' . $icon . '</span>';
-        $out .= '<h3 class="lvf-t">' . esc_html($f['title']) . '</h3>';
-        if (!empty($f['short'])) {
-            $out .= '<p class="lvf-d">' . esc_html(mb_substr(wp_strip_all_tags($f['short']), 0, 150)) . '</p>';
-        }
-        if (!empty($badges)) {
-            $out .= '<p class="lvf-meta">' . esc_html(implode(' · ', $badges)) . '</p>';
-        }
-        $out .= '<span class="lvf-cta">Mehr erfahren →</span>';
-        $out .= '</a>';
+        foreach ((array) ($f['region'] ?? array()) as $r) { $reg_counts[$r] = (isset($reg_counts[$r]) ? $reg_counts[$r] : 0) + 1; }
+        foreach ((array) ($f['audience'] ?? array()) as $u) { $aud_counts[$u] = (isset($aud_counts[$u]) ? $aud_counts[$u] : 0) + 1; }
     }
-    $out .= '</div><p class="lvf-count" aria-live="polite"></p></div>';
-    if ($show_filter) {
-        $out .= livento_cc_foerder_js();
+
+    $out  = '<div class="lvf" id="lvf-grid-wrap"><div class="lvf-layout">';
+    $out .= '<aside class="lvf-sidebar">';
+    $out .= '<div class="lvf-side-head"><span class="lvf-side-title">Filter</span><button type="button" class="lvf-reset" hidden>Zurücksetzen</button></div>';
+    // Zielgruppe
+    $out .= '<details class="lvf-fgroup" open><summary><span class="lvf-fgroup-title">Für</span></summary><div class="lvf-checks">';
+    foreach ($auds as $k => $label) {
+        $c = isset($aud_counts[$k]) ? $aud_counts[$k] : 0;
+        $out .= '<label class="lvf-check"><input type="checkbox" data-dim="audience" value="' . esc_attr($k) . '"><span class="lvf-check-lbl">' . esc_html($label) . '</span><span class="lvf-check-cnt">' . (int) $c . '</span></label>';
     }
+    $out .= '</div></details>';
+    // Region — ALLE Bundesländer + Bundesweit
+    $out .= '<details class="lvf-fgroup" open><summary><span class="lvf-fgroup-title">Region</span></summary><div class="lvf-checks">';
+    foreach ($regions as $k => $label) {
+        $c = isset($reg_counts[$k]) ? $reg_counts[$k] : 0;
+        $out .= '<label class="lvf-check"><input type="checkbox" data-dim="region" value="' . esc_attr($k) . '"><span class="lvf-check-lbl">' . esc_html($label) . '</span><span class="lvf-check-cnt">' . (int) $c . '</span></label>';
+    }
+    $out .= '</div></details>';
+    $out .= '</aside>';
+    // Hauptbereich
+    $out .= '<div class="lvf-main">';
+    $out .= '<p class="lvf-count" aria-live="polite"></p>';
+    $out .= '<div class="lvf-grid">' . $cards . '</div>';
+    $out .= '<p class="lvf-empty" hidden>Keine Förderung für diese Auswahl. <button type="button" class="lvf-reset-2">Filter zurücksetzen</button></p>';
+    $out .= '</div></div></div>';
+    $out .= livento_cc_foerder_js();
     return $out;
+}
+
+/** Eine Förderprogramm-Kachel (für Grid + Berater-Ergebnis wiederverwendbar). */
+function livento_cc_foerder_card_html($f, $regions, $icons) {
+    $icon = isset($icons[$f['icon']]) ? $icons[$f['icon']] : $icons['_default'];
+    $url  = livento_cc_foerder_url($f['slug']);
+    $rd   = '|' . implode('|', (array) ($f['region'] ?? array())) . '|';
+    $ad   = '|' . implode('|', (array) ($f['audience'] ?? array())) . '|';
+    $badges = array();
+    foreach ((array) ($f['region'] ?? array()) as $r) { $badges[] = isset($regions[$r]) ? $regions[$r] : $r; }
+    $h  = '<a class="lvf-card" href="' . esc_url($url) . '" data-region="' . esc_attr($rd) . '" data-audience="' . esc_attr($ad) . '">';
+    $h .= '<span class="lvf-ic" aria-hidden="true">' . $icon . '</span>';
+    $h .= '<h3 class="lvf-t">' . esc_html($f['title']) . '</h3>';
+    if (!empty($f['short'])) {
+        $h .= '<p class="lvf-d">' . esc_html(mb_substr(wp_strip_all_tags($f['short']), 0, 150)) . '</p>';
+    }
+    if (!empty($badges)) {
+        $h .= '<p class="lvf-meta">' . esc_html(implode(' · ', $badges)) . '</p>';
+    }
+    $h .= '<span class="lvf-cta">Mehr erfahren →</span></a>';
+    return $h;
 }
 
 function livento_cc_render_foerder_detail($f) {
@@ -2656,41 +2776,40 @@ function livento_cc_foerder_js() {
 (function(){
   var root = document.getElementById('lvf-grid-wrap');
   if(!root) return;
-  var cards = Array.prototype.slice.call(root.querySelectorAll('.lvf-card'));
-  var reset = root.querySelector('.lvf-reset');
-  var countEl = root.querySelector('.lvf-count');
-  var total = cards.length;
-  var active = {region:[], audience:[]};
+  var cards  = Array.prototype.slice.call(root.querySelectorAll('.lvf-card'));
+  var checks = Array.prototype.slice.call(root.querySelectorAll('.lvf-check input[type=checkbox]'));
+  var reset  = root.querySelector('.lvf-reset');
+  var reset2 = root.querySelector('.lvf-reset-2');
+  var countEl= root.querySelector('.lvf-count');
+  var emptyEl= root.querySelector('.lvf-empty');
+  var total  = cards.length;
+  function active(){
+    var a={region:[],audience:[]};
+    checks.forEach(function(c){ if(c.checked){ a[c.getAttribute('data-dim')].push(c.value); } });
+    return a;
+  }
   function apply(){
-    var shown=0;
+    var a=active(), shown=0;
     cards.forEach(function(c){
       var ok=true;
       ['region','audience'].forEach(function(d){
-        if(active[d].length){
+        if(a[d].length){
           var vals=(c.getAttribute('data-'+d)||'').split('|').filter(function(x){return x;}), hit=false;
-          for(var i=0;i<active[d].length;i++){ if(vals.indexOf(active[d][i])>-1){hit=true;break;} }
+          for(var i=0;i<a[d].length;i++){ if(vals.indexOf(a[d][i])>-1){hit=true;break;} }
           if(!hit) ok=false;
         }
       });
       c.style.display=ok?'':'none'; if(ok)shown++;
     });
-    var any=active.region.length||active.audience.length;
-    if(reset) reset.hidden=!any;
-    if(countEl) countEl.textContent = any ? (shown+' von '+total) : '';
+    var any=a.region.length||a.audience.length;
+    if(reset)  reset.hidden=!any;
+    if(countEl)countEl.textContent = any ? (shown+' von '+total) : '';
+    if(emptyEl)emptyEl.hidden = !(any && shown===0);
   }
-  Array.prototype.forEach.call(root.querySelectorAll('.lvf-pill'), function(p){
-    p.addEventListener('click', function(){
-      var d=p.getAttribute('data-dim'), v=p.getAttribute('data-value'), arr=active[d];
-      var i=arr.indexOf(v);
-      if(i>-1){arr.splice(i,1);p.classList.remove('on');}else{arr.push(v);p.classList.add('on');}
-      apply();
-    });
-  });
-  if(reset) reset.addEventListener('click', function(){
-    active={region:[],audience:[]};
-    Array.prototype.forEach.call(root.querySelectorAll('.lvf-pill.on'),function(p){p.classList.remove('on');});
-    apply();
-  });
+  checks.forEach(function(c){ c.addEventListener('change', apply); });
+  function clearAll(){ checks.forEach(function(c){ c.checked=false; }); apply(); }
+  if(reset)  reset.addEventListener('click', clearAll);
+  if(reset2) reset2.addEventListener('click', clearAll);
 })();
 </script>
 JS;
@@ -2703,22 +2822,34 @@ function livento_cc_foerder_styles() {
     $css = '
 .lvf{--lvf-green:#004D33;--lvf-lime:#5C8A30;--lvf-accent:#a4d07b;color:#222;line-height:1.6}
 .lvf a{color:var(--lvf-green)}
-.lvf-filter{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
-.lvf-fg{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.lvf-fl{font-weight:600;color:var(--lvf-green);font-size:.85rem;min-width:60px}
-.lvf-pill{background:#fff;border:1px solid #cdd9c2;color:#2b3a2b;border-radius:99px;padding:5px 12px;font-size:.82rem;cursor:pointer}
-.lvf-pill:hover{border-color:var(--lvf-lime)}
-.lvf-pill.on{background:var(--lvf-green);border-color:var(--lvf-green);color:#fff}
-.lvf-reset{align-self:flex-start;background:none;border:none;color:var(--lvf-lime);text-decoration:underline;cursor:pointer;font-size:.82rem;padding:0}
-.lvf-count{color:var(--lvf-lime);font-size:.85rem;margin:10px 0 0}
-.lvf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
-.lvf-card{display:flex;flex-direction:column;background:#fff;border:1px solid #eee;border-radius:14px;padding:24px 22px;text-decoration:none;min-height:150px;transition:transform .18s,box-shadow .18s}
-.lvf-card:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10)}
+.lvf-layout{display:flex;gap:26px;align-items:flex-start}
+.lvf-sidebar{flex:0 0 230px;position:sticky;top:20px}
+.lvf-main{flex:1;min-width:0}
+.lvf-side-head{display:flex;align-items:center;justify-content:space-between;margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid #eef2ea}
+.lvf-side-title{font-weight:700;color:var(--lvf-green);font-size:1rem}
+.lvf-reset,.lvf-reset-2{background:none;border:none;color:var(--lvf-lime);text-decoration:underline;cursor:pointer;font-size:.82rem;padding:0}
+.lvf-fgroup{border-bottom:1px solid #eef2ea;padding:8px 0}
+.lvf-fgroup>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-weight:600;color:#2b3a2b;font-size:.92rem;padding:4px 0}
+.lvf-fgroup>summary::-webkit-details-marker{display:none}
+.lvf-fgroup>summary::after{content:"\\25BE";color:#9aa6a0;font-size:.7rem;transition:transform .15s}
+.lvf-fgroup[open]>summary::after{transform:rotate(180deg)}
+.lvf-checks{display:flex;flex-direction:column;gap:2px;margin:6px 0 4px;max-height:280px;overflow:auto}
+.lvf-check{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;cursor:pointer;font-size:.9rem;color:#2b3a2b}
+.lvf-check:hover{background:#f3f8ee}
+.lvf-check input{accent-color:var(--lvf-green);width:16px;height:16px;margin:0;flex:0 0 auto}
+.lvf-check-lbl{flex:1}
+.lvf-check-cnt{color:#9aa6a0;font-size:.78rem}
+.lvf-count{color:var(--lvf-lime);font-size:.85rem;margin:0 0 12px;min-height:1em}
+.lvf-empty{color:#555;font-size:.92rem;margin:16px 0}
+.lvf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:20px}
+.lvf-card{display:flex;flex-direction:column;background:#fff;border:1px solid #eee;border-radius:14px;padding:24px 22px;text-decoration:none!important;min-height:150px;transition:transform .18s,box-shadow .18s,border-color .18s}
+.lvf-card:hover,.lvf-card:focus{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10);border-color:var(--lvf-accent);text-decoration:none!important}
 .lvf-ic{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:12px;margin-bottom:14px;background:rgba(164,208,123,.22);color:var(--lvf-green)}
-.lvf-t{margin:0 0 8px;font-size:1.1rem;color:var(--lvf-green)}
-.lvf-d{margin:0 0 8px;font-size:.9rem;color:#444}
-.lvf-meta{margin:0;font-size:.8rem;color:var(--lvf-lime)}
-.lvf-cta{margin-top:auto;padding-top:12px;font-weight:600;color:var(--lvf-green)}
+.lvf-t{margin:0 0 8px;font-size:1.1rem;color:var(--lvf-green)!important}
+.lvf-d{margin:0 0 8px;font-size:.9rem;color:#444!important}
+.lvf-meta{margin:0;font-size:.8rem;color:var(--lvf-lime)!important}
+.lvf-cta{margin-top:auto;padding-top:12px;font-weight:600;color:var(--lvf-green)!important}
+.lvf-card:hover .lvf-t,.lvf-card:hover .lvf-cta{color:#006644!important}
 .lvf-detail{max-width:760px;margin:0 auto}
 .lvf-dt{color:var(--lvf-green);font-size:2rem;line-height:1.2;margin:.2em 0}
 .lvf-badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 16px}
@@ -2729,8 +2860,12 @@ function livento_cc_foerder_styles() {
 .lvf a.lvf-btn:hover{background:#006644!important}
 .lvf a.lvf-btn-ghost{background:#fff!important;color:var(--lvf-green)!important;border:1px solid var(--lvf-green)}
 .lvf-footer{margin-top:40px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
-@media(max-width:900px){.lvf-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:560px){.lvf-grid{grid-template-columns:1fr}}
+@media(max-width:782px){
+  .lvf-layout{flex-direction:column}
+  .lvf-sidebar{flex:1 1 auto;width:100%;position:static}
+  .lvf-checks{flex-direction:row;flex-wrap:wrap;max-height:none}
+  .lvf-check{flex:0 0 auto}
+}
 ';
     return '<style id="lvf-styles">' . $css . '</style>';
 }
