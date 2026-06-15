@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.7.2
+ * Version:           1.7.3
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -46,6 +46,8 @@
  *         Redirect fuer die Sitemap unterdrueckt → direktes 200.
  * v1.7.2: Auto-Updates aus dem GitHub-Repo (Plugin Update Checker) — neue Releases erscheinen als
  *         Ein-Klick-Update im WP-Dashboard. Diese Version einmal manuell installieren, danach automatisch.
+ * v1.7.3: Fix Sitemap — X-Robots-Tag: noindex entfernt (Google lehnte die Sitemap sonst ab:
+ *         „konnte nicht gelesen werden / 0 Seiten"). Sitemap-Dateien werden ohnehin nicht indexiert.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -556,7 +558,8 @@ add_action('template_redirect', function () {
     $offerings = livento_cc_get_offerings();
     if (!headers_sent()) {
         header('Content-Type: application/xml; charset=UTF-8');
-        header('X-Robots-Tag: noindex'); // die Sitemap-Datei selbst nicht indexieren
+        // KEIN X-Robots-Tag: noindex — Google verweigert sonst die Verarbeitung der Sitemap
+        // („Sitemap konnte nicht gelesen werden"). Sitemap-Dateien werden ohnehin nicht indexiert.
         header('Cache-Control: public, max-age=3600');
     }
     echo livento_cc_build_sitemap_xml($offerings); // phpcs:ignore — fertiges XML

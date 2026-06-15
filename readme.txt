@@ -3,12 +3,14 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.7.2
+Stable tag: 1.7.3
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+= 1.7.3 =
+* Fix Sitemap: X-Robots-Tag noindex entfernt (Google lehnte sie sonst ab).
 = 1.7.2 =
 * Auto-Updates aus diesem GitHub-Repo (Plugin Update Checker).
 = 1.7.1 =
