@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.7.4
+ * Version:           1.7.5
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -50,6 +50,8 @@
  *         „konnte nicht gelesen werden / 0 Seiten"). Sitemap-Dateien werden ohnehin nicht indexiert.
  * v1.7.4: Fix Fatal Error auf Detailseiten — kein fremdes Parsedown mehr (inkompatible Forks ohne
  *         setSafeMode() per Elementor/Plugins). Eigener Markdown-Renderer wird immer genutzt.
+ * v1.7.5: [livento_kurse] unterstuetzt jetzt Attribute: limit (N Karten, kuratierter Block ohne
+ *         Filter), sort (Default-Sortierung, server-seitig) und filters (yes/no).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -753,7 +755,13 @@ function livento_cc_jsonld_list($offerings) {
  * 7. Shortcode + Rendering
  * ============================================================ */
 
-add_shortcode('livento_kurse', function () {
+add_shortcode('livento_kurse', function ($atts) {
+    $a = shortcode_atts(array(
+        'limit'   => 0,                       // 0 = alle; >0 = nur die ersten N (kuratierter Block)
+        'sort'    => 'next_start',            // next_start|newest|popular|rating|most_booked|price_asc|price_desc
+        'filters' => '',                      // '' = auto (Filter an, wenn kein limit) | 'yes' | 'no'
+    ), $atts, 'livento_kurse');
+
     $slug = livento_cc_current_slug();
     if ($slug) {
         $offering = isset($GLOBALS['livento_cc_current'])
@@ -763,7 +771,12 @@ add_shortcode('livento_kurse', function () {
             ? livento_cc_render_detail($offering)
             : livento_cc_render_notfound();
     } else {
-        $body = livento_cc_render_list(livento_cc_get_offerings());
+        $limit   = max(0, (int) $a['limit']);
+        $filters = strtolower(trim((string) $a['filters']));
+        // Bei gesetztem Limit standardmaessig ohne Filterleiste (kuratierter Block),
+        // sonst mit. Per filters="yes"/"no" explizit erzwingbar.
+        $show_filters = ($filters === 'yes') || ($filters !== 'no' && $limit === 0);
+        $body = livento_cc_render_list(livento_cc_get_offerings(), $a['sort'], $limit, $show_filters);
     }
     // Styles dem zurueckgegebenen Markup voranstellen (nicht echoen — sonst
     // Leak-Risiko, wenn the_content-Filter ausserhalb der Seitenausgabe laeuft).
@@ -799,18 +812,33 @@ function livento_cc_render_notfound() {
         . '<p><a href="' . esc_url(livento_cc_list_url()) . '">Zur Kursübersicht</a></p></div>';
 }
 
-function livento_cc_render_list($offerings) {
+function livento_cc_render_list($offerings, $sort = 'next_start', $limit = 0, $show_filters = true) {
     if (empty($offerings)) {
         return '<div class="lvk"><p>Aktuell sind keine öffentlichen Angebote verfügbar.</p></div>';
     }
-    $offerings = livento_cc_augment($offerings); // _duration/_startmonth/_availability ergaenzen
+    $offerings = livento_cc_augment($offerings);           // _duration/_startmonth/_availability
+    $offerings = livento_cc_sort_offerings($offerings, $sort);
+    if ($limit > 0) {
+        $offerings = array_slice($offerings, 0, $limit);
+    }
 
-    $out  = '<div class="lvk lvk-list" id="lvk-catalog">';
-    $out .= '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_list($offerings)) . '</script>';
+    $jsonld = '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_list($offerings)) . '</script>';
+
+    // Kuratierter Block ohne Filter-UI (z. B. [livento_kurse limit="6"]): nur Karten, kein JS.
+    if (!$show_filters) {
+        $out = '<div class="lvk lvk-list">' . $jsonld . '<div class="lvk-grid">';
+        foreach ($offerings as $o) {
+            $out .= livento_cc_render_card($o);
+        }
+        return $out . '</div></div>';
+    }
+
+    // Voller Katalog mit Filter-Sidebar + Toolbar + JS.
+    $out  = '<div class="lvk lvk-list" id="lvk-catalog">' . $jsonld;
     $out .= '<div class="lvk-layout">';
     $out .= '<aside class="lvk-sidebar">' . livento_cc_render_sidebar($offerings) . '</aside>';
     $out .= '<div class="lvk-main">';
-    $out .= livento_cc_render_toolbar();
+    $out .= livento_cc_render_toolbar($sort);
     $out .= '<div class="lvk-grid" id="lvk-grid">';
     foreach ($offerings as $o) {
         $out .= livento_cc_render_card($o);
@@ -821,6 +849,48 @@ function livento_cc_render_list($offerings) {
     $out .= livento_cc_filter_js();
     $out .= '</div>';
     return $out;
+}
+
+/** Server-seitige Sortierung (spiegelt die JS-Sortierung im Filter). */
+function livento_cc_sort_offerings($offerings, $sort) {
+    switch ($sort) {
+        case 'newest':
+            usort($offerings, function ($a, $b) { return strcmp((string) ($b['published_at'] ?? ''), (string) ($a['published_at'] ?? '')); });
+            break;
+        case 'popular':
+            usort($offerings, function ($a, $b) {
+                $fa = !empty($a['is_featured']) ? (int) ($a['featured_order'] ?? 0) : 99999;
+                $fb = !empty($b['is_featured']) ? (int) ($b['featured_order'] ?? 0) : 99999;
+                if ($fa !== $fb) { return $fa - $fb; }
+                return (int) ($b['booking_count'] ?? 0) - (int) ($a['booking_count'] ?? 0);
+            });
+            break;
+        case 'rating':
+            usort($offerings, function ($a, $b) { return (float) ($b['rating_avg'] ?? -1) <=> (float) ($a['rating_avg'] ?? -1); });
+            break;
+        case 'most_booked':
+            usort($offerings, function ($a, $b) { return (int) ($b['booking_count'] ?? 0) - (int) ($a['booking_count'] ?? 0); });
+            break;
+        case 'price_asc':
+            usort($offerings, function ($a, $b) {
+                $pa = ($a['public_price'] === null || $a['public_price'] === '') ? INF : (float) $a['public_price'];
+                $pb = ($b['public_price'] === null || $b['public_price'] === '') ? INF : (float) $b['public_price'];
+                return $pa <=> $pb;
+            });
+            break;
+        case 'price_desc':
+            usort($offerings, function ($a, $b) {
+                $pa = ($a['public_price'] === null || $a['public_price'] === '') ? -INF : (float) $a['public_price'];
+                $pb = ($b['public_price'] === null || $b['public_price'] === '') ? -INF : (float) $b['public_price'];
+                return $pb <=> $pa;
+            });
+            break;
+        case 'next_start':
+        default:
+            usort($offerings, function ($a, $b) { return strcmp((string) ($a['start_datetime'] ?? '9999'), (string) ($b['start_datetime'] ?? '9999')); });
+            break;
+    }
+    return $offerings;
 }
 
 /** Sammelt distinct Facet-Werte (value => count) einer Dimension ueber alle Angebote. */
@@ -877,18 +947,23 @@ function livento_cc_facet_label($lab, $val) {
 }
 
 /** Toolbar ueber der Kursliste: Suche + Sortierung + Preis + Treffer-Zaehler. */
-function livento_cc_render_toolbar() {
+function livento_cc_render_toolbar($sort = 'next_start') {
+    $sort_opts = array(
+        'next_start'  => 'Sortierung: Nächster Start',
+        'newest'      => 'Neueste zuerst',
+        'popular'     => 'Beliebt',
+        'rating'      => 'Beste Bewertung',
+        'most_booked' => 'Meiste Buchungen',
+        'price_asc'   => 'Preis aufsteigend',
+        'price_desc'  => 'Preis absteigend',
+    );
+    $sort_html = '';
+    foreach ($sort_opts as $val => $label) {
+        $sort_html .= '<option value="' . esc_attr($val) . '"' . ($val === $sort ? ' selected' : '') . '>' . esc_html($label) . '</option>';
+    }
     $h  = '<div class="lvk-main-bar">';
     $h .= '<input type="search" class="lvk-search" placeholder="Kurse durchsuchen…" aria-label="Kurse durchsuchen">';
-    $h .= '<select class="lvk-sort" aria-label="Sortierung">'
-        . '<option value="next_start">Sortierung: Nächster Start</option>'
-        . '<option value="newest">Neueste zuerst</option>'
-        . '<option value="popular">Beliebt</option>'
-        . '<option value="rating">Beste Bewertung</option>'
-        . '<option value="most_booked">Meiste Buchungen</option>'
-        . '<option value="price_asc">Preis aufsteigend</option>'
-        . '<option value="price_desc">Preis absteigend</option>'
-        . '</select>';
+    $h .= '<select class="lvk-sort" aria-label="Sortierung">' . $sort_html . '</select>';
     $h .= '<select class="lvk-pricemax" aria-label="Maximalpreis">'
         . '<option value="">Preis: alle</option>'
         . '<option value="0">Nur kostenfrei</option>'
@@ -1437,9 +1512,13 @@ function livento_cc_shortcodes() {
         array(
             'tag'     => 'livento_kurse',
             'title'   => 'Kurskatalog',
-            'desc'    => 'Vollständiger Katalog: Karten-Liste mit Filterleiste + Einzelkurs-Detailseiten unter /' . LIVENTO_CC_BASE . '/<slug>.',
-            'example' => '[livento_kurse]',
-            'atts'    => array(),
+            'desc'    => 'Vollständiger Katalog: Karten-Liste mit Filterleiste + Einzelkurs-Detailseiten unter /' . LIVENTO_CC_BASE . '/<slug>. Ohne Attribute = voller Katalog mit Filtern.',
+            'example' => '[livento_kurse limit="6" sort="popular"]',
+            'atts'    => array(
+                'limit'   => 'Anzahl Karten (0 = alle). >0 erzeugt einen kuratierten Block ohne Filterleiste.',
+                'sort'    => 'Sortierung: next_start (Default), newest, popular, rating, most_booked, price_asc, price_desc.',
+                'filters' => 'Filterleiste erzwingen: „yes" oder „no" (Default: an, außer wenn limit gesetzt ist).',
+            ),
         ),
         array(
             'tag'     => 'livento_kurse_suche',
