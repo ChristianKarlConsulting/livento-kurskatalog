@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.13.0
+ * Version:           1.14.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -69,6 +69,8 @@
  * v1.13.0: Admin-Tab „Anleitung" (Schritt-für-Schritt-Hilfe im Backend) + ANLEITUNG.md-Handbuch.
  *          Förder-Filter im Kurs-Look: linke Sidebar mit Checkboxen (alle Bundesländer), kein
  *          blaues Hover, Card-Farben explizit.
+ * v1.14.0: [livento_kurse audience="…"] serverseitiger Zielgruppen-Vorfilter (kombinierbar mit
+ *          topics); generischer Helper livento_cc_filter_by_field().
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -790,8 +792,9 @@ add_shortcode('livento_kurse', function ($atts) {
     $a = shortcode_atts(array(
         'limit'   => 0,                       // 0 = alle; >0 = nur die ersten N (kuratierter Block)
         'sort'    => 'next_start',            // next_start|newest|popular|rating|most_booked|price_asc|price_desc
-        'filters' => '',                      // '' = auto (Filter an, wenn kein limit) | 'yes' | 'no'
-        'topics'  => '',                      // '' = alle | Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz)
+        'filters'  => '',                     // '' = auto (Filter an, wenn kein limit) | 'yes' | 'no'
+        'topics'   => '',                     // '' = alle | Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz)
+        'audience' => '',                     // '' = alle | Komma-Liste von Zielgruppen-Slugs (z. B. fuehrungskraefte,praxisanleitende)
     ), $atts, 'livento_kurse');
 
     $slug = livento_cc_current_slug();
@@ -808,7 +811,10 @@ add_shortcode('livento_kurse', function ($atts) {
         // Bei gesetztem Limit standardmaessig ohne Filterleiste (kuratierter Block),
         // sonst mit. Per filters="yes"/"no" explizit erzwingbar.
         $show_filters = ($filters === 'yes') || ($filters !== 'no' && $limit === 0);
-        $body = livento_cc_render_list(livento_cc_filter_by_topics(livento_cc_get_offerings(), $a['topics']), $a['sort'], $limit, $show_filters);
+        $offerings = livento_cc_get_offerings();
+        $offerings = livento_cc_filter_by_field($offerings, 'topics', $a['topics']);
+        $offerings = livento_cc_filter_by_field($offerings, 'audience', $a['audience']);
+        $body = livento_cc_render_list($offerings, $a['sort'], $limit, $show_filters);
     }
     // Styles dem zurueckgegebenen Markup voranstellen (nicht echoen — sonst
     // Leak-Risiko, wenn the_content-Filter ausserhalb der Seitenausgabe laeuft).
@@ -1129,19 +1135,19 @@ function livento_cc_render_notfound() {
         . '<p><a href="' . esc_url(livento_cc_list_url()) . '">Zur Kursübersicht</a></p></div>';
 }
 
-/** Serverseitiger Themen-Vorfilter für [livento_kurse topics="…"]. Komma-Liste von Slugs;
- *  ein Angebot bleibt, wenn mind. einer seiner Themen-Slugs passt (ODER-Verknüpfung). */
-function livento_cc_filter_by_topics($offerings, $topics) {
-    $topics = trim((string) $topics);
-    if ($topics === '') {
+/** Serverseitiger Vorfilter für [livento_kurse] über ein Mehrfachwert-Feld (z. B. topics, audience).
+ *  $csv = Komma-Liste von Slugs; ein Angebot bleibt, wenn mind. ein Slug passt (ODER-Verknüpfung). */
+function livento_cc_filter_by_field($offerings, $field, $csv) {
+    $csv = trim((string) $csv);
+    if ($csv === '') {
         return $offerings;
     }
-    $want = array_values(array_filter(array_map(function ($t) { return sanitize_title(trim($t)); }, explode(',', $topics))));
+    $want = array_values(array_filter(array_map(function ($t) { return sanitize_title(trim($t)); }, explode(',', $csv))));
     if (empty($want)) {
         return $offerings;
     }
-    return array_values(array_filter($offerings, function ($o) use ($want) {
-        $have = (isset($o['topics']) && is_array($o['topics'])) ? array_map('sanitize_title', $o['topics']) : array();
+    return array_values(array_filter($offerings, function ($o) use ($field, $want) {
+        $have = (isset($o[$field]) && is_array($o[$field])) ? array_map('sanitize_title', $o[$field]) : array();
         return (bool) array_intersect($want, $have);
     }));
 }
@@ -1953,7 +1959,8 @@ function livento_cc_shortcodes() {
                 'limit'   => 'Anzahl Karten (0 = alle). >0 erzeugt einen kuratierten Block ohne Filterleiste.',
                 'sort'    => 'Sortierung: next_start (Default), newest, popular, rating, most_booked, price_asc, price_desc.',
                 'filters' => 'Filterleiste erzwingen: „yes" oder „no" (Default: an, außer wenn limit gesetzt ist).',
-                'topics'  => 'Auf Themen vorfiltern: Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz). Leer = alle.',
+                'topics'   => 'Auf Themen vorfiltern: Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz). Leer = alle.',
+                'audience' => 'Auf Zielgruppen vorfiltern: Komma-Liste von Zielgruppen-Slugs (z. B. fuehrungskraefte,praxisanleitende). Slugs siehe „Filter & Slugs". Leer = alle.',
             ),
         ),
         array(
@@ -2256,6 +2263,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li><code>[livento_kurse]</code> = voller Katalog mit Filter-Sidebar.</li>';
     echo '<li><code>[livento_kurse limit="6"]</code> = kuratierter 6er-Block ohne Filter.</li>';
     echo '<li><code>[livento_kurse limit="6" topics="leitung-management"]</code> = Block nur mit Kursen dieses Themas (Slugs siehe <a href="' . $tab('slugs') . '">Filter &amp; Slugs</a>, mehrere mit Komma).</li>';
+    echo '<li><code>[livento_kurse audience="fuehrungskraefte"]</code> = nur Kurse für diese Zielgruppe (kombinierbar mit <code>topics</code>).</li>';
     echo '<li>Deep-Links: <code>' . esc_html(livento_cc_list_url()) . '?format=online_live</code> usw.</li>';
     echo '</ul>';
     echo '<p>Neue Kurse erscheinen automatisch (nach Cache-Ablauf bzw. „Cache leeren"/Webhook).</p>';

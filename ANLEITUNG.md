@@ -74,6 +74,7 @@ Lege je eine WordPress-**Seite** an und setze den jeweiligen Shortcode in den In
 | `sort` | `next_start` (Standard), `newest`, `popular`, `rating`, `most_booked`, `price_asc`, `price_desc`. |
 | `filters` | Filterleiste erzwingen: `yes`/`no` (Standard: an, außer bei gesetztem `limit`). |
 | `topics` | Auf Themen vorfiltern: Komma-Liste von Themen-Slugs (z. B. `leitung-management,demenz`). |
+| `audience` | Auf Zielgruppen vorfiltern: Komma-Liste von Zielgruppen-Slugs (z. B. `fuehrungskraefte,praxisanleitende`). |
 
 Beispiele:
 ```
@@ -81,7 +82,11 @@ Beispiele:
 [livento_kurse limit="6"]                         ← 6 Kurse als Block
 [livento_kurse limit="6" topics="leitung-management"]
 [livento_kurse topics="demenz,palliative-care"]   ← nur diese Themen (ODER)
+[livento_kurse audience="fuehrungskraefte"]       ← nur Kurse für Führungskräfte
+[livento_kurse topics="demenz" audience="pflegehilfskraefte"]
 ```
+
+> `topics` und `audience` lassen sich kombinieren. Die jeweiligen Slugs stehen live unter **Livento Katalog → Filter & Slugs**. Zielgruppen-Slugs sind u. a. `pflegefachkraefte`, `pflegehilfskraefte`, `fuehrungskraefte`, `praxisanleitende`, `betreuungskraefte_43b_53b`, `quereinsteigende`, `angehoerige`.
 
 ### `[livento_themen]` — Themen-Kacheln
 `limit`, `sort` (`count`/`alpha`), `counts` (`yes`/`no`), `all` (Alle-Themen-Kachel), `min` (Themen mit < N Kursen ausblenden).
