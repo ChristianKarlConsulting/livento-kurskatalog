@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.10.0
+ * Version:           1.11.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -59,6 +59,9 @@
  *         (Embed in den Einstellungen) und passende Kurse inline im Ergebnis.
  * v1.10.0: Admin-Tab „Berater" — Interessen-Aussagen + Themen-Mapping direkt im Backend editieren
  *          (hinzufügen/entfernen, Themen ankreuzen, „Auf Standard zurücksetzen"). Speicherung in DB.
+ * v1.11.0: Förderprogramme als eigener Inhaltstyp — Admin-Tab „Förderprogramme" (Editor), Shortcode
+ *          [livento_foerderungen] (Grid + Region-/Zielgruppen-Filter), eigene Detailseiten
+ *          /foerdermoeglichkeiten/<slug> inkl. SEO + Sitemap, optionale Kurs-Verknüpfung (funding_key).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -89,6 +92,10 @@ if (!defined('LIVENTO_CC_ANON_KEY')) {
 // Liste:  https://livento-bildung.de/kurse/
 // Detail: https://livento-bildung.de/kurse/<kurs-slug>/
 define('LIVENTO_CC_BASE', 'kurse');
+
+// URL-Basis = Slug der WordPress-Seite mit [livento_foerderungen]. Detailseiten unter
+// /<base>/<slug>/. Muss zum Slug der „Fördermöglichkeiten"-Seite passen.
+define('LIVENTO_CC_FOERDER_BASE', 'foerdermoeglichkeiten');
 
 // Cache-Dauer in Sekunden (Liste + Einzelkurse). 3 Stunden (Spec-Default).
 define('LIVENTO_CC_TTL', 3 * HOUR_IN_SECONDS);
@@ -589,6 +596,16 @@ function livento_cc_build_sitemap_xml($offerings) {
         $urls .= '  <url><loc>' . esc_url(livento_cc_detail_url($o['slug'])) . '</loc>'
                . ($lastmod ? '<lastmod>' . esc_html($lastmod) . '</lastmod>' : '')
                . '<changefreq>weekly</changefreq><priority>0.8</priority></url>' . "\n";
+    }
+    // Förderprogramme (Übersicht + Detailseiten)
+    if (function_exists('livento_cc_foerderungen')) {
+        $urls .= '  <url><loc>' . esc_url(livento_cc_foerder_list_url()) . '</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>' . "\n";
+        foreach (livento_cc_foerderungen() as $f) {
+            if (empty($f['slug'])) {
+                continue;
+            }
+            $urls .= '  <url><loc>' . esc_url(livento_cc_foerder_url($f['slug'])) . '</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>' . "\n";
+        }
     }
     return '<?xml version="1.0" encoding="UTF-8"?>' . "\n"
          . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n"
@@ -1950,6 +1967,17 @@ function livento_cc_shortcodes() {
                 'min'    => 'Themen mit weniger als N Kursen ausblenden (Default 1).',
             ),
         ),
+        array(
+            'tag'     => 'livento_foerderungen',
+            'title'   => 'Förderprogramme',
+            'desc'    => 'Förderprogramme als Kachel-Grid mit Region-/Zielgruppen-Filter + eigene Detailseiten unter /' . LIVENTO_CC_FOERDER_BASE . '/<slug>. Pflege im Tab „Förderprogramme".',
+            'example' => '[livento_foerderungen]',
+            'atts'    => array(
+                'audience' => 'Vorfiltern auf Zielgruppe: privat | unternehmen (leer = alle).',
+                'region'   => 'Vorfiltern auf Region-Slug, z. B. bundesweit, sachsen (leer = alle).',
+                'filter'   => 'Filterleiste anzeigen: yes/no (Default yes).',
+            ),
+        ),
     );
 }
 
@@ -2002,9 +2030,38 @@ function livento_cc_admin_page() {
             $notice = 'Berater-Interessen gespeichert (' . count($clean) . ' Aussagen).';
         }
     }
+    if ((isset($_POST['livento_cc_save_foerder']) || isset($_POST['livento_cc_reset_foerder'])) && check_admin_referer('livento_cc_save_foerder')) {
+        if (isset($_POST['livento_cc_reset_foerder'])) {
+            delete_option('livento_cc_foerderungen');
+            $notice = 'Förderprogramme auf Standard zurückgesetzt.';
+        } else {
+            $rows  = (isset($_POST['lvk_foe']) && is_array($_POST['lvk_foe'])) ? wp_unslash($_POST['lvk_foe']) : array();
+            $clean = array();
+            foreach ($rows as $row) {
+                $title = isset($row['title']) ? sanitize_text_field($row['title']) : '';
+                if ($title === '') {
+                    continue;
+                }
+                $clean[] = array(
+                    'title'       => $title,
+                    'slug'        => (isset($row['slug']) && $row['slug'] !== '') ? sanitize_title($row['slug']) : sanitize_title($title),
+                    'icon'        => isset($row['icon']) ? sanitize_key($row['icon']) : '_default',
+                    'region'      => (isset($row['region']) && is_array($row['region'])) ? array_values(array_filter(array_map('sanitize_title', $row['region']))) : array(),
+                    'audience'    => (isset($row['audience']) && is_array($row['audience'])) ? array_values(array_filter(array_map('sanitize_key', $row['audience']))) : array(),
+                    'funding_key' => isset($row['funding_key']) ? sanitize_key($row['funding_key']) : '',
+                    'link'        => isset($row['link']) ? esc_url_raw(trim($row['link'])) : '',
+                    'short'       => isset($row['short']) ? sanitize_text_field($row['short']) : '',
+                    'body'        => isset($row['body']) ? sanitize_textarea_field($row['body']) : '',
+                );
+            }
+            update_option('livento_cc_foerderungen', $clean);
+            livento_cc_flush_cache();
+            $notice = 'Förderprogramme gespeichert (' . count($clean) . ').';
+        }
+    }
 
     $tab  = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
-    $tabs = array('overview' => 'Übersicht', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'settings' => 'Einstellungen');
+    $tabs = array('overview' => 'Übersicht', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
 
     echo '<div class="wrap"><h1>Livento Kurskatalog</h1>';
     if ($notice) {
@@ -2025,6 +2082,8 @@ function livento_cc_admin_page() {
         livento_cc_admin_tab_settings();
     } elseif ($tab === 'berater') {
         livento_cc_admin_tab_berater();
+    } elseif ($tab === 'foerderung') {
+        livento_cc_admin_tab_foerderung();
     } else {
         livento_cc_admin_tab_overview();
     }
@@ -2241,4 +2300,420 @@ if (defined('LIVENTO_CC_UPDATE_REPO') && LIVENTO_CC_UPDATE_REPO
             $lvk_uc->setAuthentication(LIVENTO_CC_UPDATE_TOKEN); // nur fuer PRIVATE Repos
         }
     }
+}
+
+/* ============================================================
+ * 12. Förderprogramme (eigener Inhaltstyp, plugin-verwaltet)
+ *
+ * Verwaltung im Admin-Tab „Förderprogramme", Anzeige via [livento_foerderungen]
+ * (Grid + Region-/Zielgruppen-Filter), eigene Detailseiten /<base>/<slug>/.
+ * ============================================================ */
+
+function livento_cc_foerder_regions() {
+    return array(
+        'bundesweit' => 'Bundesweit',
+        'baden-wuerttemberg' => 'Baden-Württemberg', 'bayern' => 'Bayern', 'berlin' => 'Berlin',
+        'brandenburg' => 'Brandenburg', 'bremen' => 'Bremen', 'hamburg' => 'Hamburg', 'hessen' => 'Hessen',
+        'mecklenburg-vorpommern' => 'Mecklenburg-Vorpommern', 'niedersachsen' => 'Niedersachsen',
+        'nordrhein-westfalen' => 'Nordrhein-Westfalen', 'rheinland-pfalz' => 'Rheinland-Pfalz',
+        'saarland' => 'Saarland', 'sachsen' => 'Sachsen', 'sachsen-anhalt' => 'Sachsen-Anhalt',
+        'schleswig-holstein' => 'Schleswig-Holstein', 'thueringen' => 'Thüringen',
+    );
+}
+function livento_cc_foerder_audiences() {
+    return array('privat' => 'Privatpersonen', 'unternehmen' => 'Unternehmen');
+}
+function livento_cc_foerder_icons() {
+    return array(
+        'bafoeg'      => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2 6 2s6-1 6-2v-5"/></svg>',
+        'euro'        => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9.5a4 4 0 100 5M7 11h6M7 13h6"/></svg>',
+        'gutschein'   => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 000 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 000-4z"/><path d="M12 6v12" stroke-dasharray="2 2"/></svg>',
+        'scheck'      => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/></svg>',
+        'star'        => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18l-5.8 3 1.1-6.5L2.6 9.8l6.5-.9z"/></svg>',
+        'building'    => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V5a1 1 0 011-1h8a1 1 0 011 1v16M14 9h5a1 1 0 011 1v11M8 8h2M8 12h2M8 16h2"/></svg>',
+        'certificate' => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="5"/><path d="M9 13l-1 7 4-2 4 2-1-7"/></svg>',
+        '_default'    => '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    );
+}
+
+/** Förderprogramme: Admin-Option → Default-Seed. */
+function livento_cc_foerderungen() {
+    $opt = get_option('livento_cc_foerderungen', null);
+    if (is_array($opt) && !empty($opt)) {
+        return $opt;
+    }
+    return livento_cc_foerderungen_default();
+}
+function livento_cc_foerderungen_default() {
+    return array(
+        array('title' => 'Aufstiegs-BAföG (AFBG)', 'slug' => 'aufstiegs-bafoeg', 'icon' => 'bafoeg',
+              'region' => array('bundesweit'), 'audience' => array('privat'),
+              'funding_key' => 'aufstiegs_bafoeg', 'link' => 'https://www.aufstiegs-bafoeg.de',
+              'short' => 'Fördert die Vorbereitung auf über 700 Fortbildungsabschlüsse – mit einkommensunabhängigen Zuschüssen und zinsgünstigem Darlehen.',
+              'body'  => "Das Aufstiegs-BAföG (AFBG) unterstützt berufliche Aufstiegsfortbildungen unabhängig vom Alter und Einkommen.\n\n- Maßnahmebeitrag: bis zu 15.000 € (50 % Zuschuss, Rest als Darlehen)\n- Unterhaltsbeitrag bei Vollzeit\n- Erlass eines Teils des Darlehens bei bestandener Prüfung\n\nGefördert werden u. a. Fachwirt-, Meister- und vergleichbare Fortbildungen."),
+        array('title' => 'Bildungsgutschein', 'slug' => 'bildungsgutschein', 'icon' => 'gutschein',
+              'region' => array('bundesweit'), 'audience' => array('privat'),
+              'funding_key' => 'azav_bildungsgutschein', 'link' => 'https://www.arbeitsagentur.de',
+              'short' => 'Die Agentur für Arbeit bzw. das Jobcenter kann bis zu 100 % der Weiterbildungskosten inkl. Nebenkosten übernehmen.',
+              'body'  => "Mit dem Bildungsgutschein fördern Agentur für Arbeit oder Jobcenter eine AZAV-zertifizierte Weiterbildung – bei Arbeitslosigkeit, drohender Arbeitslosigkeit oder fehlendem Berufsabschluss.\n\n- Übernahme von bis zu 100 % der Lehrgangskosten\n- ggf. Fahrt-, Unterkunfts- und Kinderbetreuungskosten\n\nSprechen Sie Ihre Vermittlungsfachkraft an – unsere AZAV-Kurse sind förderfähig."),
+        array('title' => 'Qualifizierungschancengesetz', 'slug' => 'qualifizierungschancengesetz', 'icon' => 'building',
+              'region' => array('bundesweit'), 'audience' => array('unternehmen'),
+              'funding_key' => 'qcg', 'link' => 'https://www.arbeitsagentur.de',
+              'short' => 'Förderung der Weiterbildung Beschäftigter – unabhängig von Qualifikation, Alter und Betriebsgröße.',
+              'body'  => "Das Qualifizierungschancengesetz (QCG) fördert die Weiterbildung von Beschäftigten, deren Tätigkeiten durch Technologie ersetzt werden können oder die in einem Engpassberuf arbeiten.\n\n- Zuschüsse zu Lehrgangskosten (je nach Betriebsgröße)\n- Zuschüsse zum Arbeitsentgelt während der Weiterbildung"),
+        array('title' => 'Fachkräfteoffensive Pflege (BW)', 'slug' => 'fachkraefteoffensive-pflege-bw', 'icon' => 'certificate',
+              'region' => array('baden-wuerttemberg'), 'audience' => array('privat'),
+              'funding_key' => '', 'link' => '',
+              'short' => 'Weiterbildungsförderung speziell für Quer- und Wiedereinsteiger:innen in die Pflege in Baden-Württemberg.',
+              'body'  => "Die Fachkräfteoffensive Pflege in Baden-Württemberg unterstützt den (Wieder-)Einstieg in Pflegeberufe mit Qualifizierungs- und Weiterbildungsangeboten."),
+        array('title' => 'Bildungsscheck M-V', 'slug' => 'bildungsscheck-mv', 'icon' => 'scheck',
+              'region' => array('mecklenburg-vorpommern'), 'audience' => array('unternehmen'),
+              'funding_key' => 'bildungsscheck', 'link' => '',
+              'short' => '50–70 % Förderung der Weiterbildungskosten (max. 500 €, bis 3.000 € bei Abschlussqualifizierung).',
+              'body'  => "Der Bildungsscheck Mecklenburg-Vorpommern fördert die berufliche Weiterbildung von Beschäftigten in kleinen und mittleren Unternehmen.\n\n- 50–70 % der Kosten\n- max. 500 € pro Scheck (bis 3.000 € bei Abschlussqualifizierung)"),
+        array('title' => 'Meisterbonus Sachsen', 'slug' => 'meisterbonus-sachsen', 'icon' => 'star',
+              'region' => array('sachsen'), 'audience' => array('privat'),
+              'funding_key' => '', 'link' => '',
+              'short' => 'Einmalige Prämie von 2.000 € nach bestandener Meisterprüfung in Sachsen.',
+              'body'  => "Der Meisterbonus Sachsen belohnt erfolgreiche Aufstiegsfortbildungen mit einer einmaligen Prämie von 2.000 € nach bestandener Meister- oder gleichwertiger Prüfung."),
+    );
+}
+function livento_cc_foerder_get($slug) {
+    $slug = sanitize_title($slug);
+    if ($slug === '') {
+        return null;
+    }
+    foreach (livento_cc_foerderungen() as $f) {
+        if (isset($f['slug']) && $f['slug'] === $slug) {
+            return $f;
+        }
+    }
+    return null;
+}
+function livento_cc_foerder_url($slug) {
+    return home_url(user_trailingslashit(LIVENTO_CC_FOERDER_BASE . '/' . sanitize_title($slug)));
+}
+function livento_cc_foerder_list_url() {
+    return home_url(user_trailingslashit(LIVENTO_CC_FOERDER_BASE));
+}
+
+// Rewrite /<base>/<slug>/ + Query-Var
+add_action('init', function () {
+    add_rewrite_rule('^' . LIVENTO_CC_FOERDER_BASE . '/([^/]+)/?$',
+        'index.php?pagename=' . LIVENTO_CC_FOERDER_BASE . '&foerderung=$matches[1]', 'top');
+});
+add_filter('query_vars', function ($v) { $v[] = 'foerderung'; return $v; });
+register_activation_hook(__FILE__, function () {
+    add_rewrite_rule('^' . LIVENTO_CC_FOERDER_BASE . '/([^/]+)/?$',
+        'index.php?pagename=' . LIVENTO_CC_FOERDER_BASE . '&foerderung=$matches[1]', 'top');
+    flush_rewrite_rules();
+});
+
+function livento_cc_foerder_current_slug() {
+    $s = get_query_var('foerderung');
+    if (!$s && isset($_GET['foerderung'])) {
+        $s = sanitize_title(wp_unslash($_GET['foerderung']));
+    }
+    return $s ? sanitize_title($s) : '';
+}
+
+add_filter('redirect_canonical', function ($r) {
+    return livento_cc_foerder_current_slug() ? false : $r;
+});
+add_action('wp', function () {
+    $slug = livento_cc_foerder_current_slug();
+    if (!$slug) {
+        return;
+    }
+    $f = livento_cc_foerder_get($slug);
+    $GLOBALS['livento_cc_foerder_current'] = $f;
+    if (!$f) {
+        add_action('wp_head', function () { echo '<meta name="robots" content="noindex,follow">' . "\n"; });
+        status_header(404);
+        return;
+    }
+    add_filter('pre_get_document_title', function () use ($f) {
+        return mb_substr($f['title'], 0, 62) . ' – Förderung | Livento';
+    }, 20);
+    add_action('wp_head', function () use ($f) {
+        $url  = livento_cc_foerder_url($f['slug']);
+        $desc = mb_substr(wp_strip_all_tags(!empty($f['short']) ? $f['short'] : $f['title']), 0, 160);
+        echo "\n" . '<link rel="canonical" href="' . esc_url($url) . '">' . "\n";
+        echo '<meta name="description" content="' . esc_attr($desc) . '">' . "\n";
+        echo '<meta name="robots" content="index,follow">' . "\n";
+        echo '<meta property="og:type" content="article"><meta property="og:title" content="' . esc_attr($f['title']) . '"><meta property="og:url" content="' . esc_url($url) . '">' . "\n";
+    }, 1);
+});
+
+add_shortcode('livento_foerderungen', function ($atts) {
+    $a = shortcode_atts(array('audience' => '', 'region' => '', 'filter' => 'yes'), $atts, 'livento_foerderungen');
+    $slug = livento_cc_foerder_current_slug();
+    if ($slug) {
+        $f = isset($GLOBALS['livento_cc_foerder_current']) ? $GLOBALS['livento_cc_foerder_current'] : livento_cc_foerder_get($slug);
+        $body = $f ? livento_cc_render_foerder_detail($f)
+            : '<div class="lvf"><h1>Förderung nicht gefunden</h1><p><a href="' . esc_url(livento_cc_foerder_list_url()) . '">Zur Übersicht</a></p></div>';
+        return livento_cc_foerder_styles() . $body;
+    }
+    return livento_cc_foerder_styles() . livento_cc_render_foerder_grid($a);
+});
+
+function livento_cc_render_foerder_grid($a) {
+    $items   = livento_cc_foerderungen();
+    $regions = livento_cc_foerder_regions();
+    $auds    = livento_cc_foerder_audiences();
+    $icons   = livento_cc_foerder_icons();
+
+    $fa = strtolower(trim((string) $a['audience']));
+    $fr = strtolower(trim((string) $a['region']));
+    if ($fa !== '') { $items = array_filter($items, function ($f) use ($fa) { return in_array($fa, (array) ($f['audience'] ?? array()), true); }); }
+    if ($fr !== '') { $items = array_filter($items, function ($f) use ($fr) { return in_array($fr, (array) ($f['region'] ?? array()), true); }); }
+    $items = array_values($items);
+    if (empty($items)) {
+        return '<div class="lvf"><p>Aktuell sind keine Förderprogramme hinterlegt.</p></div>';
+    }
+
+    $show_filter = (strtolower((string) $a['filter']) !== 'no');
+
+    // Facetten (nur vorkommende Werte)
+    $reg_present = array(); $aud_present = array();
+    foreach ($items as $f) {
+        foreach ((array) ($f['region'] ?? array()) as $r) { $reg_present[$r] = 1; }
+        foreach ((array) ($f['audience'] ?? array()) as $u) { $aud_present[$u] = 1; }
+    }
+
+    $out = '<div class="lvf" id="lvf-grid-wrap">';
+    if ($show_filter && (count($reg_present) > 1 || count($aud_present) > 1)) {
+        $out .= '<div class="lvf-filter">';
+        if (count($aud_present) > 1) {
+            $out .= '<div class="lvf-fg"><span class="lvf-fl">Für</span>';
+            foreach ($auds as $k => $label) {
+                if (isset($aud_present[$k])) {
+                    $out .= '<button type="button" class="lvf-pill" data-dim="audience" data-value="' . esc_attr($k) . '">' . esc_html($label) . '</button>';
+                }
+            }
+            $out .= '</div>';
+        }
+        if (count($reg_present) > 1) {
+            $out .= '<div class="lvf-fg"><span class="lvf-fl">Region</span>';
+            foreach ($regions as $k => $label) {
+                if (isset($reg_present[$k])) {
+                    $out .= '<button type="button" class="lvf-pill" data-dim="region" data-value="' . esc_attr($k) . '">' . esc_html($label) . '</button>';
+                }
+            }
+            $out .= '</div>';
+        }
+        $out .= '<button type="button" class="lvf-reset" hidden>Zurücksetzen</button>';
+        $out .= '</div>';
+    }
+
+    $out .= '<div class="lvf-grid">';
+    foreach ($items as $f) {
+        $icon = isset($icons[$f['icon']]) ? $icons[$f['icon']] : $icons['_default'];
+        $url  = livento_cc_foerder_url($f['slug']);
+        $rd   = '|' . implode('|', (array) ($f['region'] ?? array())) . '|';
+        $ad   = '|' . implode('|', (array) ($f['audience'] ?? array())) . '|';
+        $badges = array();
+        foreach ((array) ($f['region'] ?? array()) as $r) { $badges[] = isset($regions[$r]) ? $regions[$r] : $r; }
+        $out .= '<a class="lvf-card" href="' . esc_url($url) . '" data-region="' . esc_attr($rd) . '" data-audience="' . esc_attr($ad) . '">';
+        $out .= '<span class="lvf-ic" aria-hidden="true">' . $icon . '</span>';
+        $out .= '<h3 class="lvf-t">' . esc_html($f['title']) . '</h3>';
+        if (!empty($f['short'])) {
+            $out .= '<p class="lvf-d">' . esc_html(mb_substr(wp_strip_all_tags($f['short']), 0, 150)) . '</p>';
+        }
+        if (!empty($badges)) {
+            $out .= '<p class="lvf-meta">' . esc_html(implode(' · ', $badges)) . '</p>';
+        }
+        $out .= '<span class="lvf-cta">Mehr erfahren →</span>';
+        $out .= '</a>';
+    }
+    $out .= '</div><p class="lvf-count" aria-live="polite"></p></div>';
+    if ($show_filter) {
+        $out .= livento_cc_foerder_js();
+    }
+    return $out;
+}
+
+function livento_cc_render_foerder_detail($f) {
+    $regions = livento_cc_foerder_regions();
+    $auds    = livento_cc_foerder_audiences();
+    $out  = '<div class="lvf lvf-detail">';
+    $out .= '<p class="lvf-back"><a href="' . esc_url(livento_cc_foerder_list_url()) . '">← Alle Fördermöglichkeiten</a></p>';
+    $out .= '<h1 class="lvf-dt">' . esc_html($f['title']) . '</h1>';
+    $tags = array();
+    foreach ((array) ($f['audience'] ?? array()) as $u) { $tags[] = isset($auds[$u]) ? $auds[$u] : $u; }
+    foreach ((array) ($f['region'] ?? array()) as $r) { $tags[] = isset($regions[$r]) ? $regions[$r] : $r; }
+    if (!empty($tags)) {
+        $out .= '<div class="lvf-badges">';
+        foreach ($tags as $t) { $out .= '<span class="lvf-badge">' . esc_html($t) . '</span>'; }
+        $out .= '</div>';
+    }
+    if (!empty($f['short'])) {
+        $out .= '<p class="lvf-lead">' . esc_html($f['short']) . '</p>';
+    }
+    if (!empty($f['body'])) {
+        $out .= '<div class="lvf-bodytext">' . livento_cc_richtext($f['body']) . '</div>';
+    }
+    if (!empty($f['funding_key'])) {
+        $kurl = livento_cc_list_url() . '?funding=' . rawurlencode($f['funding_key']);
+        $out .= '<p><a class="lvf-btn" href="' . esc_url($kurl) . '">Passende Kurse ansehen →</a></p>';
+    }
+    if (!empty($f['link'])) {
+        $out .= '<p><a class="lvf-btn lvf-btn-ghost" href="' . esc_url($f['link']) . '" target="_blank" rel="noopener nofollow">Offizielle Informationen ↗</a></p>';
+    }
+    $out .= '<footer class="lvf-footer">© ' . esc_html(wp_date('Y')) . ' ' . esc_html(LIVENTO_CC_PROVIDER) . '</footer>';
+    $out .= '</div>';
+    return $out;
+}
+
+function livento_cc_foerder_js() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  var root = document.getElementById('lvf-grid-wrap');
+  if(!root) return;
+  var cards = Array.prototype.slice.call(root.querySelectorAll('.lvf-card'));
+  var reset = root.querySelector('.lvf-reset');
+  var countEl = root.querySelector('.lvf-count');
+  var total = cards.length;
+  var active = {region:[], audience:[]};
+  function apply(){
+    var shown=0;
+    cards.forEach(function(c){
+      var ok=true;
+      ['region','audience'].forEach(function(d){
+        if(active[d].length){
+          var vals=(c.getAttribute('data-'+d)||'').split('|').filter(function(x){return x;}), hit=false;
+          for(var i=0;i<active[d].length;i++){ if(vals.indexOf(active[d][i])>-1){hit=true;break;} }
+          if(!hit) ok=false;
+        }
+      });
+      c.style.display=ok?'':'none'; if(ok)shown++;
+    });
+    var any=active.region.length||active.audience.length;
+    if(reset) reset.hidden=!any;
+    if(countEl) countEl.textContent = any ? (shown+' von '+total) : '';
+  }
+  Array.prototype.forEach.call(root.querySelectorAll('.lvf-pill'), function(p){
+    p.addEventListener('click', function(){
+      var d=p.getAttribute('data-dim'), v=p.getAttribute('data-value'), arr=active[d];
+      var i=arr.indexOf(v);
+      if(i>-1){arr.splice(i,1);p.classList.remove('on');}else{arr.push(v);p.classList.add('on');}
+      apply();
+    });
+  });
+  if(reset) reset.addEventListener('click', function(){
+    active={region:[],audience:[]};
+    Array.prototype.forEach.call(root.querySelectorAll('.lvf-pill.on'),function(p){p.classList.remove('on');});
+    apply();
+  });
+})();
+</script>
+JS;
+}
+
+function livento_cc_foerder_styles() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    $css = '
+.lvf{--lvf-green:#004D33;--lvf-lime:#5C8A30;--lvf-accent:#a4d07b;color:#222;line-height:1.6}
+.lvf a{color:var(--lvf-green)}
+.lvf-filter{display:flex;flex-direction:column;gap:8px;margin:0 0 20px}
+.lvf-fg{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.lvf-fl{font-weight:600;color:var(--lvf-green);font-size:.85rem;min-width:60px}
+.lvf-pill{background:#fff;border:1px solid #cdd9c2;color:#2b3a2b;border-radius:99px;padding:5px 12px;font-size:.82rem;cursor:pointer}
+.lvf-pill:hover{border-color:var(--lvf-lime)}
+.lvf-pill.on{background:var(--lvf-green);border-color:var(--lvf-green);color:#fff}
+.lvf-reset{align-self:flex-start;background:none;border:none;color:var(--lvf-lime);text-decoration:underline;cursor:pointer;font-size:.82rem;padding:0}
+.lvf-count{color:var(--lvf-lime);font-size:.85rem;margin:10px 0 0}
+.lvf-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.lvf-card{display:flex;flex-direction:column;background:#fff;border:1px solid #eee;border-radius:14px;padding:24px 22px;text-decoration:none;min-height:150px;transition:transform .18s,box-shadow .18s}
+.lvf-card:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10)}
+.lvf-ic{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:12px;margin-bottom:14px;background:rgba(164,208,123,.22);color:var(--lvf-green)}
+.lvf-t{margin:0 0 8px;font-size:1.1rem;color:var(--lvf-green)}
+.lvf-d{margin:0 0 8px;font-size:.9rem;color:#444}
+.lvf-meta{margin:0;font-size:.8rem;color:var(--lvf-lime)}
+.lvf-cta{margin-top:auto;padding-top:12px;font-weight:600;color:var(--lvf-green)}
+.lvf-detail{max-width:760px;margin:0 auto}
+.lvf-dt{color:var(--lvf-green);font-size:2rem;line-height:1.2;margin:.2em 0}
+.lvf-badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 16px}
+.lvf-badge{background:#e6f0ec;color:var(--lvf-green);padding:3px 10px;border-radius:99px;font-size:.78rem;font-weight:600}
+.lvf-lead{font-size:1.1rem;color:#444}
+.lvf-bodytext{margin:16px 0}
+.lvf a.lvf-btn{display:inline-block;background:var(--lvf-green)!important;color:#fff!important;text-decoration:none!important;padding:12px 24px;border-radius:8px;font-weight:600;margin:4px 0}
+.lvf a.lvf-btn:hover{background:#006644!important}
+.lvf a.lvf-btn-ghost{background:#fff!important;color:var(--lvf-green)!important;border:1px solid var(--lvf-green)}
+.lvf-footer{margin-top:40px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
+@media(max-width:900px){.lvf-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.lvf-grid{grid-template-columns:1fr}}
+';
+    return '<style id="lvf-styles">' . $css . '</style>';
+}
+
+/** Tab „Förderprogramme": Editor (Karten mit Feldern). */
+function livento_cc_admin_tab_foerderung() {
+    $current  = livento_cc_foerderungen();
+    $regions  = livento_cc_foerder_regions();
+    $auds     = livento_cc_foerder_audiences();
+    $icons    = array_keys(livento_cc_foerder_icons());
+    $fundings = livento_cc_funding_labels();
+
+    echo '<p style="margin-top:12px">Förderprogramme für <code>[livento_foerderungen]</code> + Detailseiten unter <code>/' . esc_html(LIVENTO_CC_FOERDER_BASE) . '/&lt;slug&gt;/</code>. Nach dem ersten Speichern bitte einmal <em>Einstellungen → Permalinks → Speichern</em> (für die Detail-URLs).</p>';
+    echo '<form method="post">';
+    wp_nonce_field('livento_cc_save_foerder');
+    echo '<div id="lvf-rows">';
+    $i = 0;
+    foreach ($current as $f) {
+        echo livento_cc_admin_foerder_card((string) $i, $f, $regions, $auds, $icons, $fundings);
+        $i++;
+    }
+    echo '</div>';
+    echo '<template id="lvf-tpl">' . livento_cc_admin_foerder_card('__IDX__', array(), $regions, $auds, $icons, $fundings) . '</template>';
+    echo '<p><button type="button" class="button" id="lvf-add">+ Förderprogramm hinzufügen</button></p>';
+    echo '<p style="margin-top:16px">';
+    echo '<button type="submit" name="livento_cc_save_foerder" value="1" class="button button-primary">Speichern</button> ';
+    echo '<button type="submit" name="livento_cc_reset_foerder" value="1" class="button" onclick="return confirm(\'Wirklich auf die Standard-Programme zurücksetzen?\')">Auf Standard zurücksetzen</button>';
+    echo '</p></form>';
+    echo "<script>(function(){var box=document.getElementById('lvf-rows'),tpl=document.getElementById('lvf-tpl'),n=0;var add=document.getElementById('lvf-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvf-del')){var r=e.target.closest('.lvf-card-edit');if(r)r.parentNode.removeChild(r);}});})();</script>";
+}
+
+/** Eine editierbare Förderprogramm-Karte. */
+function livento_cc_admin_foerder_card($idx, $f, $regions, $auds, $icons, $fundings) {
+    $title = isset($f['title']) ? $f['title'] : '';
+    $slug  = isset($f['slug']) ? $f['slug'] : '';
+    $icon  = isset($f['icon']) ? $f['icon'] : '_default';
+    $reg   = isset($f['region']) ? (array) $f['region'] : array();
+    $aud   = isset($f['audience']) ? (array) $f['audience'] : array();
+    $fk    = isset($f['funding_key']) ? $f['funding_key'] : '';
+    $link  = isset($f['link']) ? $f['link'] : '';
+    $short = isset($f['short']) ? $f['short'] : '';
+    $body  = isset($f['body']) ? $f['body'] : '';
+    $n = 'lvk_foe[' . esc_attr($idx) . ']';
+
+    $h  = '<div class="lvf-card-edit" style="border:1px solid #dcdcde;border-radius:6px;padding:14px;margin:0 0 12px;background:#fff;max-width:980px">';
+    $h .= '<p style="margin:0 0 8px;display:flex;gap:10px;flex-wrap:wrap">';
+    $h .= '<input type="text" name="' . $n . '[title]" value="' . esc_attr($title) . '" placeholder="Titel" style="flex:2 1 280px">';
+    $h .= '<input type="text" name="' . $n . '[slug]" value="' . esc_attr($slug) . '" placeholder="slug (optional)" style="flex:1 1 170px">';
+    $h .= '<select name="' . $n . '[icon]">';
+    foreach ($icons as $ic) { $h .= '<option value="' . esc_attr($ic) . '"' . ($ic === $icon ? ' selected' : '') . '>' . esc_html($ic) . '</option>'; }
+    $h .= '</select></p>';
+    $h .= '<p style="margin:0 0 8px"><strong>Für:</strong> ';
+    foreach ($auds as $k => $label) {
+        $h .= '<label style="margin-right:12px"><input type="checkbox" name="' . $n . '[audience][]" value="' . esc_attr($k) . '"' . (in_array($k, $aud, true) ? ' checked' : '') . '> ' . esc_html($label) . '</label>';
+    }
+    $h .= ' &nbsp; <strong>Kurse-Förder-Tag:</strong> <select name="' . $n . '[funding_key]"><option value="">— keiner —</option>';
+    foreach ($fundings as $fkey => $flabel) { $h .= '<option value="' . esc_attr($fkey) . '"' . ($fkey === $fk ? ' selected' : '') . '>' . esc_html($flabel) . '</option>'; }
+    $h .= '</select></p>';
+    $h .= '<p style="margin:0 0 8px"><strong>Region:</strong><br><select name="' . $n . '[region][]" multiple size="4" style="min-width:280px">';
+    foreach ($regions as $k => $label) { $h .= '<option value="' . esc_attr($k) . '"' . (in_array($k, $reg, true) ? ' selected' : '') . '>' . esc_html($label) . '</option>'; }
+    $h .= '</select> <span class="description">(Strg/Cmd-Klick für mehrere)</span></p>';
+    $h .= '<p style="margin:0 0 8px"><input type="text" name="' . $n . '[short]" value="' . esc_attr($short) . '" placeholder="Kurzbeschreibung" class="large-text"></p>';
+    $h .= '<p style="margin:0 0 8px"><input type="url" name="' . $n . '[link]" value="' . esc_attr($link) . '" placeholder="Offizieller Link (optional)" class="large-text code"></p>';
+    $h .= '<p style="margin:0 0 8px"><textarea name="' . $n . '[body]" rows="4" class="large-text code" placeholder="Ausführliche Beschreibung (Markdown: **fett**, - Liste, [Text](URL))">' . esc_textarea($body) . '</textarea></p>';
+    $h .= '<p style="margin:0"><button type="button" class="button-link lvf-del" style="color:#b32d2e">Entfernen</button></p>';
+    $h .= '</div>';
+    return $h;
 }
