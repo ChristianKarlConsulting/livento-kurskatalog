@@ -182,6 +182,10 @@ Das Plugin zeigt ein eigenes schlankes Formular (Vorname, Nachname, E-Mail). Bei
 
 > **GHL-Hinweis:** Mappe **E-Mail** als Kontakt-Identifier (ist immer befüllt). GHLs Meldung „Email or Phone field is required" ist damit erfüllt. Das Telefonfeld ist optional und wird nur mitgesendet, wenn der Nutzer es ausfüllt. Die **Einwilligung ist Pflicht** — ohne Häkchen kommt der Nutzer nicht zum Ergebnis, `consent` ist also immer `true`.
 
+**Verbindung prüfen:** *Einstellungen → „Webhook testen" → Test an Kurs-/Förderberater-Webhook senden*. Das schickt **serverseitig** einen Test-Lead an die gespeicherte URL und zeigt GHLs Antwort. So siehst du sofort, ob dein WordPress-Server GHL erreichen kann.
+> - **✅ ERFOLG (HTTP 200)** und trotzdem kein Eintrag im GHL-Ausführungsprotokoll → der **Workflow ist nicht „Published/On"**.
+> - **❌ FEHLGESCHLAGEN** → dein Hoster blockiert ausgehende Verbindungen → beim Hosting-Support `services.leadconnectorhq.com` freischalten lassen.
+
 ### B) Embed-Code (Alternative)
 Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur genutzt, wenn **keine** Webhook-URL gesetzt ist. Nachteil: das eingebettete Formular hat einen **eigenen** Absende-Button (zwei Buttons), und ein Absenden lässt sich technisch nicht sicher erkennen.
 
