@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.11.0
+ * Version:           1.12.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -62,6 +62,10 @@
  * v1.11.0: Förderprogramme als eigener Inhaltstyp — Admin-Tab „Förderprogramme" (Editor), Shortcode
  *          [livento_foerderungen] (Grid + Region-/Zielgruppen-Filter), eigene Detailseiten
  *          /foerdermoeglichkeiten/<slug> inkl. SEO + Sitemap, optionale Kurs-Verknüpfung (funding_key).
+ * v1.12.0: Förderberater [livento_foerder_berater] (SGD-Stil: Status → bedingte Qualifikation →
+ *          GHL-Formular → passende Förderungen), editierbares Schema + Programm-Zuordnung im Admin,
+ *          eigenes Förder-Formular (Fallback auf Kursberater). Außerdem: [livento_kurse topics="…"]
+ *          serverseitiger Themen-Vorfilter (Komma-Liste von Slugs).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -784,6 +788,7 @@ add_shortcode('livento_kurse', function ($atts) {
         'limit'   => 0,                       // 0 = alle; >0 = nur die ersten N (kuratierter Block)
         'sort'    => 'next_start',            // next_start|newest|popular|rating|most_booked|price_asc|price_desc
         'filters' => '',                      // '' = auto (Filter an, wenn kein limit) | 'yes' | 'no'
+        'topics'  => '',                      // '' = alle | Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz)
     ), $atts, 'livento_kurse');
 
     $slug = livento_cc_current_slug();
@@ -800,7 +805,7 @@ add_shortcode('livento_kurse', function ($atts) {
         // Bei gesetztem Limit standardmaessig ohne Filterleiste (kuratierter Block),
         // sonst mit. Per filters="yes"/"no" explizit erzwingbar.
         $show_filters = ($filters === 'yes') || ($filters !== 'no' && $limit === 0);
-        $body = livento_cc_render_list(livento_cc_get_offerings(), $a['sort'], $limit, $show_filters);
+        $body = livento_cc_render_list(livento_cc_filter_by_topics(livento_cc_get_offerings(), $a['topics']), $a['sort'], $limit, $show_filters);
     }
     // Styles dem zurueckgegebenen Markup voranstellen (nicht echoen — sonst
     // Leak-Risiko, wenn the_content-Filter ausserhalb der Seitenausgabe laeuft).
@@ -1119,6 +1124,23 @@ function livento_cc_themen_styles() {
 function livento_cc_render_notfound() {
     return '<div class="lvk"><h1>Kurs nicht gefunden</h1>'
         . '<p><a href="' . esc_url(livento_cc_list_url()) . '">Zur Kursübersicht</a></p></div>';
+}
+
+/** Serverseitiger Themen-Vorfilter für [livento_kurse topics="…"]. Komma-Liste von Slugs;
+ *  ein Angebot bleibt, wenn mind. einer seiner Themen-Slugs passt (ODER-Verknüpfung). */
+function livento_cc_filter_by_topics($offerings, $topics) {
+    $topics = trim((string) $topics);
+    if ($topics === '') {
+        return $offerings;
+    }
+    $want = array_values(array_filter(array_map(function ($t) { return sanitize_title(trim($t)); }, explode(',', $topics))));
+    if (empty($want)) {
+        return $offerings;
+    }
+    return array_values(array_filter($offerings, function ($o) use ($want) {
+        $have = (isset($o['topics']) && is_array($o['topics'])) ? array_map('sanitize_title', $o['topics']) : array();
+        return (bool) array_intersect($want, $have);
+    }));
 }
 
 function livento_cc_render_list($offerings, $sort = 'next_start', $limit = 0, $show_filters = true) {
@@ -1928,6 +1950,7 @@ function livento_cc_shortcodes() {
                 'limit'   => 'Anzahl Karten (0 = alle). >0 erzeugt einen kuratierten Block ohne Filterleiste.',
                 'sort'    => 'Sortierung: next_start (Default), newest, popular, rating, most_booked, price_asc, price_desc.',
                 'filters' => 'Filterleiste erzwingen: „yes" oder „no" (Default: an, außer wenn limit gesetzt ist).',
+                'topics'  => 'Auf Themen vorfiltern: Komma-Liste von Themen-Slugs (z. B. leitung-management,demenz). Leer = alle.',
             ),
         ),
         array(
@@ -1978,6 +2001,17 @@ function livento_cc_shortcodes() {
                 'filter'   => 'Filterleiste anzeigen: yes/no (Default yes).',
             ),
         ),
+        array(
+            'tag'     => 'livento_foerder_berater',
+            'title'   => 'Förderberater',
+            'desc'    => 'Geführter Berater (SGD-Stil): Status → bedingte Qualifikation → Kontaktformular → passende Förderungen. Schema editierbar im Tab „Förderprogramme", Formular in den Einstellungen.',
+            'example' => '[livento_foerder_berater]',
+            'atts'    => array(
+                'title' => 'Überschrift (Default „Förderberatung für Ihre Weiterbildung").',
+                'intro' => 'Optionaler Einleitungstext.',
+                'form'  => 'Formular-Schritt anzeigen: yes/no (Default yes, sofern ein Embed hinterlegt ist).',
+            ),
+        ),
     );
 }
 
@@ -2008,6 +2042,7 @@ function livento_cc_admin_page() {
         // Berater-Formular: roher Embed-Code (Admin-only, manage_options) — kein sanitize_text_field,
         // sonst wuerden iframe/script entfernt.
         update_option('livento_cc_berater_form', wp_unslash($_POST['livento_cc_berater_form'] ?? ''));
+        update_option('livento_cc_foerder_form', wp_unslash($_POST['livento_cc_foerder_form'] ?? ''));
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -2048,6 +2083,7 @@ function livento_cc_admin_page() {
                     'icon'        => isset($row['icon']) ? sanitize_key($row['icon']) : '_default',
                     'region'      => (isset($row['region']) && is_array($row['region'])) ? array_values(array_filter(array_map('sanitize_title', $row['region']))) : array(),
                     'audience'    => (isset($row['audience']) && is_array($row['audience'])) ? array_values(array_filter(array_map('sanitize_key', $row['audience']))) : array(),
+                    'match'       => (isset($row['match']) && is_array($row['match'])) ? array_values(array_filter(array_map('sanitize_title', $row['match']))) : array(),
                     'funding_key' => isset($row['funding_key']) ? sanitize_key($row['funding_key']) : '',
                     'link'        => isset($row['link']) ? esc_url_raw(trim($row['link'])) : '',
                     'short'       => isset($row['short']) ? sanitize_text_field($row['short']) : '',
@@ -2057,6 +2093,48 @@ function livento_cc_admin_page() {
             update_option('livento_cc_foerderungen', $clean);
             livento_cc_flush_cache();
             $notice = 'Förderprogramme gespeichert (' . count($clean) . ').';
+        }
+    }
+    if ((isset($_POST['livento_cc_save_fstatus']) || isset($_POST['livento_cc_reset_fstatus'])) && check_admin_referer('livento_cc_save_fstatus')) {
+        if (isset($_POST['livento_cc_reset_fstatus'])) {
+            delete_option('livento_cc_foerder_status');
+            $notice = 'Förderberater-Schema auf Standard zurückgesetzt.';
+        } else {
+            $rows  = (isset($_POST['lvk_fst']) && is_array($_POST['lvk_fst'])) ? wp_unslash($_POST['lvk_fst']) : array();
+            $clean = array();
+            foreach ($rows as $row) {
+                $label = isset($row['label']) ? sanitize_text_field($row['label']) : '';
+                if ($label === '') {
+                    continue;
+                }
+                $quals = array();
+                $lines = isset($row['quals']) ? preg_split('/\r\n|\r|\n/', (string) $row['quals']) : array();
+                foreach ($lines as $line) {
+                    $line = trim($line);
+                    if ($line === '') {
+                        continue;
+                    }
+                    if (strpos($line, '|') !== false) {
+                        list($qk, $ql) = explode('|', $line, 2);
+                        $qk = sanitize_title($qk);
+                        $ql = sanitize_text_field(trim($ql));
+                    } else {
+                        $ql = sanitize_text_field($line);
+                        $qk = sanitize_title($line);
+                    }
+                    if ($qk !== '' && $ql !== '') {
+                        $quals[] = array('key' => $qk, 'label' => $ql);
+                    }
+                }
+                $clean[] = array(
+                    'key'      => sanitize_title($label),
+                    'label'    => $label,
+                    'question' => isset($row['question']) ? sanitize_text_field($row['question']) : '',
+                    'quals'    => $quals,
+                );
+            }
+            update_option('livento_cc_foerder_status', $clean);
+            $notice = 'Förderberater-Schema gespeichert (' . count($clean) . ' Status).';
         }
     }
 
@@ -2214,6 +2292,10 @@ function livento_cc_admin_tab_settings() {
     echo '<p>HTML-/Embed-Code (z. B. GoHighLevel-Formular) für den Schritt „Ihre Angaben" im <code>[livento_kurse_berater]</code>. Leer = kein Formular-Schritt. Wird unverändert ausgegeben.</p>';
     echo '<textarea name="livento_cc_berater_form" class="large-text code" rows="6" placeholder="&lt;iframe src=&quot;https://api.leadconnectorhq.com/widget/form/…&quot;&gt;&lt;/iframe&gt; …">' . esc_textarea((string) get_option('livento_cc_berater_form', '')) . '</textarea>';
 
+    echo '<h3 style="margin-top:24px">Förderberater: Kontaktformular-Embed</h3>';
+    echo '<p>HTML-/Embed-Code für den Schritt „Ihre Angaben" im <code>[livento_foerder_berater]</code>. <strong>Leer = es wird automatisch das Kursberater-Formular oben verwendet.</strong> Eigenes Formular hier nur eintragen, wenn der Förder-Lead getrennt erfasst werden soll.</p>';
+    echo '<textarea name="livento_cc_foerder_form" class="large-text code" rows="6" placeholder="(leer = Kursberater-Formular verwenden)">' . esc_textarea((string) get_option('livento_cc_foerder_form', '')) . '</textarea>';
+
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
 }
@@ -2347,32 +2429,32 @@ function livento_cc_foerderungen() {
 function livento_cc_foerderungen_default() {
     return array(
         array('title' => 'Aufstiegs-BAföG (AFBG)', 'slug' => 'aufstiegs-bafoeg', 'icon' => 'bafoeg',
-              'region' => array('bundesweit'), 'audience' => array('privat'),
+              'region' => array('bundesweit'), 'audience' => array('privat'), 'match' => array('staatl-abschluss', 'berufsrueckkehrer', 'fachkraft-u25'),
               'funding_key' => 'aufstiegs_bafoeg', 'link' => 'https://www.aufstiegs-bafoeg.de',
               'short' => 'Fördert die Vorbereitung auf über 700 Fortbildungsabschlüsse – mit einkommensunabhängigen Zuschüssen und zinsgünstigem Darlehen.',
               'body'  => "Das Aufstiegs-BAföG (AFBG) unterstützt berufliche Aufstiegsfortbildungen unabhängig vom Alter und Einkommen.\n\n- Maßnahmebeitrag: bis zu 15.000 € (50 % Zuschuss, Rest als Darlehen)\n- Unterhaltsbeitrag bei Vollzeit\n- Erlass eines Teils des Darlehens bei bestandener Prüfung\n\nGefördert werden u. a. Fachwirt-, Meister- und vergleichbare Fortbildungen."),
         array('title' => 'Bildungsgutschein', 'slug' => 'bildungsgutschein', 'icon' => 'gutschein',
-              'region' => array('bundesweit'), 'audience' => array('privat'),
+              'region' => array('bundesweit'), 'audience' => array('privat'), 'match' => array('arbeitslosigkeit-bedroht', 'arbeitslos-gemeldet', 'ohne-abschluss', 'berufsrueckkehrer', 'wiedereinstieg'),
               'funding_key' => 'azav_bildungsgutschein', 'link' => 'https://www.arbeitsagentur.de',
               'short' => 'Die Agentur für Arbeit bzw. das Jobcenter kann bis zu 100 % der Weiterbildungskosten inkl. Nebenkosten übernehmen.',
               'body'  => "Mit dem Bildungsgutschein fördern Agentur für Arbeit oder Jobcenter eine AZAV-zertifizierte Weiterbildung – bei Arbeitslosigkeit, drohender Arbeitslosigkeit oder fehlendem Berufsabschluss.\n\n- Übernahme von bis zu 100 % der Lehrgangskosten\n- ggf. Fahrt-, Unterkunfts- und Kinderbetreuungskosten\n\nSprechen Sie Ihre Vermittlungsfachkraft an – unsere AZAV-Kurse sind förderfähig."),
         array('title' => 'Qualifizierungschancengesetz', 'slug' => 'qualifizierungschancengesetz', 'icon' => 'building',
-              'region' => array('bundesweit'), 'audience' => array('unternehmen'),
+              'region' => array('bundesweit'), 'audience' => array('unternehmen'), 'match' => array('aelterer-kmu', 'gering-qualifiziert', 'arbeitslosigkeit-bedroht'),
               'funding_key' => 'qcg', 'link' => 'https://www.arbeitsagentur.de',
               'short' => 'Förderung der Weiterbildung Beschäftigter – unabhängig von Qualifikation, Alter und Betriebsgröße.',
               'body'  => "Das Qualifizierungschancengesetz (QCG) fördert die Weiterbildung von Beschäftigten, deren Tätigkeiten durch Technologie ersetzt werden können oder die in einem Engpassberuf arbeiten.\n\n- Zuschüsse zu Lehrgangskosten (je nach Betriebsgröße)\n- Zuschüsse zum Arbeitsentgelt während der Weiterbildung"),
         array('title' => 'Fachkräfteoffensive Pflege (BW)', 'slug' => 'fachkraefteoffensive-pflege-bw', 'icon' => 'certificate',
-              'region' => array('baden-wuerttemberg'), 'audience' => array('privat'),
+              'region' => array('baden-wuerttemberg'), 'audience' => array('privat'), 'match' => array('berufsrueckkehrer', 'ohne-abschluss', 'wiedereinstieg', 'gering-qualifiziert'),
               'funding_key' => '', 'link' => '',
               'short' => 'Weiterbildungsförderung speziell für Quer- und Wiedereinsteiger:innen in die Pflege in Baden-Württemberg.',
               'body'  => "Die Fachkräfteoffensive Pflege in Baden-Württemberg unterstützt den (Wieder-)Einstieg in Pflegeberufe mit Qualifizierungs- und Weiterbildungsangeboten."),
         array('title' => 'Bildungsscheck M-V', 'slug' => 'bildungsscheck-mv', 'icon' => 'scheck',
-              'region' => array('mecklenburg-vorpommern'), 'audience' => array('unternehmen'),
+              'region' => array('mecklenburg-vorpommern'), 'audience' => array('unternehmen'), 'match' => array('staatl-abschluss', 'aelterer-kmu', 'gering-qualifiziert'),
               'funding_key' => 'bildungsscheck', 'link' => '',
               'short' => '50–70 % Förderung der Weiterbildungskosten (max. 500 €, bis 3.000 € bei Abschlussqualifizierung).',
               'body'  => "Der Bildungsscheck Mecklenburg-Vorpommern fördert die berufliche Weiterbildung von Beschäftigten in kleinen und mittleren Unternehmen.\n\n- 50–70 % der Kosten\n- max. 500 € pro Scheck (bis 3.000 € bei Abschlussqualifizierung)"),
         array('title' => 'Meisterbonus Sachsen', 'slug' => 'meisterbonus-sachsen', 'icon' => 'star',
-              'region' => array('sachsen'), 'audience' => array('privat'),
+              'region' => array('sachsen'), 'audience' => array('privat'), 'match' => array('staatl-abschluss'),
               'funding_key' => '', 'link' => '',
               'short' => 'Einmalige Prämie von 2.000 € nach bestandener Meisterprüfung in Sachsen.',
               'body'  => "Der Meisterbonus Sachsen belohnt erfolgreiche Aufstiegsfortbildungen mit einer einmaligen Prämie von 2.000 € nach bestandener Meister- oder gleichwertiger Prüfung."),
@@ -2660,6 +2742,7 @@ function livento_cc_admin_tab_foerderung() {
     $auds     = livento_cc_foerder_audiences();
     $icons    = array_keys(livento_cc_foerder_icons());
     $fundings = livento_cc_funding_labels();
+    $quals    = livento_cc_foerder_quals_flat();
 
     echo '<p style="margin-top:12px">Förderprogramme für <code>[livento_foerderungen]</code> + Detailseiten unter <code>/' . esc_html(LIVENTO_CC_FOERDER_BASE) . '/&lt;slug&gt;/</code>. Nach dem ersten Speichern bitte einmal <em>Einstellungen → Permalinks → Speichern</em> (für die Detail-URLs).</p>';
     echo '<form method="post">';
@@ -2667,26 +2750,66 @@ function livento_cc_admin_tab_foerderung() {
     echo '<div id="lvf-rows">';
     $i = 0;
     foreach ($current as $f) {
-        echo livento_cc_admin_foerder_card((string) $i, $f, $regions, $auds, $icons, $fundings);
+        echo livento_cc_admin_foerder_card((string) $i, $f, $regions, $auds, $icons, $fundings, $quals);
         $i++;
     }
     echo '</div>';
-    echo '<template id="lvf-tpl">' . livento_cc_admin_foerder_card('__IDX__', array(), $regions, $auds, $icons, $fundings) . '</template>';
+    echo '<template id="lvf-tpl">' . livento_cc_admin_foerder_card('__IDX__', array(), $regions, $auds, $icons, $fundings, $quals) . '</template>';
     echo '<p><button type="button" class="button" id="lvf-add">+ Förderprogramm hinzufügen</button></p>';
     echo '<p style="margin-top:16px">';
     echo '<button type="submit" name="livento_cc_save_foerder" value="1" class="button button-primary">Speichern</button> ';
     echo '<button type="submit" name="livento_cc_reset_foerder" value="1" class="button" onclick="return confirm(\'Wirklich auf die Standard-Programme zurücksetzen?\')">Auf Standard zurücksetzen</button>';
     echo '</p></form>';
     echo "<script>(function(){var box=document.getElementById('lvf-rows'),tpl=document.getElementById('lvf-tpl'),n=0;var add=document.getElementById('lvf-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvf-del')){var r=e.target.closest('.lvf-card-edit');if(r)r.parentNode.removeChild(r);}});})();</script>";
+
+    // ---- Förderberater-Schema (Status → bedingte Qualifikation) ----
+    $stati = livento_cc_foerder_status();
+    echo '<hr style="margin:30px 0 18px">';
+    echo '<h2 style="margin:0 0 4px">Förderberater-Schema</h2>';
+    echo '<p style="margin:0 0 12px">Status-Schritte + bedingte Qualifikationen für <code>[livento_foerder_berater]</code>. Pro Qualifikation eine Zeile im Format <code>schlüssel | Anzeigetext</code> (Schlüssel optional — ohne wird er aus dem Text erzeugt). <strong>Schlüssel stabil halten</strong>: die Programm-Zuordnung oben referenziert sie.</p>';
+    echo '<form method="post">';
+    wp_nonce_field('livento_cc_save_fstatus');
+    echo '<div id="lvfs-rows">';
+    $j = 0;
+    foreach ($stati as $s) {
+        echo livento_cc_admin_foerder_status_card((string) $j, $s);
+        $j++;
+    }
+    echo '</div>';
+    echo '<template id="lvfs-tpl">' . livento_cc_admin_foerder_status_card('__IDX__', array()) . '</template>';
+    echo '<p><button type="button" class="button" id="lvfs-add">+ Status hinzufügen</button></p>';
+    echo '<p style="margin-top:16px"><button type="submit" name="livento_cc_save_fstatus" value="1" class="button button-primary">Schema speichern</button> ';
+    echo '<button type="submit" name="livento_cc_reset_fstatus" value="1" class="button" onclick="return confirm(\'Schema wirklich auf Standard zurücksetzen?\')">Auf Standard zurücksetzen</button></p></form>';
+    echo "<script>(function(){var box=document.getElementById('lvfs-rows'),tpl=document.getElementById('lvfs-tpl'),n=0;var add=document.getElementById('lvfs-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'fnew'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvfs-del')){var r=e.target.closest('.lvfs-card');if(r)r.parentNode.removeChild(r);}});})();</script>";
+}
+
+/** Eine editierbare Förderberater-Status-Karte (Label + Frage + Qualifikationen). */
+function livento_cc_admin_foerder_status_card($idx, $s) {
+    $label = isset($s['label']) ? $s['label'] : '';
+    $q     = isset($s['question']) ? $s['question'] : '';
+    $lines = '';
+    foreach ((isset($s['quals']) ? $s['quals'] : array()) as $ql) {
+        $lines .= (isset($ql['key']) ? $ql['key'] : '') . ' | ' . (isset($ql['label']) ? $ql['label'] : '') . "\n";
+    }
+    $n = 'lvk_fst[' . esc_attr($idx) . ']';
+    $h  = '<div class="lvfs-card" style="border:1px solid #dcdcde;border-radius:6px;padding:14px;margin:0 0 12px;background:#fff;max-width:980px">';
+    $h .= '<p style="margin:0 0 8px;display:flex;gap:10px;flex-wrap:wrap">';
+    $h .= '<input type="text" name="' . $n . '[label]" value="' . esc_attr($label) . '" placeholder="Status-Label (z. B. berufstätig)" style="flex:1 1 240px">';
+    $h .= '<input type="text" name="' . $n . '[question]" value="' . esc_attr($q) . '" placeholder="Frage (z. B. Ich bin berufstätig und …?)" style="flex:2 1 320px"></p>';
+    $h .= '<p style="margin:0 0 8px"><textarea name="' . $n . '[quals]" rows="5" class="large-text code" placeholder="schlüssel | Anzeigetext (eine Qualifikation pro Zeile)">' . esc_textarea(trim($lines)) . '</textarea></p>';
+    $h .= '<p style="margin:0"><button type="button" class="button-link lvfs-del" style="color:#b32d2e">Status entfernen</button></p>';
+    $h .= '</div>';
+    return $h;
 }
 
 /** Eine editierbare Förderprogramm-Karte. */
-function livento_cc_admin_foerder_card($idx, $f, $regions, $auds, $icons, $fundings) {
+function livento_cc_admin_foerder_card($idx, $f, $regions, $auds, $icons, $fundings, $quals = array()) {
     $title = isset($f['title']) ? $f['title'] : '';
     $slug  = isset($f['slug']) ? $f['slug'] : '';
     $icon  = isset($f['icon']) ? $f['icon'] : '_default';
     $reg   = isset($f['region']) ? (array) $f['region'] : array();
     $aud   = isset($f['audience']) ? (array) $f['audience'] : array();
+    $mtch  = isset($f['match']) ? (array) $f['match'] : array();
     $fk    = isset($f['funding_key']) ? $f['funding_key'] : '';
     $link  = isset($f['link']) ? $f['link'] : '';
     $short = isset($f['short']) ? $f['short'] : '';
@@ -2713,7 +2836,216 @@ function livento_cc_admin_foerder_card($idx, $f, $regions, $auds, $icons, $fundi
     $h .= '<p style="margin:0 0 8px"><input type="text" name="' . $n . '[short]" value="' . esc_attr($short) . '" placeholder="Kurzbeschreibung" class="large-text"></p>';
     $h .= '<p style="margin:0 0 8px"><input type="url" name="' . $n . '[link]" value="' . esc_attr($link) . '" placeholder="Offizieller Link (optional)" class="large-text code"></p>';
     $h .= '<p style="margin:0 0 8px"><textarea name="' . $n . '[body]" rows="4" class="large-text code" placeholder="Ausführliche Beschreibung (Markdown: **fett**, - Liste, [Text](URL))">' . esc_textarea($body) . '</textarea></p>';
+    if (!empty($quals)) {
+        $h .= '<details style="margin:0 0 8px"><summary style="cursor:pointer"><strong>Förderberater: passt zu …</strong> <span class="description">(welche Situationen → zeigt dieses Programm im Ergebnis)</span></summary><div style="columns:2;margin-top:8px">';
+        foreach ($quals as $qkey => $qlabel) {
+            $h .= '<label style="display:block;margin:2px 0;break-inside:avoid"><input type="checkbox" name="' . $n . '[match][]" value="' . esc_attr($qkey) . '"' . (in_array($qkey, $mtch, true) ? ' checked' : '') . '> ' . esc_html($qlabel) . '</label>';
+        }
+        $h .= '</div></details>';
+    }
     $h .= '<p style="margin:0"><button type="button" class="button-link lvf-del" style="color:#b32d2e">Entfernen</button></p>';
     $h .= '</div>';
     return $h;
+}
+
+/* ============================================================
+ * 13. Förderberater (SGD-Stil: Status → Qualifikation → Angaben → Ergebnis)
+ * ============================================================ */
+
+/** Status → bedingte Qualifikationen (Admin-Option → Default). */
+function livento_cc_foerder_status() {
+    $opt = get_option('livento_cc_foerder_status', null);
+    if (is_array($opt) && !empty($opt)) {
+        return $opt;
+    }
+    return livento_cc_foerder_status_default();
+}
+function livento_cc_foerder_status_default() {
+    return array(
+        array('key' => 'berufstaetig', 'label' => 'berufstätig', 'question' => 'Ich bin berufstätig und …?', 'quals' => array(
+            array('key' => 'staatl-abschluss', 'label' => '… strebe einen öffentlichen/rechtlichen/staatlichen Abschluss an.'),
+            array('key' => 'aelterer-kmu', 'label' => '… bin ein älterer Beschäftigter in einem KMU.'),
+            array('key' => 'gering-qualifiziert', 'label' => '… bin gering qualifiziert.'),
+            array('key' => 'berufsrueckkehrer', 'label' => '… bin Berufsrückkehrer:in.'),
+            array('key' => 'fachkraft-u25', 'label' => '… bin eine talentierte Fachkraft unter 25 Jahren.'),
+            array('key' => 'arbeitslosigkeit-bedroht', 'label' => '… bin von Arbeitslosigkeit bedroht.'),
+        )),
+        array('key' => 'soldat', 'label' => 'Soldat:in', 'question' => 'Ich bin Soldat:in und …?', 'quals' => array(
+            array('key' => 'bfd', 'label' => '… habe Anspruch auf den Berufsförderungsdienst (BFD).'),
+        )),
+        array('key' => 'nicht-berufstaetig', 'label' => 'nicht berufstätig', 'question' => 'Ich bin derzeit nicht berufstätig und …?', 'quals' => array(
+            array('key' => 'arbeitslos-gemeldet', 'label' => '… bin arbeitslos gemeldet.'),
+            array('key' => 'ohne-abschluss', 'label' => '… habe keinen Berufsabschluss.'),
+            array('key' => 'wiedereinstieg', 'label' => '… möchte wieder in den Beruf einsteigen.'),
+        )),
+        array('key' => 'schueler-azubi-student', 'label' => 'Schüler:in, Azubi, Studierende:r', 'question' => 'Ich bin …?', 'quals' => array(
+            array('key' => 'schueler', 'label' => '… Schüler:in.'),
+            array('key' => 'azubi', 'label' => '… Auszubildende:r.'),
+            array('key' => 'studierend', 'label' => '… Studierende:r.'),
+        )),
+    );
+}
+/** Flache Liste aller Qualifikationen key => label (für Programm-Zuordnung). */
+function livento_cc_foerder_quals_flat() {
+    $out = array();
+    foreach (livento_cc_foerder_status() as $s) {
+        foreach ((isset($s['quals']) ? $s['quals'] : array()) as $q) {
+            if (!empty($q['key'])) {
+                $out[$q['key']] = $q['label'];
+            }
+        }
+    }
+    return $out;
+}
+/** GHL-Formular für den Förderberater (eigene Option → Fallback auf Kursberater-Form). */
+function livento_cc_foerder_form() {
+    $f = (string) get_option('livento_cc_foerder_form', '');
+    return trim($f) !== '' ? $f : (string) get_option('livento_cc_berater_form', '');
+}
+
+add_shortcode('livento_foerder_berater', function ($atts) {
+    $a = shortcode_atts(array('title' => 'Förderberatung für Ihre Weiterbildung', 'intro' => '', 'form' => 'yes'), $atts, 'livento_foerder_berater');
+    $stati = livento_cc_foerder_status();
+    if (empty($stati)) {
+        return '';
+    }
+    $programs = livento_cc_foerderungen();
+    $icons    = livento_cc_foerder_icons();
+    $ghl      = livento_cc_foerder_form();
+    $use_form = (strtolower((string) $a['form']) !== 'no') && (trim($ghl) !== '');
+
+    $steps = array('Ihr Status', 'Ihre Qualifikation');
+    if ($use_form) { $steps[] = 'Ihre Angaben'; }
+    $steps[] = 'Ihr Ergebnis';
+    $total = count($steps);
+
+    $out  = livento_cc_styles() . livento_cc_foerder_styles();
+    $out .= '<div class="lvk lvk-berater" id="lvfb-berater" data-total="' . (int) $total . '">';
+    if ($a['title'] !== '') { $out .= '<h2 class="lvk-bx-title">' . esc_html($a['title']) . '</h2>'; }
+    if ($a['intro'] !== '') { $out .= '<p class="lvk-bx-intro">' . esc_html($a['intro']) . '</p>'; }
+
+    $out .= '<ol class="lvk-bx-stepper">';
+    foreach ($steps as $i => $s) {
+        $out .= '<li class="lvk-bx-stp' . ($i === 0 ? ' is-active' : '') . '"><span class="lvk-bx-dot"></span><span class="lvk-bx-lbl">' . esc_html($s) . '</span></li>';
+    }
+    $out .= '</ol>';
+
+    // Schritt 1 — Status (Einfachauswahl)
+    $out .= '<div class="lvk-bx-step" data-key="status">';
+    $out .= '<h3 class="lvk-bx-q">Ich bin derzeit …?</h3>';
+    $out .= '<div class="lvk-bx-list">';
+    foreach ($stati as $s) {
+        $out .= '<button type="button" class="lvk-bx-row lvfb-status" data-status="' . esc_attr($s['key']) . '">' . esc_html($s['label']) . '</button>';
+    }
+    $out .= '</div></div>';
+
+    // Schritt 2 — Qualifikation (bedingte Gruppen je Status, Mehrfachauswahl)
+    $out .= '<div class="lvk-bx-step" data-key="qual" hidden>';
+    foreach ($stati as $s) {
+        $out .= '<div class="lvfb-qgroup" data-status="' . esc_attr($s['key']) . '" hidden>';
+        $out .= '<h3 class="lvk-bx-q">' . esc_html(isset($s['question']) ? $s['question'] : 'Was trifft auf Sie zu?') . '</h3>';
+        $out .= '<p class="lvk-bx-hint">Mehrfachauswahl möglich.</p><div class="lvk-bx-list">';
+        foreach ((isset($s['quals']) ? $s['quals'] : array()) as $q) {
+            $out .= '<button type="button" class="lvk-bx-row lvfb-qual" data-qual="' . esc_attr($q['key']) . '">' . esc_html($q['label']) . '</button>';
+        }
+        $out .= '</div></div>';
+    }
+    $out .= '</div>';
+
+    // Schritt 3 — Angaben (GHL)
+    if ($use_form) {
+        $out .= '<div class="lvk-bx-step" data-key="angaben" hidden>';
+        $out .= '<h3 class="lvk-bx-q">Fast geschafft!</h3>';
+        $out .= '<p class="lvk-bx-hint">Nach dem Ausfüllen erhalten Sie Ihre passenden Fördermöglichkeiten.</p>';
+        $out .= '<div class="lvk-bx-form">' . $ghl . '</div></div>';
+    }
+
+    // Schritt 4 — Ergebnis (Förder-Karten, JS filtert nach Qualifikation ∩ match)
+    $out .= '<div class="lvk-bx-step" data-key="ergebnis" hidden>';
+    $out .= '<h3 class="lvk-bx-q">Ihr Ergebnis: Diese Förderungen kommen für Sie in Frage</h3>';
+    $out .= '<p class="lvk-bx-count" aria-live="polite"></p>';
+    $out .= '<div class="lvf-grid lvfb-results">';
+    foreach ($programs as $f) {
+        $icon  = isset($icons[$f['icon']]) ? $icons[$f['icon']] : $icons['_default'];
+        $url   = livento_cc_foerder_url($f['slug']);
+        $match = '|' . implode('|', (array) (isset($f['match']) ? $f['match'] : array())) . '|';
+        $out  .= '<a class="lvf-card" href="' . esc_url($url) . '" data-match="' . esc_attr($match) . '">';
+        $out  .= '<span class="lvf-ic" aria-hidden="true">' . $icon . '</span>';
+        $out  .= '<h3 class="lvf-t">' . esc_html($f['title']) . '</h3>';
+        if (!empty($f['short'])) {
+            $out .= '<p class="lvf-d">' . esc_html(mb_substr(wp_strip_all_tags($f['short']), 0, 140)) . '</p>';
+        }
+        $out .= '<span class="lvf-cta">Mehr erfahren →</span></a>';
+    }
+    $out .= '</div><p style="text-align:center;margin-top:18px"><a href="' . esc_url(livento_cc_foerder_list_url()) . '">Alle Fördermöglichkeiten ansehen →</a></p>';
+    $out .= '</div>';
+
+    $out .= '<div class="lvk-bx-nav"><button type="button" class="lvk-bx-back" hidden>← Zurück</button><span class="lvk-bx-spacer"></span><button type="button" class="lvk-bx-next">Weiter</button></div>';
+    $out .= '<noscript><p><a href="' . esc_url(livento_cc_foerder_list_url()) . '">Zu den Fördermöglichkeiten →</a></p></noscript>';
+    $out .= '</div>';
+    $out .= livento_cc_foerder_berater_js();
+    return $out;
+});
+
+function livento_cc_foerder_berater_js() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  var root=document.getElementById('lvfb-berater'); if(!root) return;
+  var total=parseInt(root.getAttribute('data-total'),10)||0;
+  var steps=root.querySelectorAll('.lvk-bx-step'), stps=root.querySelectorAll('.lvk-bx-stp');
+  var back=root.querySelector('.lvk-bx-back'), next=root.querySelector('.lvk-bx-next');
+  var cards=Array.prototype.slice.call(root.querySelectorAll('.lvfb-results .lvf-card'));
+  var countEl=root.querySelector('.lvk-bx-count');
+  var cur=0, status='';
+  Array.prototype.forEach.call(root.querySelectorAll('.lvfb-status'),function(b){
+    b.addEventListener('click',function(){
+      Array.prototype.forEach.call(root.querySelectorAll('.lvfb-status'),function(x){x.classList.remove('on');});
+      b.classList.add('on'); status=b.getAttribute('data-status');
+    });
+  });
+  Array.prototype.forEach.call(root.querySelectorAll('.lvfb-qual'),function(b){
+    b.addEventListener('click',function(){ b.classList.toggle('on'); });
+  });
+  function showQualGroup(){
+    Array.prototype.forEach.call(root.querySelectorAll('.lvfb-qgroup'),function(g){ g.hidden=(g.getAttribute('data-status')!==status); });
+  }
+  function chosenQuals(){
+    var out=[];
+    Array.prototype.forEach.call(root.querySelectorAll('.lvfb-qgroup:not([hidden]) .lvfb-qual.on'),function(b){ out.push(b.getAttribute('data-qual')); });
+    return out;
+  }
+  function applyResults(){
+    var quals=chosenQuals(), shown=0;
+    cards.forEach(function(c){
+      var m=(c.getAttribute('data-match')||'').split('|').filter(function(x){return x;});
+      var ok=quals.length===0;
+      if(!ok){ for(var i=0;i<quals.length;i++){ if(m.indexOf(quals[i])>-1){ok=true;break;} } }
+      c.style.display=ok?'':'none'; if(ok)shown++;
+    });
+    if(countEl) countEl.textContent = shown+(shown===1?' passende Förderung':' passende Förderungen');
+  }
+  function show(i){
+    cur=i;
+    Array.prototype.forEach.call(steps,function(s,idx){ s.hidden=(idx!==i); });
+    Array.prototype.forEach.call(stps,function(s,idx){ s.classList.toggle('is-active',idx===i); s.classList.toggle('is-done',idx<i); });
+    if(back) back.hidden=(i===0);
+    if(steps[i].getAttribute('data-key')==='qual') showQualGroup();
+    var last=(i===total-1);
+    if(next) next.hidden=last;
+    if(last) applyResults();
+    try{ root.scrollIntoView({behavior:'smooth',block:'start'}); }catch(e){}
+  }
+  if(next) next.addEventListener('click',function(){
+    if(cur===0 && !status){ alert('Bitte wählen Sie Ihren Status.'); return; }
+    if(cur<total-1) show(cur+1);
+  });
+  if(back) back.addEventListener('click',function(){ if(cur>0) show(cur-1); });
+  show(0);
+})();
+</script>
+JS;
 }
