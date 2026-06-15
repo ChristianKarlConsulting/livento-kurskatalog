@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.9.0
+ * Version:           1.10.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -57,6 +57,8 @@
  * v1.9.0: [livento_kurse_berater] auf SGD-Stil umgebaut: Stepper (Interessen → Starttermin → Angaben
  *         → Ergebnis), formulierte Interessen-Aussagen (Themen-Mapping), GoHighLevel-Formular-Schritt
  *         (Embed in den Einstellungen) und passende Kurse inline im Ergebnis.
+ * v1.10.0: Admin-Tab „Berater" — Interessen-Aussagen + Themen-Mapping direkt im Backend editieren
+ *          (hinzufügen/entfernen, Themen ankreuzen, „Auf Standard zurücksetzen"). Speicherung in DB.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -812,8 +814,29 @@ add_shortcode('livento_kurse_suche', function ($atts) {
     return $out;
 });
 
-/** Interessen-Aussagen → Themen-Slugs (SGD-Stil). Labels frei anpassbar. */
+/** Interessen-Aussagen → Themen-Slugs: Admin-Einstellung (Tab „Berater") → Code-Default. */
 function livento_cc_berater_interests() {
+    $opt = get_option('livento_cc_berater_interests', null);
+    if (is_array($opt)) {
+        $out = array();
+        foreach ($opt as $row) {
+            $label  = isset($row['label']) ? (string) $row['label'] : '';
+            $topics = (isset($row['topics']) && is_array($row['topics']))
+                ? array_values(array_filter(array_map('strval', $row['topics'])))
+                : array();
+            if ($label !== '' && !empty($topics)) {
+                $out[] = array('label' => $label, 'topics' => $topics);
+            }
+        }
+        if (!empty($out)) {
+            return $out;
+        }
+    }
+    return livento_cc_berater_interests_default();
+}
+
+/** Standard-Interessen (Fallback, wenn im Admin nichts gepflegt ist). */
+function livento_cc_berater_interests_default() {
     return array(
         array('label' => 'Ich möchte Menschen mit Demenz besser begleiten',                 'topics' => array('demenz')),
         array('label' => 'Ich möchte in der Betreuung & Alltagsbegleitung arbeiten',         'topics' => array('soziale-betreuung', 'pflegeassistenz')),
@@ -1960,9 +1983,28 @@ function livento_cc_admin_page() {
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
+    if ((isset($_POST['livento_cc_save_berater']) || isset($_POST['livento_cc_reset_berater'])) && check_admin_referer('livento_cc_save_berater')) {
+        if (isset($_POST['livento_cc_reset_berater'])) {
+            delete_option('livento_cc_berater_interests');
+            $notice = 'Berater-Interessen auf Standard zurückgesetzt.';
+        } else {
+            $rows  = (isset($_POST['lvk_int']) && is_array($_POST['lvk_int'])) ? wp_unslash($_POST['lvk_int']) : array();
+            $clean = array();
+            foreach ($rows as $row) {
+                $label  = isset($row['label']) ? sanitize_text_field($row['label']) : '';
+                $topics = (isset($row['topics']) && is_array($row['topics'])) ? array_map('sanitize_title', $row['topics']) : array();
+                $topics = array_values(array_filter($topics));
+                if ($label !== '' && !empty($topics)) {
+                    $clean[] = array('label' => $label, 'topics' => $topics);
+                }
+            }
+            update_option('livento_cc_berater_interests', $clean);
+            $notice = 'Berater-Interessen gespeichert (' . count($clean) . ' Aussagen).';
+        }
+    }
 
     $tab  = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
-    $tabs = array('overview' => 'Übersicht', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'settings' => 'Einstellungen');
+    $tabs = array('overview' => 'Übersicht', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'settings' => 'Einstellungen');
 
     echo '<div class="wrap"><h1>Livento Kurskatalog</h1>';
     if ($notice) {
@@ -1981,6 +2023,8 @@ function livento_cc_admin_page() {
         livento_cc_admin_tab_slugs();
     } elseif ($tab === 'settings') {
         livento_cc_admin_tab_settings();
+    } elseif ($tab === 'berater') {
+        livento_cc_admin_tab_berater();
     } else {
         livento_cc_admin_tab_overview();
     }
@@ -2113,6 +2157,62 @@ function livento_cc_admin_tab_settings() {
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
+}
+
+/** Tab „Berater": Interessen-Aussagen + Themen-Mapping editieren. */
+function livento_cc_admin_tab_berater() {
+    $offerings    = livento_cc_get_offerings();
+    $topic_counts = livento_cc_collect_facet($offerings, 'topics', true);
+    $current      = livento_cc_berater_interests();
+
+    // Auswahl-Slugs: vorhandene Themen + bereits gemappte (damit nichts verloren geht).
+    $slugs = array_keys($topic_counts);
+    foreach ($current as $row) {
+        foreach ($row['topics'] as $t) {
+            if (!in_array($t, $slugs, true)) {
+                $slugs[] = $t;
+            }
+        }
+    }
+    sort($slugs);
+
+    echo '<p style="margin-top:12px">Interessen-Aussagen für den Schritt „Ihre Interessen" im <code>[livento_kurse_berater]</code>. Pro Aussage die zugehörigen Themen ankreuzen. Im Berater erscheinen nur Aussagen, deren Themen tatsächlich Kurse haben.</p>';
+    echo '<form method="post">';
+    wp_nonce_field('livento_cc_save_berater');
+
+    echo '<div id="lvk-int-rows">';
+    $i = 0;
+    foreach ($current as $row) {
+        echo livento_cc_admin_berater_row((string) $i, $row['label'], $row['topics'], $slugs, $topic_counts);
+        $i++;
+    }
+    echo '</div>';
+
+    echo '<template id="lvk-int-tpl">' . livento_cc_admin_berater_row('__IDX__', '', array(), $slugs, $topic_counts) . '</template>';
+
+    echo '<p><button type="button" class="button" id="lvk-int-add">+ Aussage hinzufügen</button></p>';
+    echo '<p style="margin-top:16px">';
+    echo '<button type="submit" name="livento_cc_save_berater" value="1" class="button button-primary">Speichern</button> ';
+    echo '<button type="submit" name="livento_cc_reset_berater" value="1" class="button" onclick="return confirm(\'Wirklich auf die Standard-Aussagen zurücksetzen?\')">Auf Standard zurücksetzen</button>';
+    echo '</p></form>';
+
+    echo "<script>(function(){var box=document.getElementById('lvk-int-rows'),tpl=document.getElementById('lvk-int-tpl'),n=0;var add=document.getElementById('lvk-int-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvk-int-del')){var r=e.target.closest('.lvk-int-row');if(r)r.parentNode.removeChild(r);}});})();</script>";
+}
+
+/** Eine editierbare Interessen-Zeile (Label-Input + Themen-Checkboxen). */
+function livento_cc_admin_berater_row($idx, $label, $topics, $slugs, $counts) {
+    $h  = '<div class="lvk-int-row" style="border:1px solid #dcdcde;border-radius:6px;padding:12px;margin:0 0 10px;background:#fff;max-width:920px">';
+    $h .= '<input type="text" name="lvk_int[' . esc_attr($idx) . '][label]" value="' . esc_attr($label) . '" class="large-text" placeholder="Aussage, z. B. Ich möchte Menschen mit Demenz besser begleiten">';
+    $h .= '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px 14px">';
+    foreach ($slugs as $slug) {
+        $checked = in_array($slug, (array) $topics, true) ? ' checked' : '';
+        $cnt = ' (' . (int) (isset($counts[$slug]) ? $counts[$slug] : 0) . ')';
+        $h .= '<label style="font-size:12px;white-space:nowrap"><input type="checkbox" name="lvk_int[' . esc_attr($idx) . '][topics][]" value="' . esc_attr($slug) . '"' . $checked . '> ' . esc_html(livento_cc_humanize($slug)) . $cnt . '</label>';
+    }
+    $h .= '</div>';
+    $h .= '<p style="margin:10px 0 0"><button type="button" class="button-link lvk-int-del" style="color:#b32d2e">Entfernen</button></p>';
+    $h .= '</div>';
+    return $h;
 }
 
 /* ============================================================
