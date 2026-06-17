@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.18.0
+Stable tag: 1.19.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.19.0 =
+* Kein eigener Plugin-Footer mehr auf den Detailseiten (Kurs + Foerdermoeglichkeit) -- die Copyright-/Impressum-/Datenschutz-Zeile war eine Dublette zum seitenweiten WordPress-Footer.
 
 = 1.18.0 =
 * SEO: Redaktionelle Meta-Description (Fallback: Beschreibung) + FAQ-Block mit schema.org/FAQPage-JSON-LD auf den Kurs-Detailseiten. Beide Felder kommen aus Campus Connect (public_offerings).

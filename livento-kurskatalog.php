@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.18.0
+ * Version:           1.19.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -84,6 +84,9 @@
  *          redaktionelle meta_description (Fallback: Beschreibung) für <meta description>/og:description,
  *          rendert einen aufklappbaren FAQ-Block und gibt zusätzlich schema.org/FAQPage-JSON-LD aus
  *          (Rich Results / KI-Suchmaschinen). Beide Felder kommen über die public_offerings-View.
+ * v1.19.0: Kein eigener Plugin-Footer mehr auf den Detailseiten (Kurs + Fördermöglichkeit). Die
+ *          „© … / Impressum / Datenschutz"-Zeile war eine Dublette zum seitenweiten WordPress-Footer
+ *          und wird jetzt weggelassen — das Theme liefert Footer + Rechtslinks bereits selbst.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -1644,9 +1647,8 @@ function livento_cc_render_detail($o) {
         $out .= '<p class="lvk-cta-wrap"><a class="lvk-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt buchen</a></p>';
     }
 
-    // Footer
-    $out .= '<footer class="lvk-footer">© ' . esc_html(wp_date('Y')) . ' ' . esc_html(LIVENTO_CC_PROVIDER) . '<br>';
-    $out .= '<a href="https://livento-bildung.de/impressum">Impressum</a> · <a href="https://livento-bildung.de/datenschutz">Datenschutz</a></footer>';
+    // Kein eigener Footer (© / Impressum / Datenschutz) — das liefert das WordPress-Theme
+    // bereits seitenweit; ein Plugin-Footer waere eine Dublette (v1.19.0).
 
     $out .= '</div>';
     return $out;
@@ -1988,7 +1990,6 @@ function livento_cc_styles() {
 .lvk-faq-item summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-faq-a{padding:0 0 12px}
 .lvk-cta-wrap{margin:16px 0}
-.lvk-footer{margin-top:48px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
 /* Kursberater (SGD-Stil mit Stepper) */
 .lvk-berater{max-width:860px;margin:0 auto;background:#fff;border:1px solid #e1ecd6;border-radius:12px;padding:26px 28px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
 .lvk-bx-title{color:var(--lvk-green);margin:0 0 4px;font-size:1.5rem}
@@ -2910,7 +2911,7 @@ function livento_cc_render_foerder_detail($f) {
     if (!empty($f['link'])) {
         $out .= '<p><a class="lvf-btn lvf-btn-ghost" href="' . esc_url($f['link']) . '" target="_blank" rel="noopener nofollow">Offizielle Informationen ↗</a></p>';
     }
-    $out .= '<footer class="lvf-footer">© ' . esc_html(wp_date('Y')) . ' ' . esc_html(LIVENTO_CC_PROVIDER) . '</footer>';
+    // Kein eigener Footer — WordPress-Theme liefert ihn seitenweit (v1.19.0).
     $out .= '</div>';
     return $out;
 }
@@ -3007,7 +3008,6 @@ function livento_cc_foerder_styles() {
 .lvf a.lvf-btn{display:inline-block;background:var(--lvf-green)!important;color:#fff!important;text-decoration:none!important;padding:12px 24px;border-radius:8px;font-weight:600;margin:4px 0}
 .lvf a.lvf-btn:hover{background:#006644!important}
 .lvf a.lvf-btn-ghost{background:#fff!important;color:var(--lvf-green)!important;border:1px solid var(--lvf-green)}
-.lvf-footer{margin-top:40px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
 @media(max-width:782px){
   .lvf-layout{flex-direction:column}
   .lvf-sidebar{flex:1 1 auto;width:100%;position:static}
