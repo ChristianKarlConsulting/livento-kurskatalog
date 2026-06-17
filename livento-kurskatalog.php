@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.17.0
+ * Version:           1.18.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -80,6 +80,10 @@
  *          Lead kam nie bei GHL an. nonce entfernt, stattdessen Honeypot (Bot-Schutz). Neuer Admin-
  *          „Webhook testen"-Button (serverseitiger Test-POST). Durchgängige Du-Ansprache im
  *          öffentlichen Bereich. Kein blaues Fokus/Active mehr auf den Auswahl-Buttons (Livento-Grün).
+ * v1.18.0: SEO — Meta-Description + FAQ. Die Detailseite nutzt jetzt die in Campus Connect gepflegte
+ *          redaktionelle meta_description (Fallback: Beschreibung) für <meta description>/og:description,
+ *          rendert einen aufklappbaren FAQ-Block und gibt zusätzlich schema.org/FAQPage-JSON-LD aus
+ *          (Rich Results / KI-Suchmaschinen). Beide Felder kommen über die public_offerings-View.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -680,7 +684,11 @@ add_action('wp', function () {
     // Canonical + Meta + OG + JSON-LD
     add_action('wp_head', function () use ($offering) {
         $url   = livento_cc_detail_url($offering['slug']);
-        $descr = wp_strip_all_tags($offering['public_description'] ?: ($offering['short_description'] ?: $offering['title']));
+        // v1.18.0: redaktionelle meta_description bevorzugen, sonst Fallback-Kette.
+        $descr_src = !empty($offering['meta_description'])
+            ? $offering['meta_description']
+            : ($offering['public_description'] ?: ($offering['short_description'] ?: $offering['title']));
+        $descr = wp_strip_all_tags($descr_src);
         $descr = mb_substr(trim($descr), 0, 160);
         $img   = $offering['public_image_url'] ?? '';
 
@@ -698,6 +706,11 @@ add_action('wp', function () {
             echo '<meta name="twitter:image" content="' . esc_url($img) . '">' . "\n";
         }
         echo '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_course($offering, $url)) . '</script>' . "\n";
+        // v1.18.0: FAQPage-JSON-LD (separates Schema), wenn FAQ gepflegt sind.
+        $faq_schema = livento_cc_jsonld_faq($offering);
+        if ($faq_schema) {
+            echo '<script type="application/ld+json">' . wp_json_encode($faq_schema) . '</script>' . "\n";
+        }
     }, 1);
 });
 
@@ -790,6 +803,54 @@ function livento_cc_jsonld_list($offerings) {
         '@type'           => 'ItemList',
         'name'            => 'Livento Kurskalender',
         'itemListElement' => $items,
+    );
+}
+
+/**
+ * v1.18.0: Gueltige FAQ-Eintraege ({q,a}) eines Angebots. Die View liefert `faq`
+ * als JSON-Array; PostgREST gibt es i. d. R. bereits dekodiert zurueck (String-
+ * Fallback fuer Sicherheit). Halb gefuellte/leere Eintraege werden verworfen.
+ */
+function livento_cc_faq_items($o) {
+    $faq = isset($o['faq']) ? $o['faq'] : array();
+    if (is_string($faq)) {
+        $faq = json_decode($faq, true);
+    }
+    if (!is_array($faq)) {
+        return array();
+    }
+    $items = array();
+    foreach ($faq as $f) {
+        if (!is_array($f)) {
+            continue;
+        }
+        $q = isset($f['q']) ? trim((string) $f['q']) : '';
+        $a = isset($f['a']) ? trim((string) $f['a']) : '';
+        if ($q !== '' && $a !== '') {
+            $items[] = array('q' => $q, 'a' => $a);
+        }
+    }
+    return $items;
+}
+
+/** v1.18.0: schema.org/FAQPage-JSON-LD oder null (wenn keine FAQ gepflegt). */
+function livento_cc_jsonld_faq($o) {
+    $items = livento_cc_faq_items($o);
+    if (empty($items)) {
+        return null;
+    }
+    $main = array();
+    foreach ($items as $f) {
+        $main[] = array(
+            '@type'          => 'Question',
+            'name'           => $f['q'],
+            'acceptedAnswer' => array('@type' => 'Answer', 'text' => $f['a']),
+        );
+    }
+    return array(
+        '@context'   => 'https://schema.org',
+        '@type'      => 'FAQPage',
+        'mainEntity' => $main,
     );
 }
 
@@ -1567,6 +1628,17 @@ function livento_cc_render_detail($o) {
         $out .= '<div class="lvk-section"><h2>Zugangsvoraussetzungen</h2>' . livento_cc_richtext($o['admission_requirements']) . '</div>';
     }
 
+    // Häufige Fragen (FAQ) — sichtbarer Block; FAQPage-JSON-LD kommt aus wp_head.
+    $faq_items = livento_cc_faq_items($o);
+    if (!empty($faq_items)) {
+        $out .= '<div class="lvk-section lvk-faq"><h2>Häufige Fragen</h2>';
+        foreach ($faq_items as $f) {
+            $out .= '<details class="lvk-faq-item"><summary>' . esc_html($f['q']) . '</summary>'
+                  . '<div class="lvk-faq-a">' . livento_cc_richtext($f['a']) . '</div></details>';
+        }
+        $out .= '</div>';
+    }
+
     // Buchen
     if (!empty($o['wc_checkout_url'])) {
         $out .= '<p class="lvk-cta-wrap"><a class="lvk-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt buchen</a></p>';
@@ -1912,6 +1984,9 @@ function livento_cc_styles() {
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-mod-hours{font-weight:400;color:var(--lvk-lime);font-size:.9rem}
+.lvk-faq-item{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
+.lvk-faq-item summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
+.lvk-faq-a{padding:0 0 12px}
 .lvk-cta-wrap{margin:16px 0}
 .lvk-footer{margin-top:48px;padding-top:16px;border-top:1px solid #ddd;color:#666;font-size:.8rem}
 /* Kursberater (SGD-Stil mit Stepper) */
