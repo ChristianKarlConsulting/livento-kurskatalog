@@ -220,6 +220,7 @@ Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur
 | Förderberater hat keinen Formular-Schritt | Kein Embed hinterlegt → entweder Förder- oder Kursberater-Formular in den Einstellungen eintragen. |
 | Sitemap „konnte nicht gelesen werden" | Permalinks speichern; in der Search Console erneut einreichen (`/livento-kurse.xml`). |
 | Neuer Kurs fehlt im Katalog | Cache leeren (oder Webhook einrichten). |
+| Search Console: „kanonische URL = /kurse/" auf Kursseiten | Ab v1.21.0 behoben: Das Plugin füttert Rank Math mit den kurseigenen SEO-Werten (Canonical/OG/Schema), sodass nur **eine** Kurs-URL kanonisch ist. Nach Update Cache + Cloudflare leeren, dann in der Search Console neu prüfen lassen. |
 
 ---
 
@@ -233,7 +234,7 @@ Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur
 | **Filter & Slugs** | Deep-Link-Parameter, Live-Filterwerte, Kurs-Slugs. |
 | **Berater** | Kursberater: Interessen-Aussagen + Themen-Zuordnung. |
 | **Förderprogramme** | Förderprogramme-Editor **und** Förderberater-Schema. |
-| **Einstellungen** | anon-Key, Purge-Secret, beide GHL-Formulare. |
+| **Einstellungen** | anon-Key, Purge-Secret, beide GHL-Formulare, Beratung/Rückruf-URL (Sekundär-CTA der Kursdetailseite — leer = Button aus). |
 
 ---
 

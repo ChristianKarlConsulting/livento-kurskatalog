@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.19.0
+ * Version:           1.21.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -87,6 +87,20 @@
  * v1.19.0: Kein eigener Plugin-Footer mehr auf den Detailseiten (Kurs + Fördermöglichkeit). Die
  *          „© … / Impressum / Datenschutz"-Zeile war eine Dublette zum seitenweiten WordPress-Footer
  *          und wird jetzt weggelassen — das Theme liefert Footer + Rechtslinks bereits selbst.
+ * v1.20.0: CRO — Kursdetailseite. (1) „Auf einen Blick"-Cluster direkt unter den Fakten: Primaer-CTA
+ *          „Jetzt Platz sichern" above the fold + optionaler Sekundaer-Button „Rueckruf vereinbaren".
+ *          (2) Foerder-Hinweis am Preis (nur bei AZAV/Foerderung, Link zur Foerderseite). (3) Kompakte
+ *          Trust-Zeile (AZAV / USt-frei / Zertifikat / Rechnung). (4) Plaetze-/Knappheitsanzeige aus
+ *          show_availability_indicator + max_participants/enrolled_count. (5) Wiederholter gruener
+ *          CTA-Block am Seitenende. (6) Mobiler Sticky-CTA (< 768px). Neue Einstellung
+ *          „Beratung/Rueckruf-URL" (leer = Sekundaer-Button aus). FAQ + JSON-LD unveraendert (keine Dubletten).
+ * v1.21.0: SEO-Dedup — Kurs-Detailseiten waren als Dublette von /kurse/ gewertet, weil Rank Math
+ *          PARALLEL seine /kurse/-Canonical/Description/OG ausgab (Route = pagename=kurse). Das Plugin
+ *          fuettert jetzt Rank Math ueber dessen Filter (canonical/description/title/robots/opengraph/
+ *          json_ld) mit den Kurswerten und gibt seine eigenen Tags nur noch aus, wenn Rank Math FEHLT
+ *          (Fallback). Ergebnis: genau EIN Canonical/og:url/description = eigene Kurs-URL. Zusaetzlich
+ *          BreadcrumbList (Start › Kurse › Kursname), Course.offers.category=USt-frei und
+ *          CourseInstance.courseWorkload. Behebt „kanonische URL = /kurse/" in der Search Console.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -674,33 +688,139 @@ add_action('wp', function () {
         return;
     }
 
-    // <title>
-    add_filter('pre_get_document_title', function () use ($offering) {
-        $parts = array_filter(array(
-            $offering['title'],
-            !empty($offering['format']) ? livento_cc_format_label($offering['format']) : null,
-            !empty($offering['start_datetime']) ? livento_cc_fmt_date($offering['start_datetime']) : null,
-        ));
-        return mb_substr(implode(' · ', $parts), 0, 65) . ' | Livento';
+    // SEO: Werte einmal bauen, dann Rank Math fuettern (genau EINE saubere Ausgabe) bzw.
+    // — falls Rank Math fehlt — selbst im wp_head ausgeben. Title immer setzen, sonst
+    // ueberschreibt RM ihn mit dem /kurse/-Seitentitel.
+    $seo = livento_cc_seo_values($offering);
+    add_filter('pre_get_document_title', function () use ($seo) {
+        return $seo['title'];
     }, 20);
 
-    // Canonical + Meta + OG + JSON-LD
-    add_action('wp_head', function () use ($offering) {
-        $url   = livento_cc_detail_url($offering['slug']);
-        // v1.18.0: redaktionelle meta_description bevorzugen, sonst Fallback-Kette.
-        $descr_src = !empty($offering['meta_description'])
-            ? $offering['meta_description']
-            : ($offering['public_description'] ?: ($offering['short_description'] ?: $offering['title']));
-        $descr = wp_strip_all_tags($descr_src);
-        $descr = mb_substr(trim($descr), 0, 160);
-        $img   = $offering['public_image_url'] ?? '';
+    if (livento_cc_rankmath_active()) {
+        livento_cc_seo_apply_rankmath($offering, $seo);
+    } else {
+        livento_cc_seo_apply_manual($offering, $seo);
+    }
+});
+
+/** Ist Rank Math aktiv? Dann fuettern wir es, statt selbst Tags auszugeben (Dublettenschutz). */
+function livento_cc_rankmath_active() {
+    return defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper');
+}
+
+/** Gemeinsame SEO-Werte einer Kurs-Detailseite: url, title, descr (≤160), img. */
+function livento_cc_seo_values($o) {
+    $parts = array_filter(array(
+        $o['title'],
+        !empty($o['format']) ? livento_cc_format_label($o['format']) : null,
+        !empty($o['start_datetime']) ? livento_cc_fmt_date($o['start_datetime']) : null,
+    ));
+    // v1.18.0: redaktionelle meta_description bevorzugen, sonst Fallback-Kette.
+    $descr_src = !empty($o['meta_description'])
+        ? $o['meta_description']
+        : ($o['public_description'] ?: ($o['short_description'] ?: $o['title']));
+    return array(
+        'url'   => livento_cc_detail_url($o['slug']),
+        'title' => mb_substr(implode(' · ', $parts), 0, 65) . ' | Livento',
+        'descr' => mb_substr(trim(wp_strip_all_tags($descr_src)), 0, 160),
+        'img'   => $o['public_image_url'] ?? '',
+    );
+}
+
+/** BreadcrumbList: Startseite › Kurse › {Kursname}. */
+function livento_cc_jsonld_breadcrumb($o, $url) {
+    return array(
+        '@context'        => 'https://schema.org',
+        '@type'           => 'BreadcrumbList',
+        'itemListElement' => array(
+            array('@type' => 'ListItem', 'position' => 1, 'name' => 'Startseite', 'item' => home_url('/')),
+            array('@type' => 'ListItem', 'position' => 2, 'name' => 'Kurse',      'item' => livento_cc_list_url()),
+            array('@type' => 'ListItem', 'position' => 3, 'name' => $o['title'],  'item' => $url),
+        ),
+    );
+}
+
+/**
+ * Variante A: Rank Math mit den Kurswerten fuettern. So entsteht genau EINE Ausgabe
+ * (kein zweites Canonical/og:url/description) und Course faedelt sich in den RM-@graph ein.
+ */
+function livento_cc_seo_apply_rankmath($o, $seo) {
+    add_filter('rank_math/frontend/canonical',   function () use ($seo) { return $seo['url']; });
+    add_filter('rank_math/frontend/description', function () use ($seo) { return $seo['descr']; });
+    add_filter('rank_math/frontend/title',       function () use ($seo) { return $seo['title']; });
+    add_filter('rank_math/frontend/robots',      function () {
+        return array('index' => 'index', 'follow' => 'follow');
+    });
+    add_filter('rank_math/opengraph/url',                     function () use ($seo) { return $seo['url']; });
+    add_filter('rank_math/opengraph/facebook/og_title',       function () use ($seo) { return $seo['title']; });
+    add_filter('rank_math/opengraph/facebook/og_description', function () use ($seo) { return $seo['descr']; });
+    add_filter('rank_math/opengraph/type',                    function () { return 'website'; });
+    if (!empty($seo['img'])) {
+        add_filter('rank_math/opengraph/facebook/og_image', function () use ($seo) { return $seo['img']; });
+    }
+
+    // Course (+ Offer/CourseInstance), FAQPage und BreadcrumbList in den RM-@graph haengen.
+    add_filter('rank_math/json_ld', function ($data, $jsonld) use ($o, $seo) {
+        if (!is_array($data)) {
+            $data = array();
+        }
+        $course = livento_cc_jsonld_course($o, $seo['url']);
+        unset($course['@context']); // im @graph redundant
+        $data['livento_course'] = $course;
+
+        $faq = livento_cc_jsonld_faq($o);
+        if ($faq) {
+            unset($faq['@context']);
+            $data['livento_faq'] = $faq;
+        }
+
+        // Breadcrumb: vorhandene RM-BreadcrumbList um den Kursnamen ergaenzen, sonst eigene.
+        $bc_key = null;
+        foreach ($data as $k => $piece) {
+            if (isset($piece['@type']) && $piece['@type'] === 'BreadcrumbList') {
+                $bc_key = $k;
+                break;
+            }
+        }
+        if ($bc_key !== null && !empty($data[$bc_key]['itemListElement']) && is_array($data[$bc_key]['itemListElement'])) {
+            $items   = $data[$bc_key]['itemListElement'];
+            $items[] = array(
+                '@type'    => 'ListItem',
+                'position' => count($items) + 1,
+                'name'     => $o['title'],
+                'item'     => $seo['url'],
+            );
+            $data[$bc_key]['itemListElement'] = $items;
+        } else {
+            $bc = livento_cc_jsonld_breadcrumb($o, $seo['url']);
+            unset($bc['@context']);
+            $data['livento_breadcrumb'] = $bc;
+        }
+        return $data;
+    }, 99, 2);
+
+    // Sichtbare Brotkrumen-Leiste (falls RM-Breadcrumbs aktiv): Kursname als letzte Krume.
+    add_filter('rank_math/frontend/breadcrumb/items', function ($crumbs) use ($o, $seo) {
+        if (is_array($crumbs)) {
+            $crumbs[] = array($o['title'], $seo['url']);
+        }
+        return $crumbs;
+    });
+}
+
+/** Fallback (Rank Math nicht aktiv): Tags selbst im wp_head ausgeben (inkl. Breadcrumb). */
+function livento_cc_seo_apply_manual($o, $seo) {
+    add_action('wp_head', function () use ($o, $seo) {
+        $url   = $seo['url'];
+        $descr = $seo['descr'];
+        $img   = $seo['img'];
 
         echo "\n<!-- Livento Kurskatalog -->\n";
         echo '<link rel="canonical" href="' . esc_url($url) . '">' . "\n";
         echo '<meta name="description" content="' . esc_attr($descr) . '">' . "\n";
         echo '<meta name="robots" content="index,follow">' . "\n";
-        echo '<meta property="og:type" content="article">' . "\n";
-        echo '<meta property="og:title" content="' . esc_attr($offering['title']) . '">' . "\n";
+        echo '<meta property="og:type" content="website">' . "\n";
+        echo '<meta property="og:title" content="' . esc_attr($o['title']) . '">' . "\n";
         echo '<meta property="og:description" content="' . esc_attr($descr) . '">' . "\n";
         echo '<meta property="og:url" content="' . esc_url($url) . '">' . "\n";
         if ($img) {
@@ -708,14 +828,29 @@ add_action('wp', function () {
             echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
             echo '<meta name="twitter:image" content="' . esc_url($img) . '">' . "\n";
         }
-        echo '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_course($offering, $url)) . '</script>' . "\n";
-        // v1.18.0: FAQPage-JSON-LD (separates Schema), wenn FAQ gepflegt sind.
-        $faq_schema = livento_cc_jsonld_faq($offering);
+        echo '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_course($o, $url)) . '</script>' . "\n";
+        $faq_schema = livento_cc_jsonld_faq($o);
         if ($faq_schema) {
             echo '<script type="application/ld+json">' . wp_json_encode($faq_schema) . '</script>' . "\n";
         }
+        echo '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_breadcrumb($o, $url)) . '</script>' . "\n";
     }, 1);
-});
+}
+
+/** Zeitstunden fuer schema courseWorkload: UE×0,75 (45-Min-Einheiten) bzw. aus duration_minutes. */
+function livento_cc_course_workload_hours($o) {
+    if (isset($o['total_hours']) && $o['total_hours'] !== null && $o['total_hours'] !== '') {
+        $h = (float) $o['total_hours'];
+        if (($o['hours_unit'] ?? '') === 'unterrichtsstunden') {
+            $h = $h * 0.75;
+        }
+        return (int) round($h);
+    }
+    if (!empty($o['duration_minutes'])) {
+        return (int) round(((int) $o['duration_minutes']) / 60);
+    }
+    return 0;
+}
 
 function livento_cc_jsonld_course($o, $url) {
     $format_to_mode = array(
@@ -736,8 +871,15 @@ function livento_cc_jsonld_course($o, $url) {
     if ($o['public_price'] !== null && $o['public_price'] !== '') {
         $offer['price'] = number_format((float) $o['public_price'], 2, '.', '');
     }
+    if (!empty($o['is_vat_exempt'])) {
+        $offer['category'] = 'USt-frei';
+    }
 
     $instance = array('@type' => 'CourseInstance', 'courseMode' => $mode, 'offers' => $offer);
+    $workload = livento_cc_course_workload_hours($o);
+    if ($workload > 0) {
+        $instance['courseWorkload'] = 'PT' . $workload . 'H';
+    }
     if (!empty($o['start_datetime'])) {
         $instance['startDate'] = $o['start_datetime'];
     }
@@ -1524,6 +1666,100 @@ function livento_cc_render_card($o) {
     return $out;
 }
 
+/* ---- CRO-Bausteine (Detailseite) — alle datengetrieben aus public_offerings ---- */
+
+/** Beratungs-/Rueckruf-Ziel fuer den Sekundaer-CTA. Leer = Button wird weggelassen. */
+function livento_cc_beratung_url() {
+    return trim((string) get_option('livento_cc_beratung_url', ''));
+}
+
+/** Ist der Kurs foerderrelevant? AZAV-Flag ODER hinterlegte Foerderungen. */
+function livento_cc_is_foerderbar($o) {
+    if (!empty($o['is_azav_relevant'])) {
+        return true;
+    }
+    return !empty($o['funding']) && is_array($o['funding']);
+}
+
+/**
+ * CTA-Buttons: Primaer „Jetzt Platz sichern" (wc_checkout_url) + optional Sekundaer.
+ * $variant 'top' = heller Cluster (Sekundaer: Rueckruf, falls URL gesetzt);
+ *          'block' = gruener Block (Sekundaer: „Foerderung pruefen").
+ * Eine Quelle fuer Cluster oben, Block unten und Sticky-Bar.
+ */
+function livento_cc_cta_buttons($o, $variant = 'top') {
+    if (empty($o['wc_checkout_url'])) {
+        return '';
+    }
+    $on_dark = ($variant === 'block');
+    $out  = '<div class="lvk-cta-row">';
+    $out .= '<a class="lvk-cta' . ($on_dark ? ' lvk-cta-on-dark' : '') . '" href="'
+          . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt Platz sichern</a>';
+    if ($on_dark) {
+        $out .= '<a class="lvk-cta-secondary lvk-on-dark" href="'
+              . esc_url(livento_cc_foerder_list_url()) . '">Förderung prüfen</a>';
+    } else {
+        $beratung = livento_cc_beratung_url();
+        if ($beratung !== '') {
+            $out .= '<a class="lvk-cta-secondary" href="' . esc_url($beratung) . '">Rückruf vereinbaren</a>';
+        }
+    }
+    $out .= '</div>';
+    return $out;
+}
+
+/** Foerder-Chip am Preis. Leerer String, wenn nicht foerderrelevant. */
+function livento_cc_foerder_hint_html($o) {
+    if (!livento_cc_is_foerderbar($o)) {
+        return '';
+    }
+    return '<div class="lvk-foerder-hint">'
+         . '<strong>Ggf. förderfähig.</strong> '
+         . '<a href="' . esc_url(livento_cc_foerder_list_url()) . '">In 2 Minuten prüfen →</a>'
+         . '</div>';
+}
+
+/** Kompakte Trust-Zeile am Entscheidungspunkt — konditional aus vorhandenen Flags. */
+function livento_cc_trust_row_html($o) {
+    $items = array();
+    if (!empty($o['is_azav_relevant'])) {
+        $items[] = 'AZAV-zertifiziert';
+    }
+    if (!empty($o['is_vat_exempt'])) {
+        $items[] = 'USt-frei';
+    }
+    if (!empty($o['recognition']) && is_array($o['recognition'])) {
+        $items[] = 'Zertifikat';
+    }
+    $items[] = 'Rechnung möglich';
+    $out = '<div class="lvk-trust">';
+    foreach ($items as $i) {
+        $out .= '<span class="lvk-trust-item">✓ ' . esc_html($i) . '</span>';
+    }
+    return $out . '</div>';
+}
+
+/**
+ * Plaetze-/Knappheitsanzeige. Nur wenn der Admin-Indikator aktiv ist und
+ * max_participants gesetzt ist. verbleibend = max − belegt.
+ */
+function livento_cc_scarcity_html($o) {
+    if (empty($o['show_availability_indicator']) || empty($o['max_participants'])) {
+        return '';
+    }
+    $max   = (int) $o['max_participants'];
+    $taken = isset($o['enrolled_count']) ? (int) $o['enrolled_count'] : 0;
+    $left  = $max - $taken;
+    if ($left <= 0) {
+        return '<div class="lvk-scarcity lvk-scarcity-full">Dieser Termin ist ausgebucht – frag nach dem nächsten Start.</div>';
+    }
+    $urgent = ($left <= 5);
+    $label  = $urgent
+        ? 'Nur noch ' . $left . ' ' . ($left === 1 ? 'Platz' : 'Plätze') . ' frei'
+        : 'Begrenzte Teilnehmerzahl (max. ' . $max . ')';
+    return '<div class="lvk-scarcity' . ($urgent ? ' lvk-scarcity-urgent' : '') . '">' . esc_html($label) . '</div>';
+}
+
 function livento_cc_render_detail($o) {
     $format_label = !empty($o['format']) ? livento_cc_format_label($o['format']) : '';
     $aud_labels = livento_cc_audience_labels();
@@ -1597,6 +1833,15 @@ function livento_cc_render_detail($o) {
         $out .= '</dl>';
     }
 
+    // CRO: „Auf einen Blick"-Cluster direkt unter den Fakten — Scarcity, Foerder-Hinweis,
+    // Primaer-CTA above the fold, Trust-Zeile. Alle Bausteine konditional.
+    $cluster  = livento_cc_scarcity_html($o);
+    $cluster .= livento_cc_foerder_hint_html($o);
+    $cluster .= livento_cc_cta_buttons($o, 'top');
+    if ($cluster !== '') {
+        $out .= '<div class="lvk-cta-cluster">' . $cluster . livento_cc_trust_row_html($o) . '</div>';
+    }
+
     // Zielgruppe (Array + Freitext)
     if (!empty($o['audience']) && is_array($o['audience'])) {
         $labels = array_map(function ($a) use ($aud_labels) {
@@ -1642,13 +1887,29 @@ function livento_cc_render_detail($o) {
         $out .= '</div>';
     }
 
-    // Buchen
+    // CRO: wiederholter CTA-Block am Seitenende (zweite Conversion-Chance nach dem Inhalt).
     if (!empty($o['wc_checkout_url'])) {
-        $out .= '<p class="lvk-cta-wrap"><a class="lvk-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt buchen</a></p>';
+        $out .= '<div class="lvk-cta-block">'
+              . '<div class="lvk-cta-block-head">Bereit für den nächsten Karriereschritt?</div>'
+              . '<div class="lvk-cta-block-sub">Sichere dir deinen Platz – oder lass uns vorab deine Förderung prüfen.</div>'
+              . livento_cc_cta_buttons($o, 'block')
+              . '</div>';
     }
 
     // Kein eigener Footer (© / Impressum / Datenschutz) — das liefert das WordPress-Theme
     // bereits seitenweit; ein Plugin-Footer waere eine Dublette (v1.19.0).
+
+    // CRO: mobiler Sticky-CTA (nur < 768px sichtbar, siehe CSS). Native Seite, kein iframe → fixed ok.
+    if (!empty($o['wc_checkout_url'])) {
+        $price = ($o['public_price'] !== null && $o['public_price'] !== '')
+            ? livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt'])) : '';
+        $out .= '<div class="lvk-sticky">';
+        if ($price !== '') {
+            $out .= '<div class="lvk-sticky-price">' . esc_html($price) . '</div>';
+        }
+        $out .= '<a class="lvk-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Platz sichern</a>';
+        $out .= '</div>';
+    }
 
     $out .= '</div>';
     return $out;
@@ -1989,7 +2250,33 @@ function livento_cc_styles() {
 .lvk-faq-item{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-faq-item summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-faq-a{padding:0 0 12px}
-.lvk-cta-wrap{margin:16px 0}
+/* CRO-Bausteine Detailseite */
+.lvk-cta-cluster{background:#f3f8ee;border:1px solid #e1ecd6;border-radius:12px;padding:16px 18px;margin:20px 0}
+.lvk-cta-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:4px 0}
+.lvk a.lvk-cta-secondary{display:inline-block;padding:14px 24px;border-radius:6px;font-weight:600;text-decoration:none!important;border:1.5px solid var(--lvk-green);color:var(--lvk-green)!important;background:transparent!important}
+.lvk a.lvk-cta-secondary:hover{background:#e6f0ec!important;color:var(--lvk-green)!important}
+.lvk a.lvk-cta-secondary.lvk-on-dark{border-color:#fff;color:#fff!important}
+.lvk a.lvk-cta-secondary.lvk-on-dark:hover{background:rgba(255,255,255,.12)!important;color:#fff!important}
+.lvk-foerder-hint{background:#fff;border:1px dashed var(--lvk-accent);border-radius:8px;padding:9px 13px;font-size:.92rem;margin:0 0 12px}
+.lvk-foerder-hint strong{color:var(--lvk-green)}
+.lvk-foerder-hint a{font-weight:600;white-space:nowrap}
+.lvk-trust{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:14px;font-size:.85rem;color:#46604f;font-weight:600}
+.lvk-scarcity{font-size:.92rem;font-weight:600;color:var(--lvk-lime);margin:0 0 12px}
+.lvk-scarcity-urgent,.lvk-scarcity-full{color:#b3261e}
+.lvk-cta-block{background:var(--lvk-green);border-radius:14px;padding:24px;margin:28px 0;text-align:center}
+.lvk-cta-block-head{color:#fff;font-weight:700;font-size:1.2rem;margin-bottom:6px}
+.lvk-cta-block-sub{color:#e7efe6;font-size:.95rem;margin-bottom:16px}
+.lvk-cta-block .lvk-cta-row{justify-content:center}
+.lvk a.lvk-cta.lvk-cta-on-dark{background:var(--lvk-accent)!important;color:var(--lvk-green)!important}
+.lvk a.lvk-cta.lvk-cta-on-dark:hover{background:#b6dd92!important;color:var(--lvk-green)!important}
+/* Mobile Sticky-CTA — nur schmale Screens, native Seite (kein iframe) */
+.lvk-sticky{display:none}
+@media(max-width:768px){
+  .lvk-sticky{display:flex;align-items:center;justify-content:space-between;gap:12px;position:fixed;left:0;right:0;bottom:0;z-index:9000;background:#fff;border-top:1px solid #e1ecd6;box-shadow:0 -4px 14px rgba(0,0,0,.08);padding:10px 14px}
+  .lvk-sticky-price{font-weight:700;color:var(--lvk-green);font-size:.95rem;line-height:1.15}
+  .lvk-sticky a.lvk-cta{flex:0 0 auto;padding:11px 18px;font-size:.95rem;white-space:nowrap}
+  .lvk-detail{padding-bottom:76px}
+}
 /* Kursberater (SGD-Stil mit Stepper) */
 .lvk-berater{max-width:860px;margin:0 auto;background:#fff;border:1px solid #e1ecd6;border-radius:12px;padding:26px 28px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
 .lvk-bx-title{color:var(--lvk-green);margin:0 0 4px;font-size:1.5rem}
@@ -2151,6 +2438,7 @@ function livento_cc_admin_page() {
         update_option('livento_cc_foerder_form', wp_unslash($_POST['livento_cc_foerder_form'] ?? ''));
         update_option('livento_cc_berater_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_berater_webhook'] ?? ''))));
         update_option('livento_cc_foerder_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_foerder_webhook'] ?? ''))));
+        update_option('livento_cc_beratung_url', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_beratung_url'] ?? ''))));
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -2545,6 +2833,10 @@ function livento_cc_admin_tab_settings() {
     echo '<p><label><strong>GHL Inbound-Webhook-URL:</strong><br><input type="url" name="livento_cc_foerder_webhook" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_foerder_webhook', '')) . '" placeholder="(leer = Kursberater-Webhook verwenden)"></label></p>';
     echo '<p class="description" style="margin-top:14px"><strong>Alternative</strong> — eigener Embed-Code (iframe). Leer = Kursberater-Formular.</p>';
     echo '<textarea name="livento_cc_foerder_form" class="large-text code" rows="4" placeholder="(leer = Kursberater-Formular verwenden)">' . esc_textarea((string) get_option('livento_cc_foerder_form', '')) . '</textarea>';
+
+    echo '<h3 style="margin-top:24px">Beratung / Rückruf (Sekundär-CTA Kursdetailseite)</h3>';
+    echo '<p>Optionales Ziel für den zweiten Button „Rückruf vereinbaren" oben im CTA-Bereich jeder Kursdetailseite (z. B. Kontakt-/Rückrufseite oder Kursberater). <strong>Leer = der Button wird ausgeblendet</strong> (kein toter Link).</p>';
+    echo '<p><label><strong>URL:</strong><br><input type="url" name="livento_cc_beratung_url" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_beratung_url', '')) . '" placeholder="https://livento-bildung.de/kontakt/"></label></p>';
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
