@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.21.0
+Stable tag: 1.22.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.22.0 =
+* Detail-Fixes Kursseite: (1) <title> = nur "{Kursname} | Livento" (Format/Datum + 65-Zeichen-Kuerzung raus, die kappte das Startdatum mittendrin -> "· 3."). (2) og:image-Metadaten ans Kursbild angeglichen -- Rank Math gab Breite/Hoehe/Alt/Twitter-Bild weiter vom Default-Logo aus, weil nur die Bild-URL ueberschrieben war; jetzt og:image:alt/twitter:image/secure_url = Kursbild, og:image:width/height/type weggelassen (verhindert falsches Social-Cropping). (3) Body-Klasse "lvk-course-detail" auf der Kurs-Detailroute.
 
 = 1.21.0 =
 * SEO-Dedup: Kurs-Detailseiten fuettern jetzt Rank Math (canonical/description/title/robots/opengraph/json_ld) statt parallel eigene Tags -> genau EIN kurseigenes Canonical/og:url; behebt die /kurse/-Dublette ("kanonische URL = /kurse/") in der Search Console. Zusaetzlich BreadcrumbList (Start > Kurse > Kursname), Course.offers.category=USt-frei und CourseInstance.courseWorkload. Ist Rank Math nicht aktiv, gibt das Plugin die Tags wie bisher selbst aus.

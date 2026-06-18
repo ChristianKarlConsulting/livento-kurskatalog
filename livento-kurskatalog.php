@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.21.0
+ * Version:           1.22.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -101,6 +101,12 @@
  *          (Fallback). Ergebnis: genau EIN Canonical/og:url/description = eigene Kurs-URL. Zusaetzlich
  *          BreadcrumbList (Start › Kurse › Kursname), Course.offers.category=USt-frei und
  *          CourseInstance.courseWorkload. Behebt „kanonische URL = /kurse/" in der Search Console.
+ * v1.22.0: Detail-Fixes. (1) <title> = nur „{Kursname} | Livento" (Format/Datum + 65-Zeichen-Kuerzung
+ *          raus — die kappte das Startdatum mittendrin: „· 3."). (2) og:image-Metadaten ans Kursbild
+ *          angeglichen: Rank Math gab Breite/Hoehe/Alt/Twitter weiter vom Default-Logo aus, weil nur die
+ *          Bild-URL ueberschrieben war — jetzt og:image:alt/twitter:image/secure_url = Kursbild,
+ *          og:image:width/height/type weggelassen (echte Größe des Remote-Bilds unbekannt). (3) Body-
+ *          Klasse „lvk-course-detail" auf der Kurs-Detailroute (Theme-/CSS-Hook).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -696,6 +702,13 @@ add_action('wp', function () {
         return $seo['title'];
     }, 20);
 
+    // v1.22.0: Body-Klasse fuer Theme-/CSS-Hooks. Nur hier registriert (Offering existiert),
+    // daher nie auf dem Katalog- oder 404-Pfad.
+    add_filter('body_class', function ($classes) {
+        $classes[] = 'lvk-course-detail';
+        return $classes;
+    });
+
     if (livento_cc_rankmath_active()) {
         livento_cc_seo_apply_rankmath($offering, $seo);
     } else {
@@ -710,18 +723,15 @@ function livento_cc_rankmath_active() {
 
 /** Gemeinsame SEO-Werte einer Kurs-Detailseite: url, title, descr (≤160), img. */
 function livento_cc_seo_values($o) {
-    $parts = array_filter(array(
-        $o['title'],
-        !empty($o['format']) ? livento_cc_format_label($o['format']) : null,
-        !empty($o['start_datetime']) ? livento_cc_fmt_date($o['start_datetime']) : null,
-    ));
+    // v1.22.0: Title = nur „{Kursname} | Livento". Format/Datum (+ 65-Zeichen-Kuerzung)
+    // entfernt — die Kuerzung kappte das Startdatum mittendrin („· 3.").
     // v1.18.0: redaktionelle meta_description bevorzugen, sonst Fallback-Kette.
     $descr_src = !empty($o['meta_description'])
         ? $o['meta_description']
         : ($o['public_description'] ?: ($o['short_description'] ?: $o['title']));
     return array(
         'url'   => livento_cc_detail_url($o['slug']),
-        'title' => mb_substr(implode(' · ', $parts), 0, 65) . ' | Livento',
+        'title' => $o['title'] . ' | Livento',
         'descr' => mb_substr(trim(wp_strip_all_tags($descr_src)), 0, 160),
         'img'   => $o['public_image_url'] ?? '',
     );
@@ -752,11 +762,21 @@ function livento_cc_seo_apply_rankmath($o, $seo) {
         return array('index' => 'index', 'follow' => 'follow');
     });
     add_filter('rank_math/opengraph/url',                     function () use ($seo) { return $seo['url']; });
-    add_filter('rank_math/opengraph/facebook/og_title',       function () use ($seo) { return $seo['title']; });
+    add_filter('rank_math/opengraph/facebook/og_title',       function () use ($o)   { return $o['title']; });
     add_filter('rank_math/opengraph/facebook/og_description', function () use ($seo) { return $seo['descr']; });
     add_filter('rank_math/opengraph/type',                    function () { return 'website'; });
     if (!empty($seo['img'])) {
-        add_filter('rank_math/opengraph/facebook/og_image', function () use ($seo) { return $seo['img']; });
+        // v1.22.0: nicht nur die Bild-URL ueberschreiben, sonst beschreiben Breite/Hoehe/Alt/
+        // Twitter-Bild weiter Rank Maths Default (Logo, 500x500) -> falsches Social-Cropping.
+        // Maße/Typ weglassen (remote Bild, echte Größe unbekannt; Plattformen messen selbst).
+        add_filter('rank_math/opengraph/facebook/og_image',            function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/facebook/og_image_secure_url', function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/facebook/og_image_width',  '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_height', '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_type',   '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_alt',        function () use ($o) { return $o['title']; });
+        add_filter('rank_math/opengraph/twitter/twitter_image',        function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/twitter/twitter_image_alt',    function () use ($o) { return $o['title']; });
     }
 
     // Course (+ Offer/CourseInstance), FAQPage und BreadcrumbList in den RM-@graph haengen.
@@ -825,8 +845,10 @@ function livento_cc_seo_apply_manual($o, $seo) {
         echo '<meta property="og:url" content="' . esc_url($url) . '">' . "\n";
         if ($img) {
             echo '<meta property="og:image" content="' . esc_url($img) . '">' . "\n";
+            echo '<meta property="og:image:alt" content="' . esc_attr($o['title']) . '">' . "\n";
             echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
             echo '<meta name="twitter:image" content="' . esc_url($img) . '">' . "\n";
+            echo '<meta name="twitter:image:alt" content="' . esc_attr($o['title']) . '">' . "\n";
         }
         echo '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_course($o, $url)) . '</script>' . "\n";
         $faq_schema = livento_cc_jsonld_faq($o);
