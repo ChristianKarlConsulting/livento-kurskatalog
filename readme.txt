@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.22.0
+Stable tag: 1.23.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.23.0 =
+* "Umfang" auf der Kurs-Einzelseite kommt jetzt aus total_hours + hours_unit (UE bei "unterrichtsstunden", sonst "Std."); duration_minutes nur noch als Fallback (ohne "ca."-Praefix).
 
 = 1.22.0 =
 * Detail-Fixes Kursseite: (1) <title> = nur "{Kursname} | Livento" (Format/Datum + 65-Zeichen-Kuerzung raus, die kappte das Startdatum mittendrin -> "· 3."). (2) og:image-Metadaten ans Kursbild angeglichen -- Rank Math gab Breite/Hoehe/Alt/Twitter-Bild weiter vom Default-Logo aus, weil nur die Bild-URL ueberschrieben war; jetzt og:image:alt/twitter:image/secure_url = Kursbild, og:image:width/height/type weggelassen (verhindert falsches Social-Cropping). (3) Body-Klasse "lvk-course-detail" auf der Kurs-Detailroute.

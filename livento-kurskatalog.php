@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.22.0
+ * Version:           1.23.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -107,6 +107,10 @@
  *          Bild-URL ueberschrieben war — jetzt og:image:alt/twitter:image/secure_url = Kursbild,
  *          og:image:width/height/type weggelassen (echte Größe des Remote-Bilds unbekannt). (3) Body-
  *          Klasse „lvk-course-detail" auf der Kurs-Detailroute (Theme-/CSS-Hook).
+ *
+ * v1.23.0: „Umfang" in der Faktenliste (Kurs-Einzelseite) kommt jetzt aus total_hours +
+ *          hours_unit (UE bei „unterrichtsstunden", sonst „Std."); duration_minutes nur
+ *          noch als Fallback (ohne „ca."-Praefix).
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -1831,8 +1835,12 @@ function livento_cc_render_detail($o) {
             ? ' – ' . livento_cc_fmt_date($o['end_datetime']) : '';
         $facts['Beginn'] = livento_cc_fmt_date($o['start_datetime']) . $end;
     }
-    if (!empty($o['duration_minutes'])) {
-        $facts['Umfang'] = 'ca. ' . round($o['duration_minutes'] / LIVENTO_CC_UE_MINUTES) . ' UE';
+    if (!empty($o['total_hours']) && ($o['hours_unit'] ?? '') === 'unterrichtsstunden') {
+        $facts['Umfang'] = (int) $o['total_hours'] . ' UE';
+    } elseif (!empty($o['total_hours'])) {
+        $facts['Umfang'] = (int) $o['total_hours'] . ' Std.';
+    } elseif (!empty($o['duration_minutes'])) {
+        $facts['Umfang'] = round($o['duration_minutes'] / LIVENTO_CC_UE_MINUTES) . ' UE';
     }
     $ort = trim(implode(', ', array_filter(array($o['site_name'] ?? '', $o['site_city'] ?? ''))));
     if ($ort !== '') {
