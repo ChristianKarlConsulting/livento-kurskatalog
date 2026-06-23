@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.23.0
+ * Version:           1.24.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -111,6 +111,12 @@
  * v1.23.0: „Umfang" in der Faktenliste (Kurs-Einzelseite) kommt jetzt aus total_hours +
  *          hours_unit (UE bei „unterrichtsstunden", sonst „Std."); duration_minutes nur
  *          noch als Fallback (ohne „ca."-Praefix).
+ * v1.24.0: CRO-Faktenbox „Auf einen Blick" auf der Kurs-Einzelseite — sticky rechte Spalte
+ *          (Desktop) / Block direkt unter dem Intro (Mobile). Buendelt Format, Dauer/Umfang,
+ *          Abschluss (neues Feld certificate_title), naechster Start, Kosten + Foerder-Pruef-
+ *          Link, „Jetzt anmelden" und „Kostenlose Beratung" above the fold. Ersetzt die alte
+ *          Faktenliste + den oberen CTA-Cluster (keine Dublette). Modul-Fix: „Aufbau & Module"
+ *          nur noch bei echtem Modulinhalt (sonst Sektion aus), erstes Modul offen.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -1786,6 +1792,171 @@ function livento_cc_scarcity_html($o) {
     return '<div class="lvk-scarcity' . ($urgent ? ' lvk-scarcity-urgent' : '') . '">' . esc_html($label) . '</div>';
 }
 
+/** Inline-SVG-Icon (24x24, stroke=currentColor) fuer die Faktenbox-Zeilen. */
+function livento_cc_fb_icon($key) {
+    $paths = array(
+        'format'   => '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+        'clock'    => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+        'hours'    => '<path d="M6 2h12M6 22h12M8 2v3c0 2 4 3.5 4 7s-4 5-4 7v1M16 2v3c0 2-4 3.5-4 7"/>',
+        'cert'     => '<circle cx="12" cy="8" r="6"/><path d="M8.5 13.5 7 22l5-3 5 3-1.5-8.5"/>',
+        'calendar' => '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
+        'price'    => '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h6.8a2 2 0 0 1 1.4.6l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    );
+    $p = isset($paths[$key]) ? $paths[$key] : $paths['clock'];
+    return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' . $p . '</svg>';
+}
+
+/** Format-Text fuer die Faktenbox — etwas ausfuehrlicher als das Badge-Label. */
+function livento_cc_factbox_format_text($o) {
+    $map = array(
+        'online_live'      => '100 % online – live im virtuellen Klassenzimmer',
+        'selbstlern'       => 'Selbstlernkurs – 100 % online, zeitlich flexibel',
+        'blended'          => 'Blended Learning – online & Präsenz',
+        'praesenz'         => 'Präsenz – vor Ort',
+        'flexibel_modular' => 'Flexibel / modular',
+        'kompakt'          => 'Kompaktformat',
+    );
+    $f = isset($o['format']) ? $o['format'] : '';
+    return isset($map[$f]) ? $map[$f] : livento_cc_format_label($f);
+}
+
+/**
+ * Zeitmodell „Variante B" (Dauer) — nur fuer Einzeltermine/Workshops sinnvoll.
+ * Selbstlernkurse laufen „im eigenen Tempo"; Lehrgaenge nutzen die Umfang-Zeile.
+ */
+function livento_cc_factbox_dauer($o) {
+    $type = isset($o['offering_type']) ? $o['offering_type'] : '';
+    if ($type === 'self_learning') {
+        return 'im eigenen Tempo';
+    }
+    if ($type === 'scheduled_course' && !empty($o['duration_minutes'])) {
+        $min = (int) $o['duration_minutes'];
+        $ue  = (int) round($min / LIVENTO_CC_UE_MINUTES);
+        $txt = $min . ' Min';
+        if ($ue >= 1) {
+            $txt .= ' (' . $ue . ' UE)';
+        }
+        $f = isset($o['format']) ? $o['format'] : '';
+        if ($f === 'online_live') {
+            $txt .= ', live-online';
+        } elseif ($f === 'praesenz') {
+            $txt .= ', vor Ort';
+        }
+        return $txt;
+    }
+    return '';
+}
+
+/** Umfang (Unterrichtsstunden gesamt) — fuer Lehrgaenge/Selbstlernkurse. */
+function livento_cc_factbox_umfang($o) {
+    if (!empty($o['total_hours'])) {
+        $unit = (isset($o['hours_unit']) && $o['hours_unit'] === 'unterrichtsstunden') ? 'UE' : 'Std.';
+        return (int) $o['total_hours'] . ' ' . $unit;
+    }
+    // Lehrgang ohne total_hours: aus Minuten ableiten (Einzeltermine zeigen die Dauer-Zeile).
+    $type = isset($o['offering_type']) ? $o['offering_type'] : '';
+    if ($type !== 'scheduled_course' && !empty($o['duration_minutes'])) {
+        return (int) round($o['duration_minutes'] / LIVENTO_CC_UE_MINUTES) . ' UE';
+    }
+    return '';
+}
+
+/** Naechster Start — Selbstlernkurse jederzeit, Lehrgaenge ohne Datum „auf Anfrage". */
+function livento_cc_factbox_start($o) {
+    $type = isset($o['offering_type']) ? $o['offering_type'] : '';
+    if ($type === 'self_learning') {
+        return 'jederzeit starten';
+    }
+    if (!empty($o['start_datetime'])) {
+        return livento_cc_fmt_date($o['start_datetime']);
+    }
+    if ($type === 'program') {
+        return 'auf Anfrage';
+    }
+    return '';
+}
+
+/**
+ * Faktenbox „Auf einen Blick" — sticky rechte Spalte (Desktop) / Block unter dem Intro (Mobile).
+ * Buendelt Eckdaten + Buchungs-CTA above the fold. Ersetzt die fruehere Faktenliste + den oberen
+ * CTA-Cluster (eine Quelle, keine Dublette). Alle Zeilen datengetrieben und konditional.
+ */
+function livento_cc_factbox_html($o) {
+    // Zeilen: [icon-key, label, bereits-escapter Wert]
+    $rows = array();
+
+    if (!empty($o['format'])) {
+        $rows[] = array('format', 'Format', esc_html(livento_cc_factbox_format_text($o)));
+    }
+    $dauer = livento_cc_factbox_dauer($o);
+    if ($dauer !== '') {
+        $rows[] = array('clock', 'Dauer', esc_html($dauer));
+    }
+    $umfang = livento_cc_factbox_umfang($o);
+    if ($umfang !== '') {
+        $rows[] = array('hours', 'Umfang', esc_html($umfang));
+    }
+    if (!empty($o['certificate_title'])) {
+        $abschluss = 'Qualifiziertes Zertifikat „' . $o['certificate_title'] . '"';
+        if (!empty($o['rbp_points'])) {
+            $abschluss .= ' · ' . (int) $o['rbp_points'] . ' RbP-Punkte';
+        }
+        $rows[] = array('cert', 'Abschluss', esc_html($abschluss));
+    }
+    $start = livento_cc_factbox_start($o);
+    if ($start !== '') {
+        $rows[] = array('calendar', 'Nächster Start', esc_html($start));
+    }
+    if (isset($o['public_price']) && $o['public_price'] !== null && $o['public_price'] !== '') {
+        $rows[] = array('price', 'Kosten', esc_html(livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']))));
+    }
+
+    $out  = '<aside class="lvk-factbox" aria-label="Auf einen Blick">';
+    $out .= '<p class="lvk-fb-eyebrow">Auf einen Blick</p>';
+    $out .= '<p class="lvk-fb-title">' . esc_html($o['title']) . '</p>';
+
+    // Knappheitsanzeige (konditional) oben in der Box.
+    $out .= livento_cc_scarcity_html($o);
+
+    if (!empty($rows)) {
+        $out .= '<dl class="lvk-fb-list">';
+        foreach ($rows as $r) {
+            $out .= '<div class="lvk-fb-row">'
+                  . '<span class="lvk-fb-ic" aria-hidden="true">' . livento_cc_fb_icon($r[0]) . '</span>'
+                  . '<span class="lvk-fb-rc"><dt class="lvk-fb-label">' . esc_html($r[1]) . '</dt>'
+                  . '<dd class="lvk-fb-val">' . $r[2] . '</dd></span>'
+                  . '</div>';
+        }
+        $out .= '</dl>';
+    }
+
+    // Aktion 1: Foerder-Hinweis + Pruef-Link (nur wenn foerderbar).
+    if (livento_cc_is_foerderbar($o)) {
+        $out .= '<div class="lvk-fb-foerder">'
+              . '<p class="lvk-fb-foerder-txt">Dieser Kurs ist ggf. förderfähig – z. B. über Bildungsgutschein oder Bildungsurlaub.</p>'
+              . '<a class="lvk-fb-foerderlink" href="' . esc_url(livento_cc_foerder_list_url()) . '">Förderung in 2 Minuten prüfen →</a>'
+              . '</div>';
+    }
+
+    // Aktion 2 + 3: Primaer „Jetzt anmelden", Sekundaer „Unsicher? Kostenlose Beratung".
+    $beratung = livento_cc_beratung_url();
+    if ($beratung === '') {
+        $beratung = home_url('/kontakt/');
+    }
+    $out .= '<div class="lvk-fb-actions">';
+    if (!empty($o['wc_checkout_url'])) {
+        $out .= '<a class="lvk-cta lvk-fb-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt anmelden</a>';
+    }
+    $out .= '<a class="lvk-cta-secondary lvk-fb-cta2" href="' . esc_url($beratung) . '">Unsicher? Kostenlose Beratung</a>';
+    $out .= '</div>';
+
+    // Trust-Zeile (konditional).
+    $out .= livento_cc_trust_row_html($o);
+
+    $out .= '</aside>';
+    return $out;
+}
+
 function livento_cc_render_detail($o) {
     $format_label = !empty($o['format']) ? livento_cc_format_label($o['format']) : '';
     $aud_labels = livento_cc_audience_labels();
@@ -1828,57 +1999,22 @@ function livento_cc_render_detail($o) {
         $out .= '<p class="lvk-lead">' . esc_html($o['short_description']) . '</p>';
     }
 
-    // Faktenliste
-    $facts = array();
-    if (!empty($o['start_datetime'])) {
-        $end = (!empty($o['end_datetime']) && $o['end_datetime'] !== $o['start_datetime'])
-            ? ' – ' . livento_cc_fmt_date($o['end_datetime']) : '';
-        $facts['Beginn'] = livento_cc_fmt_date($o['start_datetime']) . $end;
-    }
-    if (!empty($o['total_hours']) && ($o['hours_unit'] ?? '') === 'unterrichtsstunden') {
-        $facts['Umfang'] = (int) $o['total_hours'] . ' UE';
-    } elseif (!empty($o['total_hours'])) {
-        $facts['Umfang'] = (int) $o['total_hours'] . ' Std.';
-    } elseif (!empty($o['duration_minutes'])) {
-        $facts['Umfang'] = round($o['duration_minutes'] / LIVENTO_CC_UE_MINUTES) . ' UE';
-    }
-    $ort = trim(implode(', ', array_filter(array($o['site_name'] ?? '', $o['site_city'] ?? ''))));
-    if ($ort !== '') {
-        $facts['Ort'] = $ort;
-    }
-    if (!empty($o['instructor_name'])) {
-        $facts['Dozent:in'] = $o['instructor_name'];
-    }
-    if ($o['public_price'] !== null && $o['public_price'] !== '') {
-        $facts['Preis'] = livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']));
-    }
-    if (!empty($o['max_participants'])) {
-        $facts['Teilnehmer'] = 'max. ' . (int) $o['max_participants'];
-    }
-    if (!empty($facts)) {
-        $out .= '<dl class="lvk-facts">';
-        foreach ($facts as $k => $v) {
-            $out .= '<div><dt>' . esc_html($k) . ':</dt><dd>' . esc_html($v) . '</dd></div>';
-        }
-        $out .= '</dl>';
-    }
-
-    // CRO: „Auf einen Blick"-Cluster direkt unter den Fakten — Scarcity, Foerder-Hinweis,
-    // Primaer-CTA above the fold, Trust-Zeile. Alle Bausteine konditional.
-    $cluster  = livento_cc_scarcity_html($o);
-    $cluster .= livento_cc_foerder_hint_html($o);
-    $cluster .= livento_cc_cta_buttons($o, 'top');
-    if ($cluster !== '') {
-        $out .= '<div class="lvk-cta-cluster">' . $cluster . livento_cc_trust_row_html($o) . '</div>';
-    }
-
-    // Zielgruppe (Array + Freitext)
+    // Zielgruppen-Kurzzeile (Array) — bleibt im vollbreiten Kopfbereich ueber dem Grid.
     if (!empty($o['audience']) && is_array($o['audience'])) {
         $labels = array_map(function ($a) use ($aud_labels) {
             return isset($aud_labels[$a]) ? $aud_labels[$a] : $a;
         }, $o['audience']);
         $out .= '<p class="lvk-audience"><strong>Für:</strong> ' . esc_html(implode(' · ', $labels)) . '</p>';
     }
+
+    // Zwei-Spalten-Layout: rechts die sticky Faktenbox „Auf einen Blick", links der Inhalt.
+    // Die Faktenbox steht ZUERST im DOM → Mobile erscheint sie direkt unter dem Intro, Desktop
+    // platziert sie das CSS-Grid rechts (sticky). Sie ersetzt die fruehere Faktenliste
+    // (.lvk-facts) UND den oberen CTA-Cluster (.lvk-cta-cluster) — eine Quelle, keine Dublette.
+    $out .= '<div class="lvk-detail-grid">';
+    $out .= livento_cc_factbox_html($o);
+    $out .= '<div class="lvk-detail-main">';
+
     if (!empty($o['target_audience'])) {
         $out .= '<div class="lvk-section"><h2>Zielgruppe</h2>' . livento_cc_richtext($o['target_audience']) . '</div>';
     }
@@ -1926,6 +2062,9 @@ function livento_cc_render_detail($o) {
               . '</div>';
     }
 
+    $out .= '</div>'; // .lvk-detail-main
+    $out .= '</div>'; // .lvk-detail-grid
+
     // Kein eigener Footer (© / Impressum / Datenschutz) — das liefert das WordPress-Theme
     // bereits seitenweit; ein Plugin-Footer waere eine Dublette (v1.19.0).
 
@@ -1957,7 +2096,23 @@ function livento_cc_render_modules($modules) {
         return '';
     }
 
+    // Nur Module mit echtem Inhalt behalten (Beschreibung mit Text ODER nicht-leere
+    // Lektionsliste). Verhindert eine leere "Aufbau & Module"-Sektion, die sonst nur
+    // den (Kurs-)Titel wiederholt, wenn ein Modul ohne Inhalt gepflegt ist.
+    $modules = array_filter($modules, function ($m) {
+        if (!is_array($m)) {
+            return false;
+        }
+        $has_desc = !empty($m['description']) && trim(wp_strip_all_tags($m['description'])) !== '';
+        $has_lessons = !empty($m['lessons']) && is_array($m['lessons']) && count($m['lessons']) > 0;
+        return $has_desc || $has_lessons;
+    });
+    if (empty($modules)) {
+        return '';
+    }
+
     $out = '<div class="lvk-section"><h2>Aufbau & Module</h2>';
+    $first = true;
     foreach ($modules as $m) {
         $title = isset($m['title']) ? $m['title'] : 'Modul';
         $umfang = '';
@@ -1965,7 +2120,10 @@ function livento_cc_render_modules($modules) {
             $unit = (isset($m['hours_unit']) && $m['hours_unit'] === 'unterrichtsstunden') ? 'UE' : 'Std.';
             $umfang = ' <span class="lvk-mod-hours">(' . esc_html($m['total_hours'] . ' ' . $unit) . ')</span>';
         }
-        $out .= '<details class="lvk-module"><summary>' . esc_html($title) . $umfang . '</summary>';
+        // Erstes inhaltliches Modul standardmaessig geoeffnet.
+        $open = $first ? ' open' : '';
+        $first = false;
+        $out .= '<details class="lvk-module"' . $open . '><summary>' . esc_html($title) . $umfang . '</summary>';
         if (!empty($m['description'])) {
             $out .= livento_cc_richtext($m['description']);
         }
@@ -2299,6 +2457,36 @@ function livento_cc_styles() {
 .lvk-cta-block .lvk-cta-row{justify-content:center}
 .lvk a.lvk-cta.lvk-cta-on-dark{background:var(--lvk-accent)!important;color:var(--lvk-green)!important}
 .lvk a.lvk-cta.lvk-cta-on-dark:hover{background:#b6dd92!important;color:var(--lvk-green)!important}
+/* Faktenbox „Auf einen Blick" + Zwei-Spalten-Detaillayout (v1.24.0) */
+.lvk-detail{max-width:1080px}
+.lvk-detail-grid{display:block}
+.lvk-detail-main{min-width:0}
+.lvk-factbox{--fb-green:#004D33;--fb-accent:#AAC42B;--fb-tint:rgba(170,196,43,.18);--fb-ink:#334155;--fb-soft:#f6f8f0;background:#fff;border-radius:16px;padding:22px 22px 24px;margin:18px 0 26px;font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fb-ink)}
+.lvk-fb-eyebrow{color:var(--fb-green);font-weight:700;font-size:16px;margin:0 0 4px}
+.lvk-fb-title{font-family:"Qurova","Figtree",sans-serif;font-weight:600;color:var(--fb-green);font-size:1.35rem;line-height:1.25;margin:0 0 14px}
+.lvk-fb-list{margin:0 0 18px;padding:0}
+.lvk-fb-row{display:flex;align-items:flex-start;gap:12px;padding:9px 0;border-top:1px solid var(--fb-soft)}
+.lvk-fb-row:first-child{border-top:0}
+.lvk-fb-ic{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:13px;background:var(--fb-tint);color:var(--fb-green)}
+.lvk-fb-rc{display:flex;flex-direction:column;min-width:0;padding-top:2px}
+.lvk-fb-label{font-size:.78rem;font-weight:600;letter-spacing:.02em;color:#6b7b73;margin:0}
+.lvk-fb-val{margin:1px 0 0;font-size:1rem;font-weight:600;color:var(--fb-green);line-height:1.35}
+.lvk-factbox .lvk-scarcity{margin:0 0 14px}
+.lvk-fb-foerder{background:var(--fb-soft);border-radius:12px;padding:12px 14px;margin:0 0 14px}
+.lvk-fb-foerder-txt{margin:0 0 6px;font-size:.88rem;color:var(--fb-ink);line-height:1.4}
+.lvk-factbox a.lvk-fb-foerderlink{font-weight:700;color:var(--fb-green)!important;text-decoration:none!important;font-size:.9rem}
+.lvk-factbox a.lvk-fb-foerderlink:hover{text-decoration:underline!important}
+.lvk-fb-actions{display:flex;flex-direction:column;gap:10px;margin:2px 0 0}
+.lvk-factbox a.lvk-cta.lvk-fb-cta{display:block;text-align:center;background:var(--fb-green)!important;color:#fff!important;border-radius:10px;padding:14px 20px;font-size:1.02rem}
+.lvk-factbox a.lvk-cta.lvk-fb-cta:hover{background:#006644!important}
+.lvk-factbox a.lvk-cta-secondary.lvk-fb-cta2{display:block;text-align:center;border-radius:10px;border:1.5px solid var(--fb-green);color:var(--fb-green)!important;padding:12px 20px;font-size:.96rem}
+.lvk-factbox a.lvk-cta-secondary.lvk-fb-cta2:hover{background:var(--fb-soft)!important}
+.lvk-factbox .lvk-trust{margin-top:16px;border-top:1px solid var(--fb-soft);padding-top:12px}
+@media(min-width:900px){
+  .lvk-detail-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:32px;align-items:start}
+  .lvk-detail-main{grid-column:1;grid-row:1}
+  .lvk-factbox{grid-column:2;grid-row:1;position:sticky;top:20px;margin:0}
+}
 /* Mobile Sticky-CTA — nur schmale Screens, native Seite (kein iframe) */
 .lvk-sticky{display:none}
 @media(max-width:768px){

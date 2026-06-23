@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.23.0
+Stable tag: 1.24.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.24.0 =
+* CRO-Faktenbox "Auf einen Blick" auf der Kurs-Einzelseite: sticky rechte Spalte (Desktop) bzw. Block direkt unter dem Intro (Mobile). Buendelt Format, Dauer/Umfang, Abschluss, naechsten Start und Kosten mit Foerder-Pruef-Link, "Jetzt anmelden" und "Kostenlose Beratung" above the fold. Ersetzt die alte Faktenliste und den oberen CTA-Cluster (keine Dublette).
+* Neues Datenfeld "Abschlussbezeichnung" (certificate_title) aus Campus Connect -> Zeile "Qualifiziertes Zertifikat '...'" (+ RbP-Punkte, falls gepflegt). Umfang nutzt wieder total_hours/hours_unit (in der View re-exponiert).
+* FIX "Aufbau & Module": Sektion wird nur noch ausgegeben, wenn echte Modulinhalte (Beschreibung oder Lektionen) vorhanden sind -- kein leerer Block mehr; erstes Modul standardmaessig geoeffnet.
 
 = 1.23.0 =
 * "Umfang" auf der Kurs-Einzelseite kommt jetzt aus total_hours + hours_unit (UE bei "unterrichtsstunden", sonst "Std."); duration_minutes nur noch als Fallback (ohne "ca."-Praefix).
