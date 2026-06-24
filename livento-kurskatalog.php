@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.24.0
+ * Version:           1.25.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -117,6 +117,10 @@
  *          Link, „Jetzt anmelden" und „Kostenlose Beratung" above the fold. Ersetzt die alte
  *          Faktenliste + den oberen CTA-Cluster (keine Dublette). Modul-Fix: „Aufbau & Module"
  *          nur noch bei echtem Modulinhalt (sonst Sektion aus), erstes Modul offen.
+ * v1.25.0: Lead-Tracking — Kurs- und Foerderberater pushen bei erfolgreichem Lead ein
+ *          GTM/GA4-Event in window.dataLayer: {event:'generate_lead', lead_type:'anfrage',
+ *          lead_source:'kursberater'|'foerderberater'} (Quelle aus data-source). Greift nur
+ *          beim nativen Lead-Formular (Webhook konfiguriert), nicht beim rohen GHL-Embed.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -3948,7 +3952,12 @@ function livento_cc_lead_js() {
         if(t!==nextBtn) return;
         if(sent||busy||!active()) return;       // durchlassen → Stepper geht weiter
         e.preventDefault(); e.stopImmediatePropagation();
-        submit().then(function(){ sent=true; nextBtn.click(); }).catch(function(){});
+        submit().then(function(){
+          sent=true;
+          // GTM/GA4: Lead-Conversion. lead_source aus data-source (foerder → foerderberater, sonst kursberater).
+          try{ window.dataLayer=window.dataLayer||[]; window.dataLayer.push({event:'generate_lead',lead_type:'anfrage',lead_source:(form.getAttribute('data-source')==='foerder'?'foerderberater':'kursberater')}); }catch(_e){}
+          nextBtn.click();
+        }).catch(function(){});
       },true);
       if(active()) setLbl(lbl);
       try{

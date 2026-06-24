@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.24.0
+Stable tag: 1.25.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.25.0 =
+* Lead-Tracking: Kurs- und Förderberater pushen bei erfolgreichem Lead ein GTM/GA4-Event in window.dataLayer — {event:'generate_lead', lead_type:'anfrage', lead_source:'kursberater' bzw. 'foerderberater'}. Greift beim nativen Lead-Formular (Webhook konfiguriert); für GTM/GA4 muss der Container auf der Seite eingebunden sein.
 
 = 1.24.0 =
 * CRO-Faktenbox "Auf einen Blick" auf der Kurs-Einzelseite: sticky rechte Spalte (Desktop) bzw. Block direkt unter dem Intro (Mobile). Buendelt Format, Dauer/Umfang, Abschluss, naechsten Start und Kosten mit Foerder-Pruef-Link, "Jetzt anmelden" und "Kostenlose Beratung" above the fold. Ersetzt die alte Faktenliste und den oberen CTA-Cluster (keine Dublette).
