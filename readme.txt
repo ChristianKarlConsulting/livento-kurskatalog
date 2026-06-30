@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.26.0
+Stable tag: 1.26.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.26.1 =
+* FIX Kursliste: gruener Vollbreite-Balken ueber dem Widget. Ursache: manche Themes geben generischen <section>/<header>-Tags einen markenfarbenen Vollbreite-Hintergrund. Wrapper auf neutrale <div> umgestellt + defensiver CSS-Reset (background/border/padding 0) auf .lvk-kursliste.
 
 = 1.26.0 =
 * Kurslisten fuer Landingpages: neuer Shortcode [livento_kursliste] + Admin-Tab "Kurslisten". Je Google-/Meta-Ads-Kampagne eine benannte, kriterienbasierte Kursliste zusammenstellen (Zielgruppe/Thema/Format/Anerkennung + Titel-Stichwort, plus Ueberschrift/Sortierung/Spalten/CTA) und als eigenstaendiges Widget einbinden. Die Liste fuellt sich automatisch aus dem Katalog. "Betreuungskraefte" ueber die Zielgruppe, "Pflichtfortbildungen" ueber das Titel-Stichwort (kein eigenes Facet). Optionaler "Alle ansehen"-Button als Deep-Link in den gefilterten Katalog. Auch ad-hoc per Attributen nutzbar.

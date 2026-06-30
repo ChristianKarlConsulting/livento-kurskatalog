@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.26.0
+ * Version:           1.26.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -129,6 +129,10 @@
  *          Deep-Link in den gefilterten Katalog); auch ad-hoc per Attributen nutzbar. Die Liste
  *          fuellt sich automatisch aus dem Katalog. „Pflichtfortbildungen" laesst sich so ueber das
  *          Titel-Stichwort abbilden (kein eigenes Facet), „Betreuungskraefte" ueber die Zielgruppe.
+ * v1.26.1: FIX Kursliste — gruener Vollbreite-Balken ueber dem Widget. Ursache: manche Themes
+ *          geben generischen <section>/<header>-Tags einen markenfarbenen Vollbreite-Hintergrund.
+ *          Wrapper auf neutrale <div> umgestellt (wie der restliche Katalog) + defensiver
+ *          Reset (background/border/padding 0) auf .lvk-kursliste.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -1478,7 +1482,7 @@ function livento_cc_kursliste_styles() {
     }
     $done = true;
     $css = '
-.lvk-kursliste{margin:8px 0}
+.lvk-kursliste{margin:8px 0;background:none;border:0;padding:0}
 .lvk-kl-head{margin:0 0 18px}
 .lvk-kl-title{margin:0;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(22px,2.6vw,30px);line-height:1.15;color:#004D33}
 .lvk-kl-sub{margin:6px 0 0;color:#475569;font-size:15px;line-height:1.5}
@@ -1521,17 +1525,19 @@ function livento_cc_render_kursliste($cfg) {
     }
     $grid_style = ($cols >= 1 && $cols <= 4) ? ' style="--lvk-cols:' . $cols . '"' : '';
 
+    // Bewusst <div> statt <section>/<header>: manche Themes geben generischen
+    // semantischen Tags einen vollbreiten markenfarbenen Hintergrund (gruener Balken).
     $out  = livento_cc_styles() . livento_cc_kursliste_styles();
-    $out .= '<section class="lvk lvk-kursliste">';
+    $out .= '<div class="lvk lvk-kursliste">';
     if ($heading !== '' || $sub !== '') {
-        $out .= '<header class="lvk-kl-head">';
+        $out .= '<div class="lvk-kl-head">';
         if ($heading !== '') {
             $out .= '<h2 class="lvk-kl-title">' . esc_html($heading) . '</h2>';
         }
         if ($sub !== '') {
             $out .= '<p class="lvk-kl-sub">' . esc_html($sub) . '</p>';
         }
-        $out .= '</header>';
+        $out .= '</div>';
     }
     $out .= '<div class="lvk-grid lvk-kl-grid"' . $grid_style . '>';
     foreach ($offerings as $o) {
@@ -1541,7 +1547,7 @@ function livento_cc_render_kursliste($cfg) {
     if ($show_cta) {
         $out .= '<div class="lvk-kl-cta"><a class="lvk-kl-btn" href="' . esc_url(livento_cc_kursliste_deeplink($cfg)) . '">' . esc_html($cta_lbl) . ' →</a></div>';
     }
-    $out .= '</section>';
+    $out .= '</div>';
     return $out;
 }
 
