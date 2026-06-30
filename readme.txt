@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.25.0
+Stable tag: 1.26.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.26.0 =
+* Kurslisten fuer Landingpages: neuer Shortcode [livento_kursliste] + Admin-Tab "Kurslisten". Je Google-/Meta-Ads-Kampagne eine benannte, kriterienbasierte Kursliste zusammenstellen (Zielgruppe/Thema/Format/Anerkennung + Titel-Stichwort, plus Ueberschrift/Sortierung/Spalten/CTA) und als eigenstaendiges Widget einbinden. Die Liste fuellt sich automatisch aus dem Katalog. "Betreuungskraefte" ueber die Zielgruppe, "Pflichtfortbildungen" ueber das Titel-Stichwort (kein eigenes Facet). Optionaler "Alle ansehen"-Button als Deep-Link in den gefilterten Katalog. Auch ad-hoc per Attributen nutzbar.
 
 = 1.25.0 =
 * Lead-Tracking: Kurs- und Förderberater pushen bei erfolgreichem Lead ein GTM/GA4-Event in window.dataLayer — {event:'generate_lead', lead_type:'anfrage', lead_source:'kursberater' bzw. 'foerderberater'}. Greift beim nativen Lead-Formular (Webhook konfiguriert); für GTM/GA4 muss der Container auf der Seite eingebunden sein.

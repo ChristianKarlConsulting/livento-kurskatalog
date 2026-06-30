@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.25.0
+ * Version:           1.26.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -121,6 +121,14 @@
  *          GTM/GA4-Event in window.dataLayer: {event:'generate_lead', lead_type:'anfrage',
  *          lead_source:'kursberater'|'foerderberater'} (Quelle aus data-source). Greift nur
  *          beim nativen Lead-Formular (Webhook konfiguriert), nicht beim rohen GHL-Embed.
+ * v1.26.0: Kurslisten — benannte, kriterienbasierte Kurs-Widgets fuer Landingpages/Ad-Kampagnen.
+ *          Neuer Admin-Tab „Kurslisten": je Kampagne eine Liste anlegen (Kriterien Zielgruppe/
+ *          Thema/Format/Anerkennung + Titel-Stichwort, plus Ueberschrift/Sortierung/Spalten/CTA),
+ *          fertigen Shortcode kopieren. Neuer Shortcode [livento_kursliste id="…"] rendert eine
+ *          eigenstaendige Sektion (Ueberschrift + Karten-Grid + optionaler „Alle ansehen"-CTA mit
+ *          Deep-Link in den gefilterten Katalog); auch ad-hoc per Attributen nutzbar. Die Liste
+ *          fuellt sich automatisch aus dem Katalog. „Pflichtfortbildungen" laesst sich so ueber das
+ *          Titel-Stichwort abbilden (kein eigenes Facet), „Betreuungskraefte" ueber die Zielgruppe.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -1382,6 +1390,211 @@ function livento_cc_themen_styles() {
     return '<style id="lv-topics-styles">' . $css . '</style>';
 }
 
+/* ============================================================
+ * 4c. Kurslisten — benannte, kriterienbasierte Kurs-Widgets fuer Landingpages
+ *
+ * Im Admin-Tab „Kurslisten" pflegt der Nutzer benannte Listen (Kriterien +
+ * Ueberschrift/CTA) und bindet sie per [livento_kursliste id="…"] auf einer
+ * Landingpage ein (z. B. je Google-/Meta-Ads-Kampagne eine Kategorie wie
+ * „Pflichtfortbildungen" oder „Betreuungskraefte"). Dynamisch: die Liste fuellt
+ * sich automatisch aus dem Katalog. „Pflichtfortbildungen" laesst sich nicht ueber
+ * ein einzelnes Facet abbilden → zusaetzlich Titel-Stichwort (q) als Kriterium.
+ * ============================================================ */
+
+/** Gespeicherte Kurslisten (Admin-Option). */
+function livento_cc_kurslisten() {
+    $opt = get_option('livento_cc_kurslisten', null);
+    return is_array($opt) ? $opt : array();
+}
+
+/** Eine Kursliste per id. Gibt array|null zurueck. */
+function livento_cc_kursliste_get($id) {
+    $id = sanitize_title($id);
+    if ($id === '') {
+        return null;
+    }
+    foreach (livento_cc_kurslisten() as $l) {
+        if (isset($l['id']) && $l['id'] === $id) {
+            return $l;
+        }
+    }
+    return null;
+}
+
+/** Filtert Angebote nach den Kriterien einer Kursliste (alle gesetzten Kriterien = UND). */
+function livento_cc_kursliste_filter($offerings, $cfg) {
+    // Mehrfachwert-Felder (ODER innerhalb des Feldes, vorhandener Helper).
+    $offerings = livento_cc_filter_by_field($offerings, 'audience',    $cfg['audience']    ?? '');
+    $offerings = livento_cc_filter_by_field($offerings, 'topics',      $cfg['topics']      ?? '');
+    $offerings = livento_cc_filter_by_field($offerings, 'recognition', $cfg['recognition'] ?? '');
+
+    // Format = Skalarfeld (eigener Vergleich).
+    $fmt = trim((string) ($cfg['format'] ?? ''));
+    if ($fmt !== '') {
+        $want = array_values(array_filter(array_map(function ($v) { return strtolower(trim($v)); }, explode(',', $fmt))));
+        if (!empty($want)) {
+            $offerings = array_values(array_filter($offerings, function ($o) use ($want) {
+                return in_array(strtolower((string) ($o['format'] ?? '')), $want, true);
+            }));
+        }
+    }
+
+    // Titel-Stichwort (Teilstring, case-insensitive) — fuer Kategorien ohne eigenes
+    // Facet wie „Pflichtfortbildung".
+    $q = trim((string) ($cfg['q'] ?? ''));
+    if ($q !== '') {
+        $needle = function_exists('mb_strtolower') ? mb_strtolower($q, 'UTF-8') : strtolower($q);
+        $offerings = array_values(array_filter($offerings, function ($o) use ($needle) {
+            $t   = (string) ($o['title'] ?? '');
+            $hay = function_exists('mb_strtolower') ? mb_strtolower($t, 'UTF-8') : strtolower($t);
+            return strpos($hay, $needle) !== false;
+        }));
+    }
+    return $offerings;
+}
+
+/** Deep-Link in den vollen Katalog, vorgefiltert auf die Listen-Kriterien (fuer den CTA-Button). */
+function livento_cc_kursliste_deeplink($cfg) {
+    $params = array();
+    foreach (array('audience', 'topics', 'recognition', 'format') as $k) {
+        $v = trim((string) ($cfg[$k] ?? ''));
+        if ($v !== '') {
+            $params[$k] = implode(',', array_values(array_filter(array_map('trim', explode(',', $v)))));
+        }
+    }
+    $q = trim((string) ($cfg['q'] ?? ''));
+    if ($q !== '') {
+        $params['q'] = $q;
+    }
+    $base = livento_cc_list_url();
+    return empty($params) ? $base : $base . '?' . http_build_query($params);
+}
+
+/** CSS fuer die Kurslisten-Sektion (Kopf + CTA + optionale Spaltenzahl). Einmal pro Request. */
+function livento_cc_kursliste_styles() {
+    static $done = false;
+    if ($done) {
+        return '';
+    }
+    $done = true;
+    $css = '
+.lvk-kursliste{margin:8px 0}
+.lvk-kl-head{margin:0 0 18px}
+.lvk-kl-title{margin:0;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(22px,2.6vw,30px);line-height:1.15;color:#004D33}
+.lvk-kl-sub{margin:6px 0 0;color:#475569;font-size:15px;line-height:1.5}
+.lvk-kl-grid[style*="--lvk-cols"]{grid-template-columns:repeat(var(--lvk-cols),minmax(0,1fr))}
+@media(max-width:900px){.lvk-kl-grid[style*="--lvk-cols"]{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.lvk-kl-grid[style*="--lvk-cols"]{grid-template-columns:1fr}}
+.lvk-kl-cta{margin:24px 0 4px;text-align:center}
+.lvk-kl-btn{display:inline-block;background:#004D33;color:#fff!important;font-weight:700;font-size:15px;text-decoration:none;padding:13px 28px;border-radius:999px;transition:background .15s,transform .15s}
+.lvk-kl-btn:hover{background:#013a26;transform:translateY(-1px)}
+';
+    return '<style id="lvk-kursliste-styles">' . $css . '</style>';
+}
+
+/** Rendert eine Kursliste als eigenstaendige Sektion (Ueberschrift + Karten-Grid + optional CTA). */
+function livento_cc_render_kursliste($cfg) {
+    $offerings = livento_cc_get_offerings();
+    $offerings = livento_cc_kursliste_filter($offerings, $cfg);
+    $offerings = livento_cc_augment($offerings);
+    $offerings = livento_cc_sort_offerings($offerings, $cfg['sort'] ?? 'next_start');
+
+    $limit = max(0, (int) ($cfg['limit'] ?? 0));
+    if ($limit > 0) {
+        $offerings = array_slice($offerings, 0, $limit);
+    }
+
+    if (empty($offerings)) {
+        // Im Frontend keine leere Sektion ausgeben; im Backend Hinweis fuer den Redakteur.
+        return current_user_can('manage_options')
+            ? '<div class="lvk"><p>Kursliste „' . esc_html((string) ($cfg['name'] ?? ($cfg['id'] ?? ''))) . '": aktuell keine passenden Kurse (Kriterien zu eng?).</p></div>'
+            : '';
+    }
+
+    $heading  = trim((string) ($cfg['heading'] ?? ''));
+    $sub      = trim((string) ($cfg['subheading'] ?? ''));
+    $cols     = (int) ($cfg['columns'] ?? 0);
+    $show_cta = (strtolower((string) ($cfg['cta'] ?? 'no')) === 'yes');
+    $cta_lbl  = trim((string) ($cfg['cta_label'] ?? ''));
+    if ($cta_lbl === '') {
+        $cta_lbl = 'Alle Kurse ansehen';
+    }
+    $grid_style = ($cols >= 1 && $cols <= 4) ? ' style="--lvk-cols:' . $cols . '"' : '';
+
+    $out  = livento_cc_styles() . livento_cc_kursliste_styles();
+    $out .= '<section class="lvk lvk-kursliste">';
+    if ($heading !== '' || $sub !== '') {
+        $out .= '<header class="lvk-kl-head">';
+        if ($heading !== '') {
+            $out .= '<h2 class="lvk-kl-title">' . esc_html($heading) . '</h2>';
+        }
+        if ($sub !== '') {
+            $out .= '<p class="lvk-kl-sub">' . esc_html($sub) . '</p>';
+        }
+        $out .= '</header>';
+    }
+    $out .= '<div class="lvk-grid lvk-kl-grid"' . $grid_style . '>';
+    foreach ($offerings as $o) {
+        $out .= livento_cc_render_card($o);
+    }
+    $out .= '</div>';
+    if ($show_cta) {
+        $out .= '<div class="lvk-kl-cta"><a class="lvk-kl-btn" href="' . esc_url(livento_cc_kursliste_deeplink($cfg)) . '">' . esc_html($cta_lbl) . ' →</a></div>';
+    }
+    $out .= '</section>';
+    return $out;
+}
+
+/**
+ * Kursliste als eigenstaendiges Widget fuer Landingpages.
+ * Shortcode: [livento_kursliste id="pflichtfortbildungen"]
+ * Ad-hoc auch ohne gespeicherte Liste:
+ *   [livento_kursliste audience="betreuungskraefte_43b_53b" heading="Für Betreuungskräfte" limit="6"]
+ */
+add_shortcode('livento_kursliste', function ($atts) {
+    $a = shortcode_atts(array(
+        'id'          => '',
+        'audience'    => '',
+        'topics'      => '',
+        'format'      => '',
+        'recognition' => '',
+        'q'           => '',
+        'limit'       => '',
+        'sort'        => '',
+        'heading'     => '',
+        'subheading'  => '',
+        'cta'         => '',
+        'cta_label'   => '',
+        'columns'     => '',
+    ), $atts, 'livento_kursliste');
+
+    // Basis: gespeicherte Liste (per id) ODER Ad-hoc-Vorlage (nur Attribute).
+    $id = sanitize_title((string) $a['id']);
+    if ($id !== '') {
+        $cfg = livento_cc_kursliste_get($id);
+        if (!$cfg) {
+            return current_user_can('manage_options')
+                ? '<div class="lvk"><p>⚠️ Kursliste „' . esc_html($id) . '" nicht gefunden – im Backend unter „Livento Katalog → Kurslisten" anlegen.</p></div>'
+                : '';
+        }
+    } else {
+        $cfg = array('limit' => 6, 'sort' => 'next_start', 'cta' => 'no');
+    }
+
+    // Shortcode-Attribute ueberschreiben gespeicherte Werte (nur wenn explizit gesetzt).
+    foreach (array('audience', 'topics', 'format', 'recognition', 'q', 'heading', 'subheading', 'cta_label') as $k) {
+        if ($a[$k] !== '') {
+            $cfg[$k] = $a[$k];
+        }
+    }
+    if ($a['limit'] !== '')   { $cfg['limit']   = (int) $a['limit']; }
+    if ($a['sort'] !== '')    { $cfg['sort']    = sanitize_key($a['sort']); }
+    if ($a['cta'] !== '')     { $cfg['cta']     = strtolower($a['cta']); }
+    if ($a['columns'] !== '') { $cfg['columns'] = (int) $a['columns']; }
+
+    return livento_cc_render_kursliste($cfg);
+});
+
 function livento_cc_render_notfound() {
     return '<div class="lvk"><h1>Kurs nicht gefunden</h1>'
         . '<p><a href="' . esc_url(livento_cc_list_url()) . '">Zur Kursübersicht</a></p></div>';
@@ -2569,6 +2782,25 @@ function livento_cc_shortcodes() {
             ),
         ),
         array(
+            'tag'     => 'livento_kursliste',
+            'title'   => 'Kursliste (Landingpage-Widget)',
+            'desc'    => 'Benannte, kriterienbasierte Kursliste für Landingpages / Werbekampagnen. Anlegen & verwalten im Tab „Kurslisten"; dort den fertigen Shortcode kopieren. Füllt sich automatisch aus dem Katalog.',
+            'example' => '[livento_kursliste id="pflichtfortbildungen"]',
+            'atts'    => array(
+                'id'          => 'ID einer im Tab „Kurslisten" gespeicherten Liste. Ohne id lässt sich die Liste auch direkt per Attribut definieren.',
+                'audience'    => 'Zielgruppen-Slug(s), Komma-getrennt (z. B. betreuungskraefte_43b_53b).',
+                'topics'      => 'Themen-Slug(s), Komma-getrennt.',
+                'format'      => 'Format-Slug(s), Komma-getrennt (z. B. online_live,selbstlern).',
+                'recognition' => 'Anerkennungs-Slug(s), Komma-getrennt (z. B. gesetzlich_anerkannt).',
+                'q'           => 'Titel-Stichwort (z. B. Pflichtfortbildung) – nur Kurse mit diesem Text im Titel.',
+                'limit'       => 'Max. Anzahl Karten (Default 6).',
+                'sort'        => 'Sortierung: next_start, popular, newest, rating, most_booked, price_asc, price_desc.',
+                'heading'     => 'Öffentliche Überschrift über dem Grid (optional).',
+                'cta'         => '„Alle ansehen"-Button anzeigen: yes/no (Deep-Link in den gefilterten Katalog).',
+                'columns'     => 'Feste Spaltenzahl 1–4 (0/leer = automatisch responsiv).',
+            ),
+        ),
+        array(
             'tag'     => 'livento_kurse_suche',
             'title'   => 'Suchfeld',
             'desc'    => 'Eigenständiges Suchfeld (z. B. Startseite). Springt zur Katalogseite und filtert dort vor.',
@@ -2783,9 +3015,50 @@ function livento_cc_admin_page() {
             $notice = 'Förderberater-Schema gespeichert (' . count($clean) . ' Status).';
         }
     }
+    if (isset($_POST['livento_cc_save_kl']) && check_admin_referer('livento_cc_save_kl')) {
+        $rows  = (isset($_POST['lvk_kl']) && is_array($_POST['lvk_kl'])) ? wp_unslash($_POST['lvk_kl']) : array();
+        $clean = array();
+        $seen  = array();
+        $norm_csv = function ($v) {
+            if (is_array($v)) {
+                $v = implode(',', $v);
+            }
+            $parts = array_values(array_filter(array_map(function ($x) { return sanitize_title(trim($x)); }, explode(',', (string) $v))));
+            return implode(',', $parts);
+        };
+        foreach ($rows as $row) {
+            $name = isset($row['name']) ? sanitize_text_field($row['name']) : '';
+            if ($name === '') {
+                continue;
+            }
+            $id = (isset($row['id']) && $row['id'] !== '') ? sanitize_title($row['id']) : sanitize_title($name);
+            if ($id === '' || isset($seen[$id])) {
+                continue; // leere oder doppelte IDs verwerfen
+            }
+            $seen[$id] = true;
+            $clean[] = array(
+                'id'          => $id,
+                'name'        => $name,
+                'heading'     => isset($row['heading']) ? sanitize_text_field($row['heading']) : '',
+                'subheading'  => isset($row['subheading']) ? sanitize_text_field($row['subheading']) : '',
+                'audience'    => $norm_csv($row['audience'] ?? ''),
+                'topics'      => $norm_csv($row['topics'] ?? ''),
+                'format'      => $norm_csv($row['format'] ?? ''),
+                'recognition' => $norm_csv($row['recognition'] ?? ''),
+                'q'           => isset($row['q']) ? sanitize_text_field($row['q']) : '',
+                'limit'       => max(0, (int) ($row['limit'] ?? 6)),
+                'sort'        => isset($row['sort']) ? sanitize_key($row['sort']) : 'next_start',
+                'columns'     => max(0, min(4, (int) ($row['columns'] ?? 0))),
+                'cta'         => (isset($row['cta']) && $row['cta'] === 'yes') ? 'yes' : 'no',
+                'cta_label'   => isset($row['cta_label']) ? sanitize_text_field($row['cta_label']) : '',
+            );
+        }
+        update_option('livento_cc_kurslisten', $clean);
+        $notice = 'Kurslisten gespeichert (' . count($clean) . ').';
+    }
 
     $tab  = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
-    $tabs = array('overview' => 'Übersicht', 'anleitung' => 'Anleitung', 'shortcodes' => 'Shortcodes', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
+    $tabs = array('overview' => 'Übersicht', 'anleitung' => 'Anleitung', 'shortcodes' => 'Shortcodes', 'kurslisten' => 'Kurslisten', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
 
     echo '<div class="wrap"><h1>Livento Kurskatalog</h1>';
     if ($notice) {
@@ -2800,6 +3073,8 @@ function livento_cc_admin_page() {
 
     if ($tab === 'shortcodes') {
         livento_cc_admin_tab_shortcodes();
+    } elseif ($tab === 'kurslisten') {
+        livento_cc_admin_tab_kurslisten();
     } elseif ($tab === 'slugs') {
         livento_cc_admin_tab_slugs();
     } elseif ($tab === 'settings') {
@@ -2901,6 +3176,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li><code>[livento_kurse limit="6" topics="leitung-management"]</code> = Block nur mit Kursen dieses Themas (Slugs siehe <a href="' . $tab('slugs') . '">Filter &amp; Slugs</a>, mehrere mit Komma).</li>';
     echo '<li><code>[livento_kurse audience="fuehrungskraefte"]</code> = nur Kurse für diese Zielgruppe (kombinierbar mit <code>topics</code>).</li>';
     echo '<li>Deep-Links: <code>' . esc_html(livento_cc_list_url()) . '?format=online_live</code> usw.</li>';
+    echo '<li><strong>Kurslisten für Landingpages:</strong> benannte Listen je Kampagne (z. B. „Pflichtfortbildungen", „Betreuungskräfte") im Tab <a href="' . $tab('kurslisten') . '">Kurslisten</a> zusammenstellen und per <code>[livento_kursliste id="…"]</code> einbinden.</li>';
     echo '</ul>';
     echo '<p>Neue Kurse erscheinen automatisch (nach Cache-Ablauf bzw. „Cache leeren"/Webhook).</p>';
     echo '</div></details>';
@@ -3127,6 +3403,155 @@ function livento_cc_admin_berater_row($idx, $label, $topics, $slugs, $counts) {
     }
     $h .= '</div>';
     $h .= '<p style="margin:10px 0 0"><button type="button" class="button-link lvk-int-del" style="color:#b32d2e">Entfernen</button></p>';
+    $h .= '</div>';
+    return $h;
+}
+
+/** Tab „Kurslisten": benannte, kriterienbasierte Kurs-Widgets fuer Landingpages. */
+function livento_cc_admin_tab_kurslisten() {
+    $offerings    = livento_cc_augment(livento_cc_get_offerings());
+    $aud_counts   = livento_cc_collect_facet($offerings, 'audience', true);
+    $rec_counts   = livento_cc_collect_facet($offerings, 'recognition', true);
+    $fmt_counts   = livento_cc_collect_facet($offerings, 'format', false);
+    $topic_counts = livento_cc_collect_facet($offerings, 'topics', true);
+    $lists        = livento_cc_kurslisten();
+
+    echo '<p style="margin-top:12px;max-width:960px">Stelle pro Landingpage / Werbekampagne (Google&nbsp;Ads, Meta&nbsp;Ads) eine benannte Kursliste zusammen. Sie füllt sich <strong>automatisch</strong> aus dem Katalog anhand der Kriterien – binde sie per Shortcode <code>[livento_kursliste id="…"]</code> auf der Seite ein. Beispiele: <em>Betreuungskräfte</em> = Zielgruppe „Betreuungskräfte"; <em>Pflichtfortbildungen</em> = Titel-Stichwort „Pflichtfortbildung".</p>';
+    echo '<form method="post">';
+    wp_nonce_field('livento_cc_save_kl');
+
+    echo '<div id="lvk-kl-rows">';
+    $i = 0;
+    foreach ($lists as $l) {
+        echo livento_cc_admin_kursliste_row((string) $i, $l, $aud_counts, $rec_counts, $fmt_counts, $topic_counts);
+        $i++;
+    }
+    echo '</div>';
+
+    echo '<template id="lvk-kl-tpl">' . livento_cc_admin_kursliste_row('__IDX__', array(), $aud_counts, $rec_counts, $fmt_counts, $topic_counts) . '</template>';
+
+    echo '<p><button type="button" class="button" id="lvk-kl-add">+ Kursliste hinzufügen</button></p>';
+    echo '<p style="margin-top:16px"><button type="submit" name="livento_cc_save_kl" value="1" class="button button-primary">Speichern</button> <span class="description">Entfernte Listen verschwinden erst beim Speichern endgültig.</span></p>';
+    echo '</form>';
+
+    echo "<script>(function(){var box=document.getElementById('lvk-kl-rows'),tpl=document.getElementById('lvk-kl-tpl'),n=0;var add=document.getElementById('lvk-kl-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvk-kl-del')){var r=e.target.closest('.lvk-kl-row');if(r&&confirm('Diese Kursliste entfernen?'))r.parentNode.removeChild(r);}});})();</script>";
+}
+
+/** Eine editierbare Kurslisten-Zeile im Admin (Name/ID + Kriterien + Darstellung + Shortcode). */
+function livento_cc_admin_kursliste_row($idx, $l, $aud_counts, $rec_counts, $fmt_counts, $topic_counts) {
+    $name    = isset($l['name']) ? $l['name'] : '';
+    $id      = isset($l['id']) ? $l['id'] : '';
+    $heading = isset($l['heading']) ? $l['heading'] : '';
+    $sub     = isset($l['subheading']) ? $l['subheading'] : '';
+    $q       = isset($l['q']) ? $l['q'] : '';
+    $limit   = isset($l['limit']) ? (int) $l['limit'] : 6;
+    $sort    = isset($l['sort']) ? $l['sort'] : 'next_start';
+    $columns = isset($l['columns']) ? (int) $l['columns'] : 0;
+    $cta     = (isset($l['cta']) && $l['cta'] === 'yes');
+    $cta_lbl = isset($l['cta_label']) ? $l['cta_label'] : '';
+
+    // Gespeicherte CSV → Lookup-Set fuer die Checkboxen.
+    $to_set = function ($csv) {
+        $out = array();
+        foreach (explode(',', (string) $csv) as $v) {
+            $v = trim($v);
+            if ($v !== '') {
+                $out[$v] = true;
+            }
+        }
+        return $out;
+    };
+    $sel_aud = $to_set($l['audience'] ?? '');
+    $sel_rec = $to_set($l['recognition'] ?? '');
+    $sel_fmt = $to_set($l['format'] ?? '');
+    $sel_top = $to_set($l['topics'] ?? '');
+
+    $n = function ($field) use ($idx) { return 'lvk_kl[' . esc_attr($idx) . '][' . $field . ']'; };
+
+    // Checkbox-Gruppe aus Label-Map + Live-Counts (nur vorhandene oder bereits gewaehlte Werte).
+    $group = function ($field, $labels, $counts, $selected) use ($n) {
+        $h = '<div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin:4px 0 0">';
+        foreach ($labels as $slug => $label) {
+            $cnt = isset($counts[$slug]) ? (int) $counts[$slug] : 0;
+            if ($cnt === 0 && !isset($selected[$slug])) {
+                continue;
+            }
+            $chk = isset($selected[$slug]) ? ' checked' : '';
+            $h .= '<label style="font-size:12px;white-space:nowrap"><input type="checkbox" name="' . $n($field) . '[]" value="' . esc_attr($slug) . '"' . $chk . '> ' . esc_html($label) . ' (' . $cnt . ')</label>';
+        }
+        $h .= '</div>';
+        return $h;
+    };
+
+    // Themen haben keine feste Label-Map → aus Live-Counts (+ bereits gewaehlte).
+    $topic_labels = array();
+    foreach (array_keys($topic_counts) as $slug) {
+        $topic_labels[$slug] = livento_cc_humanize($slug);
+    }
+    foreach (array_keys($sel_top) as $slug) {
+        if (!isset($topic_labels[$slug])) {
+            $topic_labels[$slug] = livento_cc_humanize($slug);
+        }
+    }
+    ksort($topic_labels);
+
+    $sort_opts = array(
+        'next_start' => 'Nächster Start', 'newest' => 'Neueste', 'popular' => 'Beliebt',
+        'rating' => 'Beste Bewertung', 'most_booked' => 'Meiste Buchungen',
+        'price_asc' => 'Preis aufsteigend', 'price_desc' => 'Preis absteigend',
+    );
+    $sort_html = '';
+    foreach ($sort_opts as $val => $lbl) {
+        $sort_html .= '<option value="' . esc_attr($val) . '"' . ($val === $sort ? ' selected' : '') . '>' . esc_html($lbl) . '</option>';
+    }
+
+    $h  = '<div class="lvk-kl-row" style="border:1px solid #dcdcde;border-radius:6px;padding:14px 16px;margin:0 0 14px;background:#fff;max-width:960px">';
+
+    // Name + ID
+    $h .= '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    $h .= '<label style="flex:1;min-width:220px">Name (intern)<br><input type="text" name="' . $n('name') . '" value="' . esc_attr($name) . '" class="regular-text" placeholder="z. B. Pflichtfortbildungen"></label>';
+    $h .= '<label style="flex:1;min-width:220px">Shortcode-ID <span class="description">(leer = aus Name)</span><br><input type="text" name="' . $n('id') . '" value="' . esc_attr($id) . '" class="regular-text" placeholder="pflichtfortbildungen"></label>';
+    $h .= '</div>';
+
+    // Ueberschrift + Untertitel
+    $h .= '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">';
+    $h .= '<label style="flex:1;min-width:220px">Überschrift <span class="description">(öffentlich, optional)</span><br><input type="text" name="' . $n('heading') . '" value="' . esc_attr($heading) . '" class="regular-text" placeholder="Pflichtfortbildungen für Pflegekräfte"></label>';
+    $h .= '<label style="flex:1;min-width:220px">Untertitel <span class="description">(optional)</span><br><input type="text" name="' . $n('subheading') . '" value="' . esc_attr($sub) . '" class="regular-text"></label>';
+    $h .= '</div>';
+
+    // Kriterien
+    $h .= '<p style="margin:14px 0 2px;font-weight:600">Kriterien <span style="font-weight:400;color:#646970">— mehrere Felder = UND; innerhalb eines Feldes = ODER. Alles leer = alle Kurse.</span></p>';
+    $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Zielgruppe</strong>' . $group('audience', livento_cc_audience_labels(), $aud_counts, $sel_aud) . '</p>';
+    $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Thema</strong>' . $group('topics', $topic_labels, $topic_counts, $sel_top) . '</p>';
+    $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Format</strong>' . $group('format', livento_cc_format_labels(), $fmt_counts, $sel_fmt) . '</p>';
+    $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Anerkennung</strong>' . $group('recognition', livento_cc_recognition_labels(), $rec_counts, $sel_rec) . '</p>';
+    $h .= '<label style="display:block;margin-top:10px;max-width:560px">Titel-Stichwort <span class="description">(optional – nur Kurse, deren Titel diesen Text enthält)</span><br><input type="text" name="' . $n('q') . '" value="' . esc_attr($q) . '" class="regular-text" placeholder="z. B. Pflichtfortbildung"></label>';
+
+    // Darstellung
+    $h .= '<p style="margin:14px 0 2px;font-weight:600">Darstellung</p>';
+    $h .= '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">';
+    $h .= '<label>Max. Karten<br><input type="number" min="0" name="' . $n('limit') . '" value="' . esc_attr((string) $limit) . '" style="width:80px"></label>';
+    $h .= '<label>Sortierung<br><select name="' . $n('sort') . '">' . $sort_html . '</select></label>';
+    $h .= '<label>Spalten<br><select name="' . $n('columns') . '">';
+    foreach (array(0 => 'auto', 1 => '1', 2 => '2', 3 => '3', 4 => '4') as $cv => $cl) {
+        $h .= '<option value="' . $cv . '"' . ($cv === $columns ? ' selected' : '') . '>' . $cl . '</option>';
+    }
+    $h .= '</select></label>';
+    $h .= '<label style="align-self:center;margin-top:18px"><input type="checkbox" name="' . $n('cta') . '" value="yes"' . ($cta ? ' checked' : '') . '> „Alle ansehen"-Button</label>';
+    $h .= '<label>Button-Text<br><input type="text" name="' . $n('cta_label') . '" value="' . esc_attr($cta_lbl) . '" placeholder="Alle Kurse ansehen" style="width:190px"></label>';
+    $h .= '</div>';
+
+    // Shortcode-Hinweis + Entfernen
+    $sc_id = $id !== '' ? $id : sanitize_title($name);
+    $h .= '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:12px;flex-wrap:wrap">';
+    if ($sc_id !== '') {
+        $h .= '<code style="background:#f6f7f7;padding:4px 8px;border-radius:3px">[livento_kursliste id="' . esc_attr($sc_id) . '"]</code>';
+    } else {
+        $h .= '<span class="description">Shortcode erscheint nach dem Speichern.</span>';
+    }
+    $h .= '<button type="button" class="button-link lvk-kl-del" style="color:#b32d2e">Entfernen</button>';
+    $h .= '</div>';
+
     $h .= '</div>';
     return $h;
 }
