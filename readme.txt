@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.26.1
+Stable tag: 1.27.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.27.0 =
+* Kurse-Förder-Tags selbst verwaltbar: Neuer Abschnitt "Kurse-Förder-Tags" im Tab "Förderprogramme" — eigene Tags fuers "Kurse-Förder-Tag"-Dropdown anlegen/umbenennen/entfernen (Bezeichnung + optionaler Slug). Gespeichert in der Option livento_cc_funding_tags, gemerged mit den 9 Standard-Werten. Out-of-the-box vorbelegt mit "Anpassungsqualifizierung". Hinweis: Ein eigener Tag filtert nur dann Kurse, wenn Campus Connect denselben funding-Wert kennt — sonst dient er als reines Label/Verlinkungsziel.
 
 = 1.26.1 =
 * FIX Kursliste: gruener Vollbreite-Balken ueber dem Widget. Ursache: manche Themes geben generischen <section>/<header>-Tags einen markenfarbenen Vollbreite-Hintergrund. Wrapper auf neutrale <div> umgestellt + defensiver CSS-Reset (background/border/padding 0) auf .lvk-kursliste.

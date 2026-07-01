@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.26.1
+ * Version:           1.27.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -133,6 +133,12 @@
  *          geben generischen <section>/<header>-Tags einen markenfarbenen Vollbreite-Hintergrund.
  *          Wrapper auf neutrale <div> umgestellt (wie der restliche Katalog) + defensiver
  *          Reset (background/border/padding 0) auf .lvk-kursliste.
+ * v1.27.0: Kurse-Förder-Tags selbst verwaltbar. Neuer Abschnitt im Tab „Förderprogramme":
+ *          eigene Förder-Tags fuers „Kurse-Förder-Tag"-Dropdown anlegen/umbenennen/entfernen
+ *          (DB-Option livento_cc_funding_tags, gemerged mit den 9 CC-Standard-Werten in
+ *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
+ *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
+ *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -222,7 +228,9 @@ function livento_cc_audience_labels() {
 }
 
 function livento_cc_funding_labels() {
-    return array(
+    // 9 CC-gespiegelte Standard-Werte (aus src/lib/courseFilterLabels.ts) — diese tragen
+    // echte Kurse und werden im Katalog-Filter „Förderung" gelabelt.
+    $defaults = array(
         'azav_bildungsgutschein' => 'AZAV-Bildungsgutschein',
         'bildungsurlaub'         => 'Bildungsurlaub',
         'bildungsscheck'         => 'Bildungsscheck',
@@ -233,6 +241,23 @@ function livento_cc_funding_labels() {
         'ratenzahlung'           => 'Ratenzahlung',
         'selbstzahler'           => 'Selbstzahler',
     );
+    // Im Backend selbst verwaltete Zusatz-Tags (Tab „Förderprogramme → Kurse-Förder-Tags").
+    // Ergänzen neue Slugs bzw. dürfen ein Default-Label überschreiben (Umbenennen).
+    return array_merge($defaults, livento_cc_funding_tags_custom());
+}
+
+/**
+ * Selbst verwaltete Zusatz-Förder-Tags (slug => Label). Option unset = Seed mit
+ * „Anpassungsqualifizierung" (out-of-the-box verfügbar); gesetzt (auch leer) = wie gespeichert.
+ * HINWEIS: Ein Custom-Tag filtert nur Kurse, wenn Campus Connect denselben funding-Wert kennt —
+ * sonst dient er als reines Label/Verlinkungsziel im Förderprogramm-Editor.
+ */
+function livento_cc_funding_tags_custom() {
+    $opt = get_option('livento_cc_funding_tags', null);
+    if (!is_array($opt)) {
+        return array('anpassungsqualifizierung' => 'Anpassungsqualifizierung');
+    }
+    return $opt;
 }
 
 function livento_cc_recognition_labels() {
@@ -2979,6 +3004,28 @@ function livento_cc_admin_page() {
             $notice = 'Förderprogramme gespeichert (' . count($clean) . ').';
         }
     }
+    if ((isset($_POST['livento_cc_save_ftags']) || isset($_POST['livento_cc_reset_ftags'])) && check_admin_referer('livento_cc_save_ftags')) {
+        if (isset($_POST['livento_cc_reset_ftags'])) {
+            delete_option('livento_cc_funding_tags');
+            $notice = 'Kurse-Förder-Tags auf Standard zurückgesetzt.';
+        } else {
+            $rows  = (isset($_POST['lvk_ft']) && is_array($_POST['lvk_ft'])) ? wp_unslash($_POST['lvk_ft']) : array();
+            $clean = array();
+            foreach ($rows as $row) {
+                $label = isset($row['label']) ? sanitize_text_field($row['label']) : '';
+                if ($label === '') {
+                    continue;
+                }
+                $slug = (isset($row['slug']) && $row['slug'] !== '') ? sanitize_title($row['slug']) : sanitize_title($label);
+                if ($slug === '' || isset($clean[$slug])) {
+                    continue; // leere oder doppelte Slugs verwerfen
+                }
+                $clean[$slug] = $label;
+            }
+            update_option('livento_cc_funding_tags', $clean);
+            $notice = 'Kurse-Förder-Tags gespeichert (' . count($clean) . ').';
+        }
+    }
     if ((isset($_POST['livento_cc_save_fstatus']) || isset($_POST['livento_cc_reset_fstatus'])) && check_admin_referer('livento_cc_save_fstatus')) {
         if (isset($_POST['livento_cc_reset_fstatus'])) {
             delete_option('livento_cc_foerder_status');
@@ -3206,6 +3253,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li>Kurse-Förder-Tag (optional) → „Passende Kurse" auf der Detailseite</li>';
     echo '<li>Offizieller Link (optional)</li>';
     echo '</ul>';
+    echo '<p class="tip"><strong>Kurse-Förder-Tags selbst verwalten:</strong> Die Auswahl im Dropdown „Kurse-Förder-Tag" lässt sich unten im Tab „Förderprogramme" (Abschnitt „Kurse-Förder-Tags") um eigene Einträge ergänzen. Ein eigener Tag filtert aber nur dann Kurse, wenn Campus Connect denselben Förder-Wert kennt — sonst dient er als reines Label.</p>';
     echo '<p class="tip">Nach dem Anlegen neuer Programme einmal <a href="' . $perma . '">Permalinks speichern</a>.</p>';
     echo '</div></details>';
 
@@ -3963,6 +4011,44 @@ function livento_cc_foerder_styles() {
     return '<style id="lvf-styles">' . $css . '</style>';
 }
 
+/** Verwaltungs-Block „Kurse-Förder-Tags": selbst verwaltbare Zusatz-Tags fuers funding_key-Dropdown. */
+function livento_cc_admin_funding_tags_section() {
+    $custom = livento_cc_funding_tags_custom(); // slug => label
+
+    echo '<hr style="margin:30px 0 18px">';
+    echo '<h2 style="margin:0 0 4px">Kurse-Förder-Tags</h2>';
+    echo '<p style="margin:0 0 6px;max-width:900px">Diese Tags erscheinen im Dropdown <strong>„Kurse-Förder-Tag"</strong> jeder Förderprogramm-Karte (oben). Hier legst du eigene Tags an, benennst sie um oder entfernst sie.</p>';
+    echo '<p class="description" style="max-width:900px;margin:0 0 12px">Hinweis: Ein eigener Tag <strong>filtert nur dann Kurse</strong> unter <code>/' . esc_html(LIVENTO_CC_BASE) . '/?funding=…</code>, wenn Campus Connect denselben Förder-Wert kennt. Sonst dient er als reines Label bzw. Verlinkungsziel. Die 9 Standard-Tags (AZAV-Bildungsgutschein, Aufstiegs-BAföG, …) sind fest hinterlegt und erscheinen ohnehin.</p>';
+
+    echo '<form method="post">';
+    wp_nonce_field('livento_cc_save_ftags');
+    echo '<div id="lvft-rows">';
+    $i = 0;
+    foreach ($custom as $slug => $label) {
+        echo livento_cc_admin_funding_tag_row((string) $i, (string) $slug, (string) $label);
+        $i++;
+    }
+    echo '</div>';
+    echo '<template id="lvft-tpl">' . livento_cc_admin_funding_tag_row('__IDX__', '', '') . '</template>';
+    echo '<p><button type="button" class="button" id="lvft-add">+ Förder-Tag hinzufügen</button></p>';
+    echo '<p style="margin-top:12px">';
+    echo '<button type="submit" name="livento_cc_save_ftags" value="1" class="button button-primary">Förder-Tags speichern</button> ';
+    echo '<button type="submit" name="livento_cc_reset_ftags" value="1" class="button" onclick="return confirm(\'Eigene Förder-Tags auf Standard (nur „Anpassungsqualifizierung") zurücksetzen?\')">Auf Standard zurücksetzen</button>';
+    echo '</p></form>';
+    echo "<script>(function(){var box=document.getElementById('lvft-rows'),tpl=document.getElementById('lvft-tpl'),n=0;var add=document.getElementById('lvft-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvft-del')){var r=e.target.closest('.lvft-row');if(r)r.parentNode.removeChild(r);}});})();</script>";
+}
+
+/** Eine editierbare Förder-Tag-Zeile (Bezeichnung + optionaler Slug). */
+function livento_cc_admin_funding_tag_row($idx, $slug, $label) {
+    $n = 'lvk_ft[' . esc_attr($idx) . ']';
+    $h  = '<div class="lvft-row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;border:1px solid #dcdcde;border-radius:6px;padding:10px 12px;margin:0 0 8px;background:#fff;max-width:900px">';
+    $h .= '<label style="flex:1;min-width:220px">Bezeichnung<br><input type="text" name="' . $n . '[label]" value="' . esc_attr($label) . '" class="regular-text" placeholder="z. B. Anpassungsqualifizierung"></label>';
+    $h .= '<label style="flex:1;min-width:200px">Slug <span class="description">(optional, sonst aus Bezeichnung)</span><br><input type="text" name="' . $n . '[slug]" value="' . esc_attr($slug) . '" class="regular-text" placeholder="anpassungsqualifizierung"></label>';
+    $h .= '<button type="button" class="button-link lvft-del" style="color:#b32d2e;margin-bottom:6px">Entfernen</button>';
+    $h .= '</div>';
+    return $h;
+}
+
 /** Tab „Förderprogramme": Editor (Karten mit Feldern). */
 function livento_cc_admin_tab_foerderung() {
     $current  = livento_cc_foerderungen();
@@ -3989,6 +4075,9 @@ function livento_cc_admin_tab_foerderung() {
     echo '<button type="submit" name="livento_cc_reset_foerder" value="1" class="button" onclick="return confirm(\'Wirklich auf die Standard-Programme zurücksetzen?\')">Auf Standard zurücksetzen</button>';
     echo '</p></form>';
     echo "<script>(function(){var box=document.getElementById('lvf-rows'),tpl=document.getElementById('lvf-tpl'),n=0;var add=document.getElementById('lvf-add');if(add){add.addEventListener('click',function(){n++;var d=document.createElement('div');d.innerHTML=tpl.innerHTML.replace(/__IDX__/g,'new'+n);box.appendChild(d.firstElementChild);});}box.addEventListener('click',function(e){if(e.target&&e.target.classList.contains('lvf-del')){var r=e.target.closest('.lvf-card-edit');if(r)r.parentNode.removeChild(r);}});})();</script>";
+
+    // ---- Kurse-Förder-Tags (selbst verwaltbare Zusatz-Tags fuers funding_key-Dropdown) ----
+    livento_cc_admin_funding_tags_section();
 
     // ---- Förderberater-Schema (Status → bedingte Qualifikation) ----
     $stati = livento_cc_foerder_status();
