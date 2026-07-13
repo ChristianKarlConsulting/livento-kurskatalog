@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.27.0
+ * Version:           1.28.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -3611,7 +3611,65 @@ function livento_cc_admin_kursliste_row($idx, $l, $aud_counts, $rec_counts, $fmt
 }
 
 /* ============================================================
- * 11. Auto-Update via GitHub (Plugin Update Checker)
+ * 11. Campus-Connect-Rueckkehr nach WooCommerce-Bestellungen
+ * ============================================================ */
+
+/** Nur produktive Campus-Connect-HTTPS-Ziele akzeptieren (kein offener Redirect). */
+function livento_cc_checkout_return_url($raw_url) {
+    $url = esc_url_raw(wp_unslash((string) $raw_url));
+    if ($url === '') return '';
+
+    $parts = wp_parse_url($url);
+    if (!is_array($parts)
+        || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+        || strtolower((string) ($parts['host'] ?? '')) !== 'campus-connect.livento-bildung.de') {
+        return '';
+    }
+    return $url;
+}
+
+/** Ruecksprung an genau den Warenkorbartikel binden, der aus Campus Connect kommt. */
+add_filter('woocommerce_add_cart_item_data', function ($cart_item_data, $product_id, $variation_id) {
+    if (!isset($_GET['cc_return_url'])) return $cart_item_data;
+    $return_url = livento_cc_checkout_return_url($_GET['cc_return_url']);
+    if ($return_url !== '') $cart_item_data['_livento_cc_return_url'] = $return_url;
+    return $cart_item_data;
+}, 10, 3);
+
+/** Nur homogene Campus-Warenkoerbe erhalten einen Order-Redirect. */
+add_action('woocommerce_checkout_create_order', function ($order) {
+    if (!function_exists('WC') || !WC()->cart) return;
+
+    $return_url = '';
+    foreach (WC()->cart->get_cart() as $cart_item) {
+        $item_url = livento_cc_checkout_return_url($cart_item['_livento_cc_return_url'] ?? '');
+        if ($item_url === '' || ($return_url !== '' && $item_url !== $return_url)) return;
+        $return_url = $item_url;
+    }
+    if ($return_url !== '') $order->update_meta_data('_livento_cc_return_url', $return_url);
+}, 10, 1);
+
+/** Nach gueltiger Bestellbestaetigung zur gespeicherten Lernwelt-URL wechseln. */
+add_action('template_redirect', function () {
+    if (!function_exists('is_wc_endpoint_url') || !is_wc_endpoint_url('order-received')) return;
+    if (!function_exists('wc_get_order')) return;
+
+    $order_id = absint(get_query_var('order-received'));
+    $order_key = isset($_GET['key']) ? wc_clean(wp_unslash($_GET['key'])) : '';
+    $order = $order_id ? wc_get_order($order_id) : false;
+    if (!$order || $order_key === '' || !hash_equals($order->get_order_key(), $order_key)) return;
+    if ($order->has_status(array('failed', 'cancelled', 'refunded'))) return;
+
+    $return_url = livento_cc_checkout_return_url($order->get_meta('_livento_cc_return_url', true));
+    if ($return_url === '') return;
+
+    nocache_headers();
+    wp_redirect($return_url, 302, 'Livento Campus Connect');
+    exit;
+}, 20);
+
+/* ============================================================
+ * 12. Auto-Update via GitHub (Plugin Update Checker)
  *
  * Meldet neue Releases des Repos LIVENTO_CC_UPDATE_REPO als Plugin-Update im
  * WP-Dashboard (Ein-Klick-Update). Bibliothek liegt in plugin-update-checker/.
