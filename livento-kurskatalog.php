@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.28.0
+ * Version:           1.29.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -4604,3 +4604,883 @@ function livento_cc_rest_lead($req) {
     }
     return new WP_REST_Response(array('ok' => true), 200);
 }
+
+/* ============================================================
+ * 12. SLK-TARIFE (v1.29.0)
+ *
+ * Verkauft die Selbstlernkurs-Bundles aus Campus Connect: Tariffamilien
+ * (PflichtStart / PflegeKomplett / RollenPlus), Staffelpreise nach
+ * Beschaeftigtenzahl, Angebotsrechner und die vollstaendige Kursliste je
+ * Setting-Variante.
+ *
+ * Datenquelle: View `public_tariffs` (anon) + RPC `public_bundle_courses`.
+ *
+ * WICHTIG — genau EINE Preisberechnung:
+ *   livento_cc_calc_price() ist die einzige Stelle, an der ein Preis entsteht.
+ *   Sie speist die Tarifkarte, den Angebotsrechner (per REST, nicht per JS-Mathe)
+ *   UND den WooCommerce-Warenkorbpreis. Sonst weicht der angezeigte Preis
+ *   frueher oder spaeter vom bezahlten ab.
+ *   Sie ist die Portierung von fn_calc_tariff_price (Campus Connect, v3.157.0);
+ *   beide muessen dieselben Ergebnisse liefern.
+ * ============================================================ */
+
+/** Generischer PostgREST-GET auf einen beliebigen Pfad (die alte Variante ist auf public_offerings verdrahtet). */
+function livento_cc_rest_get_path($path, $query = '') {
+    $key = livento_cc_anon_key();
+    $url = LIVENTO_CC_SUPABASE_URL . '/rest/v1/' . ltrim($path, '/') . ($query ? '?' . $query : '');
+
+    $res = wp_remote_get($url, array(
+        'timeout' => 8,
+        'headers' => array(
+            'apikey'        => $key,
+            'Authorization' => 'Bearer ' . $key,
+            'Accept'        => 'application/json',
+        ),
+    ));
+    if (is_wp_error($res)) {
+        return $res;
+    }
+    $code = wp_remote_retrieve_response_code($res);
+    if ($code < 200 || $code >= 300) {
+        return new WP_Error('livento_cc_http', 'PostgREST HTTP ' . $code, wp_remote_retrieve_body($res));
+    }
+    $data = json_decode(wp_remote_retrieve_body($res), true);
+    return is_array($data) ? $data : array();
+}
+
+/** PostgREST-RPC (POST). */
+function livento_cc_rest_rpc($fn, $args = array()) {
+    $key = livento_cc_anon_key();
+    $res = wp_remote_post(LIVENTO_CC_SUPABASE_URL . '/rest/v1/rpc/' . $fn, array(
+        'timeout' => 8,
+        'headers' => array(
+            'apikey'        => $key,
+            'Authorization' => 'Bearer ' . $key,
+            'Content-Type'  => 'application/json',
+            'Accept'        => 'application/json',
+        ),
+        'body' => wp_json_encode($args),
+    ));
+    if (is_wp_error($res)) {
+        return $res;
+    }
+    $code = wp_remote_retrieve_response_code($res);
+    if ($code < 200 || $code >= 300) {
+        return new WP_Error('livento_cc_http', 'RPC HTTP ' . $code, wp_remote_retrieve_body($res));
+    }
+    $data = json_decode(wp_remote_retrieve_body($res), true);
+    return is_array($data) ? $data : array();
+}
+
+/** Alle oeffentlichen Tariffamilien (gecached, gleiche TTL/Purge-Version wie der Kurskatalog). */
+function livento_cc_get_tariffs() {
+    $ver = livento_cc_ver();
+    $key = 'livento_cc_tariffs_v' . $ver;
+
+    $cached = get_transient($key);
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $data = livento_cc_rest_get_path('public_tariffs', 'select=*&order=sort_order.asc');
+    if (is_wp_error($data)) {
+        // Stale-while-error: lieber alte Preise als eine leere Seite.
+        $stale = get_transient('livento_cc_tariffs_stale');
+        error_log('[livento] public_tariffs nicht erreichbar: ' . $data->get_error_message());
+        return is_array($stale) ? $stale : array();
+    }
+
+    set_transient($key, $data, LIVENTO_CC_TTL);
+    set_transient('livento_cc_tariffs_stale', $data, DAY_IN_SECONDS);
+    return $data;
+}
+
+/** Kursliste einer Setting-Variante (gecached). */
+function livento_cc_get_bundle_courses($bundle_id) {
+    $ver = livento_cc_ver();
+    $key = 'livento_cc_bcourses_' . $ver . '_' . md5((string) $bundle_id);
+
+    $cached = get_transient($key);
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $data = livento_cc_rest_rpc('public_bundle_courses', array('p_bundle_id' => $bundle_id));
+    if (is_wp_error($data)) {
+        error_log('[livento] public_bundle_courses fehlgeschlagen: ' . $data->get_error_message());
+        return array();
+    }
+
+    set_transient($key, $data, LIVENTO_CC_TTL);
+    return $data;
+}
+
+/** Familie per Schluessel oder Slug. */
+function livento_cc_find_family($key_or_slug) {
+    foreach (livento_cc_get_tariffs() as $family) {
+        if ($family['key'] === $key_or_slug || (!empty($family['slug']) && $family['slug'] === $key_or_slug)) {
+            return $family;
+        }
+    }
+    return null;
+}
+
+/** Setting-Variante (Bundle) samt Plan und Familie anhand der Bundle-ID. */
+function livento_cc_find_bundle($bundle_id) {
+    foreach (livento_cc_get_tariffs() as $family) {
+        foreach ((array) $family['plans'] as $plan) {
+            foreach ((array) $plan['bundles'] as $bundle) {
+                if ($bundle['id'] === $bundle_id) {
+                    return array('family' => $family, 'plan' => $plan, 'bundle' => $bundle);
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * DIE Preisberechnung. Portierung von fn_calc_tariff_price (Campus Connect v3.157.0).
+ *
+ * flat      = Betrag je Einrichtung
+ * per_user  = Betrag je Nutzer, aber mindestens min_amount
+ * individual= kein Preis, Angebotsanfrage
+ * amount_unit month => Jahrespreis = Monatsbetrag x contract_months
+ */
+function livento_cc_calc_price($plan, $users) {
+    $users = (int) $users;
+    if ($users < 1) {
+        return array('mode' => 'invalid', 'users' => $users);
+    }
+
+    $months = max(1, (int) (isset($plan['contract_months']) ? $plan['contract_months'] : 12));
+    $tiers  = isset($plan['tiers']) && is_array($plan['tiers']) ? $plan['tiers'] : array();
+
+    $match = null;
+    foreach ($tiers as $tier) {
+        $min = (int) $tier['min_users'];
+        $max = (isset($tier['max_users']) && $tier['max_users'] !== null && $tier['max_users'] !== '')
+            ? (int) $tier['max_users'] : null;
+        if ($users >= $min && ($max === null || $users <= $max)) {
+            $match = $tier;
+            break;
+        }
+    }
+
+    // Keine Staffel deckt diese Groesse ab: als Angebotsfall behandeln, nicht raten.
+    if (!$match || $match['pricing_mode'] === 'individual') {
+        return array('mode' => 'individual', 'users' => $users);
+    }
+
+    $amount = (float) $match['amount'];
+    $base   = ($match['pricing_mode'] === 'flat') ? $amount : $amount * $users;
+    $base   = round($base, 2); // entspricht der numeric(12,2)-Zuweisung in SQL
+
+    $min_amount = (isset($match['min_amount']) && $match['min_amount'] !== null && $match['min_amount'] !== '')
+        ? (float) $match['min_amount'] : null;
+    if ($min_amount !== null && $base < $min_amount) {
+        $base = $min_amount;
+    }
+
+    if ($match['amount_unit'] === 'month') {
+        $monthly = round($base, 2);
+        $yearly  = round($base * $months, 2);
+    } else {
+        $yearly  = round($base, 2);
+        $monthly = round($base / $months, 2);
+    }
+
+    return array(
+        'mode'            => $match['pricing_mode'],
+        'users'           => $users,
+        'monthly_net'     => $monthly,
+        'yearly_net'      => $yearly,
+        'amount_unit'     => $match['amount_unit'],
+        'contract_months' => $months,
+        'is_vat_exempt'   => !empty($plan['is_vat_exempt']),
+    );
+}
+
+/** Guenstigster Plan einer Familie fuer eine gegebene Beschaeftigtenzahl. */
+function livento_cc_cheapest_plan($family, $users) {
+    $best = null;
+    foreach ((array) $family['plans'] as $plan) {
+        $price = livento_cc_calc_price($plan, $users);
+        if ($price['mode'] === 'individual' || $price['mode'] === 'invalid') {
+            if ($best === null) {
+                $best = array('plan' => $plan, 'price' => $price);
+            }
+            continue;
+        }
+        if ($best === null || $best['price']['mode'] === 'individual' || $price['yearly_net'] < $best['price']['yearly_net']) {
+            $best = array('plan' => $plan, 'price' => $price);
+        }
+    }
+    return $best;
+}
+
+function livento_cc_eur($value) {
+    return number_format((float) $value, 2, ',', '.') . ' €';
+}
+
+/** Steuerhinweis — B2B-Standard ist netto zzgl. USt. */
+function livento_cc_tax_note($price) {
+    return !empty($price['is_vat_exempt']) ? 'USt-frei' : 'zzgl. USt';
+}
+
+/* ------------------------------------------------------------
+ * REST: Angebotsrechner
+ * Rechnet serverseitig mit livento_cc_calc_price — bewusst KEINE Preis-Mathematik
+ * im Browser, sonst gaebe es eine dritte Implementierung, die auseinanderlaufen kann.
+ * ---------------------------------------------------------- */
+add_action('rest_api_init', function () {
+    register_rest_route('livento/v1', '/tarif-preis', array(
+        'methods'             => 'GET',
+        'permission_callback' => '__return_true',
+        'callback'            => function (WP_REST_Request $req) {
+            $users    = max(1, (int) $req->get_param('users'));
+            $families = array();
+            $plans    = array();
+
+            $format = function ($price) {
+                return array(
+                    'mode'     => $price['mode'],
+                    'monthly'  => isset($price['monthly_net']) ? livento_cc_eur($price['monthly_net']) : null,
+                    'yearly'   => isset($price['yearly_net']) ? livento_cc_eur($price['yearly_net']) : null,
+                    'tax_note' => livento_cc_tax_note($price),
+                );
+            };
+
+            foreach (livento_cc_get_tariffs() as $family) {
+                // Familien-Karte: der guenstigste Einstieg ("ab X").
+                $best = livento_cc_cheapest_plan($family, $users);
+                if ($best) {
+                    $families[$family['key']] = $format($best['price']);
+                }
+                // Jeder Plan einzeln — RollenPlus hat vier Plaene mit UNTERSCHIEDLICHEN
+                // Preisen; auf der Detailseite muss jede Variante ihren eigenen zeigen.
+                foreach ((array) $family['plans'] as $plan) {
+                    $plans[$plan['id']] = $format(livento_cc_calc_price($plan, $users));
+                }
+            }
+            return new WP_REST_Response(array('users' => $users, 'families' => $families, 'plans' => $plans), 200);
+        },
+    ));
+});
+
+/* ------------------------------------------------------------
+ * Shortcode [livento_tarife] — die Tarif-Landingpage
+ * ---------------------------------------------------------- */
+add_shortcode('livento_tarife', function ($atts) {
+    $atts = shortcode_atts(array(
+        'heading'    => 'Fortbildung für Ihr ganzes Team',
+        'subheading' => 'Fertige Jahres-Lernpfade statt Kurschaos. Rollenbezogen zugewiesen, mit Wissenstest, Zertifikat und Nachweisübersicht.',
+        'users'      => 20,
+        'base'       => 'selbstlernkurse',
+    ), $atts, 'livento_tarife');
+
+    $families = livento_cc_get_tariffs();
+    if (empty($families)) {
+        return '<p>Die Tarife sind derzeit nicht abrufbar.</p>';
+    }
+
+    $users = max(1, (int) $atts['users']);
+    $base  = trim($atts['base'], '/');
+
+    ob_start();
+    livento_cc_tariff_styles();
+    ?>
+    <div class="lv-tarife">
+        <header class="lv-tarife__head">
+            <h2><?php echo esc_html($atts['heading']); ?></h2>
+            <p><?php echo esc_html($atts['subheading']); ?></p>
+        </header>
+
+        <div class="lv-calc" data-lv-calc>
+            <label for="lv-calc-users">Wie viele Beschäftigte haben Sie?</label>
+            <input type="number" id="lv-calc-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
+            <span class="lv-calc__hint">Der Preis richtet sich nach der Teamgröße. 12 Monate Laufzeit, jährliche Abrechnung.</span>
+        </div>
+
+        <div class="lv-tarife__grid">
+            <?php foreach ($families as $family) :
+                $best  = livento_cc_cheapest_plan($family, $users);
+                $price = $best ? $best['price'] : array('mode' => 'individual');
+
+                // Kennzahlen ueber alle Varianten der Familie.
+                $courses = 0; $hours = 0; $variants = 0;
+                foreach ((array) $family['plans'] as $plan) {
+                    foreach ((array) $plan['bundles'] as $bundle) {
+                        $variants++;
+                        $courses = max($courses, (int) $bundle['course_count']);
+                        $hours   = max($hours, (float) $bundle['total_hours_sum']);
+                    }
+                }
+                $link = home_url('/' . $base . '/' . ($family['slug'] ?: $family['key']) . '/');
+            ?>
+            <article class="lv-tarif" data-lv-family="<?php echo esc_attr($family['key']); ?>">
+                <?php if (!empty($family['public_image_url'])) : ?>
+                    <img class="lv-tarif__img" src="<?php echo esc_url($family['public_image_url']); ?>" alt="" loading="lazy">
+                <?php endif; ?>
+                <h3><?php echo esc_html($family['name']); ?></h3>
+                <?php if (!empty($family['claim'])) : ?>
+                    <p class="lv-tarif__claim"><?php echo esc_html($family['claim']); ?></p>
+                <?php endif; ?>
+
+                <div class="lv-tarif__price" data-lv-price>
+                    <?php if ($price['mode'] === 'individual') : ?>
+                        <strong data-lv-price-main>Individuelles Angebot</strong>
+                        <span data-lv-price-sub>Wir rechnen Ihnen das gern durch.</span>
+                    <?php else : ?>
+                        <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?><small> / Monat</small></strong>
+                        <span data-lv-price-sub>
+                            <?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?> pro Jahr · <?php echo esc_html(livento_cc_tax_note($price)); ?>
+                        </span>
+                    <?php endif; ?>
+                </div>
+
+                <ul class="lv-tarif__facts">
+                    <?php if ($courses) : ?><li><strong><?php echo esc_html($courses); ?></strong> Kurse</li><?php endif; ?>
+                    <?php if ($hours) : ?><li><strong><?php echo esc_html(rtrim(rtrim(number_format($hours, 1, ',', '.'), '0'), ',')); ?></strong> Stunden</li><?php endif; ?>
+                    <?php if ($variants > 1) : ?><li><strong><?php echo esc_html($variants); ?></strong> Varianten</li><?php endif; ?>
+                </ul>
+
+                <?php if (!empty($family['highlights']) && is_array($family['highlights'])) : ?>
+                    <ul class="lv-tarif__list">
+                        <?php foreach (array_slice($family['highlights'], 0, 6) as $item) : ?>
+                            <li><?php echo esc_html($item); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+
+                <a class="lv-tarif__cta" href="<?php echo esc_url($link); ?>">Kurse &amp; Details ansehen</a>
+            </article>
+            <?php endforeach; ?>
+        </div>
+
+        <p class="lv-tarife__foot">
+            Alle Preise netto zzgl. gesetzlicher Umsatzsteuer, 12 Monate Mindestlaufzeit, Abrechnung jährlich im Voraus.
+            Ab 151 Beschäftigten erstellen wir Ihnen ein individuelles Angebot.
+        </p>
+    </div>
+    <?php
+    livento_cc_tariff_calc_script();
+    return ob_get_clean();
+});
+
+/* ------------------------------------------------------------
+ * Shortcode [livento_tarif family="pflichtstart"] — Detailseite einer Familie
+ * ---------------------------------------------------------- */
+add_shortcode('livento_tarif', function ($atts) {
+    $atts   = shortcode_atts(array('family' => '', 'users' => 20), $atts, 'livento_tarif');
+    $family = livento_cc_find_family($atts['family']);
+    if (!$family) {
+        return '<p>Dieser Tarif ist derzeit nicht verfügbar.</p>';
+    }
+
+    $users = max(1, (int) $atts['users']);
+
+    // Alle Setting-Varianten der Familie flach sammeln (Plan bleibt dran — er traegt den Preis).
+    $variants = array();
+    foreach ((array) $family['plans'] as $plan) {
+        foreach ((array) $plan['bundles'] as $bundle) {
+            $variants[] = array('plan' => $plan, 'bundle' => $bundle);
+        }
+    }
+    if (empty($variants)) {
+        return '<p>Für diesen Tarif sind derzeit keine Inhalte freigeschaltet.</p>';
+    }
+
+    ob_start();
+    livento_cc_tariff_styles();
+    ?>
+    <div class="lv-tarif-detail">
+        <header class="lv-tarif-detail__head">
+            <h2><?php echo esc_html($family['name']); ?></h2>
+            <?php if (!empty($family['claim'])) : ?><p class="lv-lead"><?php echo esc_html($family['claim']); ?></p><?php endif; ?>
+            <?php if (!empty($family['public_description'])) : ?>
+                <div class="lv-tarif-detail__text"><?php echo wp_kses_post(wpautop($family['public_description'])); ?></div>
+            <?php endif; ?>
+        </header>
+
+        <div class="lv-calc" data-lv-calc>
+            <label for="lv-detail-users">Wie viele Beschäftigte haben Sie?</label>
+            <input type="number" id="lv-detail-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
+            <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, netto zzgl. USt.</span>
+        </div>
+
+        <?php foreach ($variants as $index => $variant) :
+            $plan    = $variant['plan'];
+            $bundle  = $variant['bundle'];
+            $price   = livento_cc_calc_price($plan, $users);
+            $courses = livento_cc_get_bundle_courses($bundle['id']);
+
+            // Kurse nach Thema gruppieren; ohne Thema sammeln wir sie unter "Weitere Themen".
+            $groups = array();
+            foreach ((array) $courses as $course) {
+                $topics = !empty($course['topics']) && is_array($course['topics']) ? $course['topics'] : array('_sonstige');
+                $key    = $topics[0];
+                if (!isset($groups[$key])) {
+                    $groups[$key] = array();
+                }
+                $groups[$key][] = $course;
+            }
+            ksort($groups);
+
+            $lessons = 0;
+            foreach ((array) $courses as $course) {
+                $lessons += (int) $course['lesson_count'];
+            }
+        ?>
+        <section class="lv-variant" data-lv-plan="<?php echo esc_attr($plan['id']); ?>">
+            <div class="lv-variant__bar">
+                <div>
+                    <h3><?php echo esc_html($bundle['name']); ?></h3>
+                    <p class="lv-variant__meta">
+                        <?php echo esc_html((int) $bundle['course_count']); ?> Kurse ·
+                        <?php echo esc_html(rtrim(rtrim(number_format((float) $bundle['total_hours_sum'], 1, ',', '.'), '0'), ',')); ?> Stunden ·
+                        <?php echo esc_html($lessons); ?> Lektionen
+                    </p>
+                </div>
+                <div class="lv-variant__buy">
+                    <div class="lv-variant__price" data-lv-price>
+                        <?php if ($price['mode'] === 'individual') : ?>
+                            <strong data-lv-price-main>Individuelles Angebot</strong>
+                            <span data-lv-price-sub>Ab 151 Beschäftigten rechnen wir individuell.</span>
+                        <?php else : ?>
+                            <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?><small> / Jahr</small></strong>
+                            <span data-lv-price-sub>
+                                entspricht <?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?> / Monat · <?php echo esc_html(livento_cc_tax_note($price)); ?>
+                            </span>
+                        <?php endif; ?>
+                    </div>
+                    <?php echo livento_cc_tariff_cta($bundle, $price, $users); ?>
+                </div>
+            </div>
+
+            <?php if (!empty($bundle['description'])) : ?>
+                <p class="lv-variant__desc"><?php echo esc_html($bundle['description']); ?></p>
+            <?php endif; ?>
+
+            <?php if (!empty($courses)) : ?>
+                <details class="lv-courses" <?php echo $index === 0 ? 'open' : ''; ?>>
+                    <summary>Enthaltene Kurse ansehen (<?php echo esc_html(count($courses)); ?>)</summary>
+                    <?php foreach ($groups as $topic => $items) : ?>
+                        <div class="lv-courses__group">
+                            <h4><?php echo esc_html(livento_cc_topic_label($topic)); ?> <span>(<?php echo esc_html(count($items)); ?>)</span></h4>
+                            <ul>
+                                <?php foreach ($items as $course) : ?>
+                                    <li>
+                                        <span class="lv-course__title"><?php echo esc_html($course['title']); ?></span>
+                                        <span class="lv-course__meta">
+                                            <?php if (!empty($course['course_number'])) : ?>
+                                                <em><?php echo esc_html($course['course_number']); ?></em> ·
+                                            <?php endif; ?>
+                                            <?php echo esc_html(rtrim(rtrim(number_format((float) $course['total_hours'], 1, ',', '.'), '0'), ',')); ?>
+                                            <?php echo esc_html($course['hours_unit'] === 'stunden' ? 'Std.' : 'UE'); ?> ·
+                                            <?php echo esc_html((int) $course['module_count']); ?> Module ·
+                                            <?php echo esc_html((int) $course['lesson_count']); ?> Lektionen
+                                            <?php if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) : ?>
+                                                · <strong>Zertifikat</strong>
+                                            <?php endif; ?>
+                                        </span>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    <?php endforeach; ?>
+                </details>
+            <?php endif; ?>
+        </section>
+        <?php endforeach; ?>
+
+        <?php echo livento_cc_tariff_schema($family, $variants, $users); ?>
+    </div>
+    <?php
+    livento_cc_tariff_calc_script();
+    return ob_get_clean();
+});
+
+/** Kauf-Button bzw. Angebots-CTA einer Variante. */
+function livento_cc_tariff_cta($bundle, $price, $users) {
+    // Individuell (ab 151 Beschaeftigte) oder ohne WooCommerce-Produkt: kein Warenkorb.
+    if ($price['mode'] === 'individual' || empty($bundle['wc_product_id'])) {
+        $anchor = '#angebot';
+        return '<a class="lv-btn lv-btn--ghost" href="' . esc_url($anchor) . '">Angebot anfordern</a>';
+    }
+
+    $url = !empty($bundle['wc_checkout_url'])
+        ? $bundle['wc_checkout_url']
+        : add_query_arg(
+            array('add-to-cart' => (int) $bundle['wc_product_id'], 'quantity' => (int) $users),
+            function_exists('wc_get_cart_url') ? wc_get_cart_url() : home_url('/')
+        );
+
+    return '<a class="lv-btn" href="' . esc_url($url) . '" data-lv-cart="' . esc_attr((int) $bundle['wc_product_id']) . '">'
+         . 'Jetzt buchen</a>';
+}
+
+/** Themen-Slug lesbar machen (die Labels leben in Campus Connect; hier reicht eine Normalisierung). */
+function livento_cc_topic_label($slug) {
+    if ($slug === '_sonstige' || $slug === '') {
+        return 'Weitere Themen';
+    }
+    return ucfirst(str_replace('-', ' ', $slug));
+}
+
+/** Schema.org: die Familie als Product mit Offer je Variante. */
+function livento_cc_tariff_schema($family, $variants, $users) {
+    $offers = array();
+    foreach ($variants as $variant) {
+        $price = livento_cc_calc_price($variant['plan'], $users);
+        if ($price['mode'] === 'individual') {
+            continue;
+        }
+        $offers[] = array(
+            '@type'         => 'Offer',
+            'name'          => $variant['bundle']['name'],
+            'price'         => number_format($price['yearly_net'], 2, '.', ''),
+            'priceCurrency' => 'EUR',
+            'availability'  => 'https://schema.org/InStock',
+            'url'           => get_permalink(),
+        );
+    }
+    if (empty($offers)) {
+        return '';
+    }
+
+    $schema = array(
+        '@context'    => 'https://schema.org',
+        '@type'       => 'Product',
+        'name'        => $family['name'],
+        'description' => $family['claim'] ?: $family['public_description'],
+        'brand'       => array('@type' => 'Brand', 'name' => 'Livento'),
+        'offers'      => $offers,
+    );
+    return '<script type="application/ld+json">' . wp_json_encode($schema) . '</script>';
+}
+
+/** Angebotsrechner: holt die Preise vom REST-Endpunkt, rechnet NICHT selbst. */
+function livento_cc_tariff_calc_script() {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    ?>
+    <script>
+    (function () {
+        var endpoint = <?php echo wp_json_encode(esc_url_raw(rest_url('livento/v1/tarif-preis'))); ?>;
+        var inputs = document.querySelectorAll('[data-lv-calc-input]');
+        if (!inputs.length) { return; }
+        var timer = null;
+
+        function paint(el, info, isDetail) {
+            var box = el.querySelector('[data-lv-price]');
+            if (!info || !box) { return; }
+            var main = box.querySelector('[data-lv-price-main]');
+            var sub  = box.querySelector('[data-lv-price-sub]');
+
+            if (info.mode === 'individual') {
+                main.textContent = 'Individuelles Angebot';
+                sub.textContent  = isDetail
+                    ? 'Ab 151 Beschäftigten rechnen wir individuell.'
+                    : 'Wir rechnen Ihnen das gern durch.';
+            } else if (isDetail) {
+                main.innerHTML  = info.yearly + '<small> / Jahr</small>';
+                sub.textContent = 'entspricht ' + info.monthly + ' / Monat · ' + info.tax_note;
+            } else {
+                main.innerHTML  = info.monthly + '<small> / Monat</small>';
+                sub.textContent = info.yearly + ' pro Jahr · ' + info.tax_note;
+            }
+        }
+
+        function render(data) {
+            // Landingpage: eine Karte je Familie ("ab X").
+            document.querySelectorAll('[data-lv-family]').forEach(function (card) {
+                paint(card, data.families[card.getAttribute('data-lv-family')], false);
+            });
+            // Detailseite: jede Variante zeigt den Preis IHRES Plans — RollenPlus hat
+            // vier Plaene mit unterschiedlichen Preisen.
+            document.querySelectorAll('[data-lv-plan]').forEach(function (section) {
+                paint(section, data.plans[section.getAttribute('data-lv-plan')], true);
+            });
+
+            // Warenkorb-Menge = Beschaeftigtenzahl.
+            document.querySelectorAll('[data-lv-cart]').forEach(function (link) {
+                try {
+                    var url = new URL(link.href, window.location.origin);
+                    url.searchParams.set('quantity', String(data.users));
+                    link.href = url.toString();
+                } catch (e) { /* ungueltige URL: Link unveraendert lassen */ }
+            });
+        }
+
+        function update(users) {
+            fetch(endpoint + '?users=' + encodeURIComponent(users))
+                .then(function (r) { return r.json(); })
+                .then(render)
+                .catch(function () { /* Netzwerkfehler: die serverseitig gerenderten Preise bleiben stehen */ });
+        }
+
+        inputs.forEach(function (input) {
+            input.addEventListener('input', function () {
+                var users = parseInt(input.value, 10);
+                if (!users || users < 1) { return; }
+                inputs.forEach(function (other) { if (other !== input) { other.value = users; } });
+                clearTimeout(timer);
+                timer = setTimeout(function () { update(users); }, 250);
+            });
+        });
+    })();
+    </script>
+    <?php
+}
+
+function livento_cc_tariff_styles() {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    ?>
+    <style>
+    .lv-tarife__head{text-align:center;max-width:46rem;margin:0 auto 1.5rem}
+    .lv-tarife__head h2{margin:0 0 .5rem}
+    .lv-calc{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;justify-content:center;background:#f5f7f8;border:1px solid #e3e8ea;border-radius:14px;padding:1rem 1.25rem;margin:0 auto 2rem;max-width:44rem}
+    .lv-calc label{font-weight:600}
+    .lv-calc input{width:6rem;padding:.45rem .6rem;border:1px solid #cdd5d8;border-radius:8px;font-size:1rem}
+    .lv-calc__hint{flex-basis:100%;text-align:center;font-size:.85rem;color:#5c6a70}
+    .lv-tarife__grid{display:grid;gap:1.25rem;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))}
+    .lv-tarif{display:flex;flex-direction:column;border:1px solid #e3e8ea;border-radius:16px;padding:1.5rem;background:#fff}
+    .lv-tarif__img{width:100%;height:9rem;object-fit:cover;border-radius:10px;margin-bottom:1rem}
+    .lv-tarif h3{margin:0 0 .35rem}
+    .lv-tarif__claim{margin:0 0 1rem;color:#5c6a70;font-size:.95rem}
+    .lv-tarif__price{margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid #eef1f2}
+    .lv-tarif__price strong,.lv-variant__price strong{display:block;font-size:1.65rem;line-height:1.2}
+    .lv-tarif__price small,.lv-variant__price small{font-size:.9rem;font-weight:400;color:#5c6a70}
+    .lv-tarif__price span,.lv-variant__price span{font-size:.85rem;color:#5c6a70}
+    .lv-tarif__facts{display:flex;gap:1rem;list-style:none;margin:0 0 1rem;padding:0;font-size:.85rem;color:#5c6a70}
+    .lv-tarif__facts strong{display:block;font-size:1.1rem;color:#1d2b30}
+    .lv-tarif__list{margin:0 0 1.25rem;padding-left:1.1rem;font-size:.92rem}
+    .lv-tarif__list li{margin-bottom:.3rem}
+    .lv-btn,.lv-tarif__cta{display:inline-block;margin-top:auto;text-align:center;background:#0f5c66;color:#fff;padding:.7rem 1.2rem;border-radius:10px;text-decoration:none;font-weight:600}
+    .lv-btn:hover,.lv-tarif__cta:hover{background:#0c4a52;color:#fff}
+    .lv-btn--ghost{background:transparent;color:#0f5c66;border:1px solid #0f5c66}
+    .lv-btn--ghost:hover{background:#0f5c66;color:#fff}
+    .lv-tarife__foot{margin-top:1.5rem;text-align:center;font-size:.85rem;color:#5c6a70}
+    .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.5rem}
+    .lv-lead{font-size:1.1rem;color:#5c6a70}
+    .lv-variant{border:1px solid #e3e8ea;border-radius:16px;padding:1.25rem;margin-bottom:1.25rem;background:#fff}
+    .lv-variant__bar{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
+    .lv-variant__bar h3{margin:0}
+    .lv-variant__meta{margin:.25rem 0 0;font-size:.9rem;color:#5c6a70}
+    .lv-variant__buy{display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap}
+    .lv-variant__desc{margin:1rem 0 0;color:#5c6a70}
+    .lv-courses{margin-top:1rem;border-top:1px solid #eef1f2;padding-top:.75rem}
+    .lv-courses summary{cursor:pointer;font-weight:600}
+    .lv-courses__group{margin-top:1rem}
+    .lv-courses__group h4{margin:0 0 .5rem;font-size:.95rem}
+    .lv-courses__group h4 span{color:#5c6a70;font-weight:400}
+    .lv-courses__group ul{list-style:none;margin:0;padding:0}
+    .lv-courses__group li{padding:.5rem 0;border-bottom:1px solid #f2f5f6}
+    .lv-course__title{display:block;font-weight:600}
+    .lv-course__meta{display:block;font-size:.82rem;color:#5c6a70}
+    .lv-course__meta em{font-style:normal;font-family:ui-monospace,monospace}
+    @media(max-width:640px){.lv-variant__bar{flex-direction:column;align-items:flex-start}}
+    </style>
+    <?php
+}
+
+/* ------------------------------------------------------------
+ * WooCommerce: Tarif-Produkte
+ *
+ * Ein WC-Produkt je Setting-Variante, verknuepft ueber das Produkt-Meta
+ * `_livento_bundle_id`. Die Menge im Warenkorb IST die Beschaeftigtenzahl —
+ * deshalb muss der Stueckpreis so gesetzt werden, dass
+ * Stueckpreis x Menge = Staffelpreis ergibt.
+ * ---------------------------------------------------------- */
+
+/** Produktfeld „Livento-Bundle" im Produkt-Backend. */
+add_action('woocommerce_product_options_general_product_data', function () {
+    global $post;
+    $options = array('' => '— kein Livento-Tarif —');
+    foreach (livento_cc_get_tariffs() as $family) {
+        foreach ((array) $family['plans'] as $plan) {
+            foreach ((array) $plan['bundles'] as $bundle) {
+                $options[$bundle['id']] = $family['name'] . ' · ' . $bundle['name'];
+            }
+        }
+    }
+    woocommerce_wp_select(array(
+        'id'          => '_livento_bundle_id',
+        'label'       => 'Livento-Tarif',
+        'options'     => $options,
+        'value'       => get_post_meta($post->ID, '_livento_bundle_id', true),
+        'description' => 'Verknüpft dieses Produkt mit einer Setting-Variante. Der Preis kommt dann aus der Staffel; die Warenkorbmenge ist die Anzahl der Beschäftigten.',
+        'desc_tip'    => true,
+    ));
+});
+
+add_action('woocommerce_process_product_meta', function ($post_id) {
+    $value = isset($_POST['_livento_bundle_id']) ? sanitize_text_field(wp_unslash($_POST['_livento_bundle_id'])) : '';
+    update_post_meta($post_id, '_livento_bundle_id', $value);
+});
+
+/** Bundle-Kontext eines WooCommerce-Produkts (oder null). */
+function livento_cc_product_bundle($product_id) {
+    $bundle_id = get_post_meta($product_id, '_livento_bundle_id', true);
+    if (!$bundle_id) {
+        return null;
+    }
+    return livento_cc_find_bundle($bundle_id);
+}
+
+/**
+ * Warenkorbpreis aus der Staffel. WooCommerce multipliziert den Stueckpreis mit der
+ * Menge — bei einer Pauschale (z. B. 29 EUR bis 15 Beschaeftigte) muss der Stueckpreis
+ * deshalb Gesamtpreis/Menge sein, sonst wuerde die Pauschale mit der Kopfzahl skalieren.
+ */
+add_action('woocommerce_before_calculate_totals', function ($cart) {
+    if (is_admin() && !defined('DOING_AJAX')) {
+        return;
+    }
+    if (did_action('woocommerce_before_calculate_totals') >= 2) {
+        return;
+    }
+
+    foreach ($cart->get_cart() as $item) {
+        $context = livento_cc_product_bundle($item['product_id']);
+        if (!$context) {
+            continue;
+        }
+        $users = max(1, (int) $item['quantity']);
+        $price = livento_cc_calc_price($context['plan'], $users);
+        if ($price['mode'] === 'individual' || !isset($price['yearly_net'])) {
+            continue;
+        }
+        $item['data']->set_price($price['yearly_net'] / $users);
+    }
+});
+
+/** Produktkachel/-seite: „ab X € / Jahr" statt des gepflegten Platzhalterpreises. */
+add_filter('woocommerce_get_price_html', function ($html, $product) {
+    $context = livento_cc_product_bundle($product->get_id());
+    if (!$context) {
+        return $html;
+    }
+    $price = livento_cc_calc_price($context['plan'], 1);
+    if ($price['mode'] === 'individual' || !isset($price['yearly_net'])) {
+        return '<span class="lv-price-html">Individuelles Angebot</span>';
+    }
+    return '<span class="lv-price-html">ab ' . esc_html(livento_cc_eur($price['yearly_net']))
+         . ' / Jahr <small>' . esc_html(livento_cc_tax_note($price)) . '</small></span>';
+}, 10, 2);
+
+/** Mengenfeld beschriften: es sind Beschaeftigte, keine Stueckzahl. */
+add_filter('woocommerce_quantity_input_args', function ($args, $product) {
+    if (livento_cc_product_bundle($product->get_id())) {
+        $args['input_value'] = max(1, (int) $args['input_value']);
+        $args['min_value']   = 1;
+    }
+    return $args;
+}, 10, 2);
+
+add_action('woocommerce_before_add_to_cart_quantity', function () {
+    global $product;
+    if ($product && livento_cc_product_bundle($product->get_id())) {
+        echo '<label class="lv-qty-label" for="quantity">Anzahl Lizenzen (Beschäftigte)</label>';
+    }
+});
+
+/** Kursliste unter die Produktbeschreibung. */
+add_action('woocommerce_after_single_product_summary', function () {
+    global $product;
+    $context = livento_cc_product_bundle($product->get_id());
+    if (!$context) {
+        return;
+    }
+    $courses = livento_cc_get_bundle_courses($context['bundle']['id']);
+    if (empty($courses)) {
+        return;
+    }
+
+    livento_cc_tariff_styles();
+    $lessons = 0;
+    foreach ($courses as $course) {
+        $lessons += (int) $course['lesson_count'];
+    }
+
+    echo '<section class="lv-variant">';
+    echo '<div class="lv-variant__bar"><div><h3>Diese Kurse sind enthalten</h3>';
+    echo '<p class="lv-variant__meta">' . esc_html(count($courses)) . ' Kurse · '
+       . esc_html(rtrim(rtrim(number_format((float) $context['bundle']['total_hours_sum'], 1, ',', '.'), '0'), ','))
+       . ' Stunden · ' . esc_html($lessons) . ' Lektionen</p></div></div>';
+    echo '<div class="lv-courses__group"><ul>';
+    foreach ($courses as $course) {
+        echo '<li><span class="lv-course__title">' . esc_html($course['title']) . '</span><span class="lv-course__meta">';
+        if (!empty($course['course_number'])) {
+            echo '<em>' . esc_html($course['course_number']) . '</em> · ';
+        }
+        echo esc_html(rtrim(rtrim(number_format((float) $course['total_hours'], 1, ',', '.'), '0'), ',')) . ' '
+           . esc_html($course['hours_unit'] === 'stunden' ? 'Std.' : 'UE') . ' · '
+           . esc_html((int) $course['module_count']) . ' Module · '
+           . esc_html((int) $course['lesson_count']) . ' Lektionen';
+        if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) {
+            echo ' · <strong>Zertifikat</strong>';
+        }
+        echo '</span></li>';
+    }
+    echo '</ul></div></section>';
+}, 15);
+
+/**
+ * Firma ist Pflicht, sobald ein Tarif im Warenkorb liegt.
+ * Der Kauf legt in Campus Connect einen ARBEITGEBER an — ohne Firmennamen waere
+ * der Datensatz wertlos, und der Team-Bereich haette keinen Namen.
+ */
+function livento_cc_cart_has_tariff() {
+    if (!function_exists('WC') || !WC()->cart) {
+        return false;
+    }
+    foreach (WC()->cart->get_cart() as $item) {
+        if (livento_cc_product_bundle($item['product_id'])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+add_filter('woocommerce_billing_fields', function ($fields) {
+    if (livento_cc_cart_has_tariff() && isset($fields['billing_company'])) {
+        $fields['billing_company']['required'] = true;
+        $fields['billing_company']['label']    = 'Einrichtung / Unternehmen';
+    }
+    return $fields;
+});
+
+/** Danke-Seite: erklaert, wie es weitergeht (die Mitarbeitenden kommen NICHT aus dem Checkout). */
+add_action('woocommerce_thankyou', function ($order_id) {
+    $order = wc_get_order($order_id);
+    if (!$order) {
+        return;
+    }
+    $has_tariff = false;
+    foreach ($order->get_items() as $item) {
+        if (livento_cc_product_bundle($item->get_product_id())) {
+            $has_tariff = true;
+            break;
+        }
+    }
+    if (!$has_tariff) {
+        return;
+    }
+
+    livento_cc_tariff_styles();
+    echo '<section class="lv-variant"><h3>So geht es weiter</h3>';
+    echo '<p>Ihre Lizenzen sind aktiv. Sie erhalten gleich zwei E-Mails: Ihre Zugangsdaten für Campus Connect '
+       . 'und eine Nachricht mit dem Link in Ihren Team-Bereich.</p>';
+    echo '<p>Dort legen Sie Ihre Mitarbeitenden an — einzeln oder per CSV-Import — und weisen ihnen die Lizenzplätze zu. '
+       . 'Verlässt jemand das Unternehmen, geben Sie den Platz einfach wieder frei.</p>';
+    echo '</section>';
+}, 15);
