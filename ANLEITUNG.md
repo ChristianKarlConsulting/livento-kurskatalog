@@ -56,6 +56,10 @@ Lege je eine WordPress-**Seite** an und setze den jeweiligen Shortcode in den In
 | Seite (empfohlener Slug) | Inhalt (Shortcode) | Zweck |
 |---|---|---|
 | `/kurse/` | `[livento_kurse]` | Kurskatalog mit Filter + Kurs-Detailseiten |
+| `/selbstlernkurse/` | `[livento_tarife]` | Tarif-Landingpage (3 Preis-Karten + Angebotsrechner) |
+| `/selbstlernkurse/pflichtstart/` | `[livento_tarif family="pflichtstart"]` | Tarif-Detailseite (Varianten + Kursliste) |
+| `/selbstlernkurse/pflegekomplett/` | `[livento_tarif family="pflegekomplett"]` | dito |
+| `/selbstlernkurse/rollenplus/` | `[livento_tarif family="rollenplus"]` | dito |
 | `/foerdermoeglichkeiten/` | `[livento_foerderungen]` | Förderprogramme + Detailseiten |
 | z. B. `/kursberatung/` | `[livento_kurse_berater]` | Kursberater |
 | z. B. `/foerderberatung/` | `[livento_foerder_berater]` | Förderberater |
@@ -190,6 +194,67 @@ Das Plugin zeigt ein eigenes schlankes Formular (Vorname, Nachname, E-Mail). Bei
 Rohen iframe-Embed in das jeweilige „Kontaktformular"-Feld einfügen. Wird nur genutzt, wenn **keine** Webhook-URL gesetzt ist. Nachteil: das eingebettete Formular hat einen **eigenen** Absende-Button (zwei Buttons), und ein Absenden lässt sich technisch nicht sicher erkennen.
 
 > **Empfehlung:** Webhook verwenden (A). Das ist die Ein-Button-Lösung.
+
+---
+
+## 11b. Tarife & Pakete verkaufen (Selbstlernkurse)
+
+Livento verkauft **Jahres-Lernpakete für Einrichtungen**, keine Einzelkurse. Eine Einrichtung kauft eine Anzahl **Lizenzen** (= Beschäftigte) und verteilt sie danach selbst an ihre Mitarbeitenden.
+
+### Der Aufbau
+
+Gepflegt wird alles in **Campus Connect**, nicht in WordPress:
+
+```
+Tariffamilie      → die Preis-Karte auf der Website (PflichtStart, PflegeKomplett, RollenPlus)
+  └─ Produktplan  → Preisstaffel, Vertragslaufzeit, Umsatzsteuer, Onboarding-Mail
+       └─ Setting-Variante → ambulant, stationär, Therapie … — hier hängen die Kurse
+                              und das WooCommerce-Produkt
+```
+
+Ein Warenkorb darf mehrere Varianten enthalten (z. B. 40× PflichtStart stationär + 8× PflichtStart Hauswirtschaft). Daraus werden zwei getrennte Lizenzpakete.
+
+### Einen Tarif einrichten
+
+**Die Reihenfolge ist wichtig:** Das WooCommerce-Produkt muss zuerst existieren, weil Campus Connect seine ID braucht.
+
+1. **WooCommerce-Produkt anlegen** — Typ „Einfaches Produkt". Der eingetragene Preis ist egal (er wird durch die Staffel überschrieben). Steuerstatus „steuerpflichtig", Steuerklasse „Standard" (19 %). Speichern.
+2. **Produkt-ID notieren** — steht in der URL der Produktbearbeitung (`post=1234`) und im Tarif-Hinweis oben auf der Produktseite.
+3. **In Campus Connect eintragen** — *Kursbundles → Variante öffnen → „Verkauf & Website"*: Produktplan, URL-Kürzel und Produkt-ID hinterlegen, dann **„Auf der Website zeigen"** aktivieren. Ohne diese drei Angaben lässt sich die Variante nicht veröffentlichen.
+4. **Fertig.** Das Produkt erkennt seinen Tarif jetzt selbst: Preis, Mengenfeld („Anzahl Lizenzen") und Kursliste erscheinen automatisch. Im Produkt-Backend steht dann *„Livento-Tarif erkannt: …"*.
+
+> **Warum nicht andersherum?** Das Feld „Tarif manuell zuordnen" im Produkt listet nur bereits **öffentliche** Varianten — eine Variante wird aber erst öffentlich, wenn die Produkt-ID drinsteht. Deshalb: erst Produkt, dann Campus Connect. Das Auswahlfeld ist nur ein Notnagel für Sonderfälle.
+
+### Preise
+
+Der Preis richtet sich nach der **Beschäftigtenzahl**, nicht nach einer Stückzahl:
+
+- **Pauschal je Einrichtung** — Festbetrag, unabhängig von der Kopfzahl (z. B. 29 €/Monat bis 15 Beschäftigte).
+- **Pro Nutzer** — Betrag mal Beschäftigtenzahl, optional mit Mindestbetrag (z. B. 1,79 €/Nutzer, mindestens 39 €).
+- **Individuelles Angebot** — kein Warenkorb; das Plugin zeigt automatisch „Angebot anfordern" (z. B. ab 151 Beschäftigten).
+
+Gepflegt wird die Staffel in Campus Connect unter *Kursbundles → Produktpläne & Vorlagen*.
+
+> **Bitte keine Preise in die Seite tippen.** Tarifkarte, Angebotsrechner und Warenkorb rechnen mit **derselben** Funktion. Ändert Livento die Staffel, ziehen alle drei automatisch nach — eine hart geschriebene Zahl nicht. Dann stünde ein anderer Preis auf der Seite als im Warenkorb.
+
+### Was beim Kauf passiert
+
+1. Die Warenkorbmenge **ist** die Anzahl der Beschäftigten.
+2. Die Firma ist im Checkout Pflichtfeld, sobald ein Tarif im Warenkorb liegt — der Kauf legt in Campus Connect einen Arbeitgeber an.
+3. Campus Connect erzeugt automatisch Arbeitgeber, Lizenzpaket und den Zugang für die Käuferin.
+4. **Die Käuferin belegt keinen Lizenzplatz.** Wer 40 Lizenzen kauft, ist Bestellerin, nicht zwingend Lernende.
+5. Ihre Mitarbeitenden trägt sie danach selbst im Team-Bereich ein — einzeln oder per CSV — und gibt Plätze bei Austritt wieder frei.
+
+**Im Checkout werden bewusst keine Mitarbeiterdaten abgefragt.** Bei 40 Personen wäre das unzumutbar, und personenbezogene Daten hätten im Shop-System nichts zu suchen.
+
+### Wenn etwas fehlt
+
+| Symptom | Ursache |
+|---|---|
+| Tarifseite bleibt leer | In Campus Connect ist noch keine Tariffamilie öffentlich geschaltet |
+| Variante fehlt auf der Tarifseite | Ihr fehlt Produktplan, URL-Kürzel oder WooCommerce-Produkt-ID |
+| Produkt zeigt „Kein Livento-Tarif" | Produkt-ID steht noch nicht am Bundle, oder die Variante ist nicht öffentlich |
+| Preis im Warenkorb weicht ab | Cache ist alt — Cache leeren (sonst 3 Stunden TTL) |
 
 ---
 

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.29.0
+ * Version:           1.29.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -2800,6 +2800,28 @@ function livento_cc_styles() {
 function livento_cc_shortcodes() {
     return array(
         array(
+            'tag'     => 'livento_tarife',
+            'title'   => 'Tarife (Landingpage)',
+            'desc'    => 'Die drei Tariffamilien als Preis-Karten (PflichtStart, PflegeKomplett, RollenPlus) mit Angebotsrechner: Der Besucher gibt seine Beschäftigtenzahl ein, alle Preise aktualisieren sich sofort. Verlinkt auf die Detailseiten.',
+            'example' => '[livento_tarife]',
+            'atts'    => array(
+                'heading'    => 'Überschrift über den Karten.',
+                'subheading' => 'Zeile darunter.',
+                'users'      => 'Startwert des Rechners (Default 20).',
+                'base'       => 'Slug der Seite, unter der die Detailseiten liegen (Default: selbstlernkurse). Muss zum Eltern-Slug der Unterseiten passen.',
+            ),
+        ),
+        array(
+            'tag'     => 'livento_tarif',
+            'title'   => 'Tarif-Detailseite',
+            'desc'    => 'Eine Tariffamilie im Detail: alle Setting-Varianten (ambulant, stationär …) mit Preisblock, Kaufbutton und der vollständigen Kursliste — je Kurs Titel, Kursnummer, Umfang, Module, Lektionen und Zertifikat. Preise und Kursliste kommen live aus Campus Connect.',
+            'example' => '[livento_tarif family="pflichtstart"]',
+            'atts'    => array(
+                'family' => 'Pflicht. Schlüssel der Tariffamilie: pflichtstart, pflegekomplett oder rollenplus.',
+                'users'  => 'Startwert des Rechners (Default 20).',
+            ),
+        ),
+        array(
             'tag'     => 'livento_kurse',
             'title'   => 'Kurskatalog',
             'desc'    => 'Vollständiger Katalog: Karten-Liste mit Filterleiste + Einzelkurs-Detailseiten unter /' . LIVENTO_CC_BASE . '/<slug>. Ohne Attribute = voller Katalog mit Filtern.',
@@ -3212,6 +3234,8 @@ function livento_cc_admin_tab_anleitung() {
     echo '<p>Je eine WordPress-<strong>Seite</strong> anlegen und den Shortcode in den Inhalt setzen:</p>';
     echo '<ul>';
     echo '<li>Seite <code>kurse</code> → <code>[livento_kurse]</code> (Katalog + Kurs-Detailseiten)</li>';
+    echo '<li>Seite <code>selbstlernkurse</code> → <code>[livento_tarife]</code> (Tarif-Landingpage, siehe Abschnitt 7)</li>';
+    echo '<li><strong>Unterseiten</strong> davon → <code>[livento_tarif family="pflichtstart"]</code> (bzw. <code>pflegekomplett</code>, <code>rollenplus</code>)</li>';
     echo '<li>Seite <code>foerdermoeglichkeiten</code> → <code>[livento_foerderungen]</code> (Förderungen + Detailseiten)</li>';
     echo '<li>z. B. <code>kursberatung</code> → <code>[livento_kurse_berater]</code></li>';
     echo '<li>z. B. <code>foerderberatung</code> → <code>[livento_foerder_berater]</code></li>';
@@ -3268,8 +3292,48 @@ function livento_cc_admin_tab_anleitung() {
     echo '<p>Seite mit <code>[livento_foerder_berater]</code> anlegen.</p>';
     echo '</div></details>';
 
-    // 7) Cache / Sitemap / Updates
-    echo '<details class="lvk-help"><summary>7 · Cache, Sitemap &amp; Updates</summary><div class="in">';
+    // 7) Tarife & Pakete verkaufen
+    echo '<details class="lvk-help"><summary>7 · Tarife &amp; Pakete verkaufen (Selbstlernkurse)</summary><div class="in">';
+    echo '<p>Livento verkauft <strong>Jahres-Lernpakete für Einrichtungen</strong>, keine Einzelkurse. Eine Einrichtung kauft eine Anzahl <em>Lizenzen</em> (= Beschäftigte) und verteilt sie danach selbst an ihre Mitarbeitenden.</p>';
+
+    echo '<div class="tip"><strong>Der Aufbau ist dreistufig</strong> — gepflegt wird alles in Campus Connect, nicht hier:<br>'
+       . '<strong>Tariffamilie</strong> (die Preis-Karte: PflichtStart, PflegeKomplett, RollenPlus) → '
+       . '<strong>Produktplan</strong> (Preisstaffel, Laufzeit, Umsatzsteuer) → '
+       . '<strong>Setting-Variante</strong> (ambulant, stationär, Therapie … — hier hängen die Kurse und das WooCommerce-Produkt).</div>';
+
+    echo '<h4 style="margin:14px 0 4px">So richtest du einen Tarif ein</h4>';
+    echo '<p>Die Reihenfolge ist wichtig: Das WooCommerce-Produkt muss <em>zuerst</em> existieren, weil Campus Connect seine ID braucht.</p>';
+    echo '<ol>';
+    echo '<li><strong>WooCommerce-Produkt anlegen</strong> — Typ „Einfaches Produkt". Der Preis ist egal (er wird durch die Staffel überschrieben), Steuerklasse „Standard" (19 %). Speichern.</li>';
+    echo '<li><strong>Produkt-ID notieren</strong> — sie steht in der URL der Produkt-Bearbeitung (<code>post=1234</code>) und oben im Tarif-Hinweis auf der Produktseite.</li>';
+    echo '<li><strong>In Campus Connect eintragen</strong> — <em>Kursbundles → Variante öffnen → „Verkauf &amp; Website"</em>: Produktplan, URL-Kürzel und die Produkt-ID hinterlegen, dann „Auf der Website zeigen" aktivieren. Ohne diese drei Angaben lässt sich die Variante nicht veröffentlichen.</li>';
+    echo '<li><strong>Fertig.</strong> Das Produkt erkennt seinen Tarif jetzt automatisch — Preis, Mengenfeld („Anzahl Lizenzen") und Kursliste erscheinen von allein. Im Produkt-Backend steht dann oben <em>„Livento-Tarif erkannt: …"</em>. Du musst dort nichts auswählen.</li>';
+    echo '</ol>';
+    echo '<div class="tip"><strong>Warum nicht andersherum?</strong> Das Auswahlfeld „Tarif manuell zuordnen" im Produkt listet nur bereits <em>öffentliche</em> Varianten — eine Variante wird aber erst öffentlich, wenn die Produkt-ID drinsteht. Deshalb: erst Produkt, dann Campus Connect. Das Feld ist nur ein Notnagel für Sonderfälle.</div>';
+
+    echo '<h4 style="margin:14px 0 4px">Seiten anlegen</h4>';
+    echo '<ol>';
+    echo '<li>Seite <code>/selbstlernkurse/</code> mit <code>[livento_tarife]</code> → die Landingpage mit den drei Preis-Karten und dem Angebotsrechner.</li>';
+    echo '<li>Je Familie eine <strong>Unterseite</strong> davon: <code>/selbstlernkurse/pflichtstart/</code> mit <code>[livento_tarif family="pflichtstart"]</code>, dazu <code>pflegekomplett</code> und <code>rollenplus</code>.</li>';
+    echo '<li>Weicht der Eltern-Slug ab, im Landingpage-Shortcode <code>base="…"</code> mitgeben — sonst zeigen die Karten ins Leere.</li>';
+    echo '</ol>';
+
+    echo '<h4 style="margin:14px 0 4px">Preise</h4>';
+    echo '<p>Der Preis richtet sich nach der <strong>Beschäftigtenzahl</strong>, nicht nach einer Stückzahl: pauschal je Einrichtung, pro Nutzer (optional mit Mindestbetrag) oder als individuelles Angebot. Gepflegt wird die Staffel in Campus Connect unter <em>Kursbundles → Produktpläne &amp; Vorlagen</em>.</p>';
+    echo '<div class="tip"><strong>Bitte keine Preise in die Seite tippen.</strong> Tarifkarte, Angebotsrechner und Warenkorb rechnen mit derselben Funktion. Ändert Livento die Staffel, ziehen alle drei automatisch nach — eine hart geschriebene Zahl nicht, und dann steht ein anderer Preis auf der Seite als im Warenkorb.</div>';
+    echo '<p>Fällt eine Teamgröße in die Stufe „individuelles Angebot" (z. B. ab 151 Beschäftigten), blendet das Plugin den Warenkorb-Button automatisch aus und zeigt stattdessen „Angebot anfordern".</p>';
+
+    echo '<h4 style="margin:14px 0 4px">Was beim Kauf passiert</h4>';
+    echo '<ul>';
+    echo '<li>Die Warenkorbmenge <strong>ist</strong> die Anzahl der Beschäftigten.</li>';
+    echo '<li>Die Firma ist im Checkout Pflichtfeld, sobald ein Tarif im Warenkorb liegt — der Kauf legt in Campus Connect einen Arbeitgeber an.</li>';
+    echo '<li>Campus Connect erzeugt automatisch Arbeitgeber, Lizenzpaket und den Zugang für die Käuferin. <strong>Sie selbst belegt keinen Lizenzplatz</strong> — wer 40 Lizenzen kauft, ist Bestellerin, nicht zwingend Lernende.</li>';
+    echo '<li>Ihre Mitarbeitenden trägt sie danach selbst im Team-Bereich ein (einzeln oder per CSV) und gibt Plätze bei Austritt wieder frei. <strong>Im Checkout werden bewusst keine Mitarbeiterdaten abgefragt.</strong></li>';
+    echo '</ul>';
+    echo '</div></details>';
+
+    // 8) Cache / Sitemap / Updates
+    echo '<details class="lvk-help"><summary>8 · Cache, Sitemap &amp; Updates</summary><div class="in">';
     echo '<ul>';
     echo '<li><strong>Cache leeren:</strong> <a href="' . $tab('overview') . '">Übersicht</a> → „Cache jetzt leeren".</li>';
     echo '<li><strong>Auto-Purge:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → Purge-Secret setzen + in Campus Connect hinterlegen.</li>';
@@ -3277,13 +3341,17 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li><strong>Updates:</strong> Dashboard → Aktualisierungen → Erneut prüfen → Aktualisieren.</li>';
     echo '</ul></div></details>';
 
-    // 8) Problembehebung
-    echo '<details class="lvk-help"><summary>8 · Problembehebung</summary><div class="in"><ul>';
+    // 9) Problembehebung
+    echo '<details class="lvk-help"><summary>9 · Problembehebung</summary><div class="in"><ul>';
     echo '<li><strong>„anon-Key ❌" / keine Kurse:</strong> Key in den Einstellungen prüfen, Cache leeren.</li>';
     echo '<li><strong>Detailseite 404:</strong> <a href="' . $perma . '">Permalinks speichern</a>.</li>';
     echo '<li><strong>Förderberater-Ergebnis leer:</strong> in den Programmen „passt zu …" ankreuzen (gleiche Schlüssel wie im Schema).</li>';
     echo '<li><strong>Förderberater ohne Formular-Schritt:</strong> Embed in den Einstellungen hinterlegen (Förder- oder Kursberater).</li>';
     echo '<li><strong>Neuer Kurs fehlt:</strong> Cache leeren oder Webhook einrichten.</li>';
+    echo '<li><strong>Tarifseite bleibt leer:</strong> In Campus Connect ist noch keine Tariffamilie öffentlich geschaltet (<em>Kursbundles → Produktpläne &amp; Vorlagen → Familie → „Auf der Website anzeigen"</em>). Danach Cache leeren.</li>';
+    echo '<li><strong>Variante fehlt auf der Tarifseite:</strong> Sie braucht Produktplan, URL-Kürzel <em>und</em> WooCommerce-Produkt-ID — erst dann lässt sie sich veröffentlichen.</li>';
+    echo '<li><strong>Produkt zeigt „Kein Livento-Tarif":</strong> Die Produkt-ID steht noch nicht in Campus Connect am Bundle, oder die Variante ist dort noch nicht öffentlich. Danach Cache leeren.</li>';
+    echo '<li><strong>Preis im Warenkorb weicht ab:</strong> Der Cache ist alt. Cache leeren; die Staffel wird sonst nur alle 3 Stunden neu geladen.</li>';
     echo '</ul></div></details>';
 }
 
@@ -5301,10 +5369,32 @@ function livento_cc_tariff_styles() {
  * Stueckpreis x Menge = Staffelpreis ergibt.
  * ---------------------------------------------------------- */
 
-/** Produktfeld „Livento-Bundle" im Produkt-Backend. */
+/**
+ * Produkt-Backend: Zeigt, ob dieses Produkt von Campus Connect als Tarif erkannt wird.
+ *
+ * Der Normalfall braucht hier KEINE Eingabe: Sobald die Produkt-ID in Campus Connect
+ * am Bundle hinterlegt und die Variante oeffentlich ist, findet das Plugin sie selbst.
+ * Das Auswahlfeld ist nur ein manueller Notnagel — es listet naturgemaess nur bereits
+ * oeffentliche Varianten.
+ */
 add_action('woocommerce_product_options_general_product_data', function () {
     global $post;
-    $options = array('' => '— kein Livento-Tarif —');
+
+    $auto = livento_cc_find_bundle_by_product($post->ID);
+
+    echo '<div class="options_group">';
+    if ($auto) {
+        echo '<p class="form-field" style="color:#0f5c66"><strong>Livento-Tarif erkannt:</strong> '
+           . esc_html($auto['family']['name'] . ' · ' . $auto['bundle']['name'])
+           . '<br><span class="description">Preis, Mengenfeld und Kursliste werden automatisch gesetzt. Hier ist nichts weiter zu tun.</span></p>';
+    } else {
+        echo '<p class="form-field"><strong>Kein Livento-Tarif.</strong><br><span class="description">'
+           . 'Damit dieses Produkt ein Tarif wird: Produkt speichern, die Produkt-ID (' . (int) $post->ID . ') in Campus Connect '
+           . 'unter <em>Kursbundles → Variante → Verkauf &amp; Website</em> eintragen und die Variante öffentlich schalten. '
+           . 'Danach erscheint sie hier automatisch.</span></p>';
+    }
+
+    $options = array('' => '— automatisch (empfohlen) —');
     foreach (livento_cc_get_tariffs() as $family) {
         foreach ((array) $family['plans'] as $plan) {
             foreach ((array) $plan['bundles'] as $bundle) {
@@ -5314,12 +5404,13 @@ add_action('woocommerce_product_options_general_product_data', function () {
     }
     woocommerce_wp_select(array(
         'id'          => '_livento_bundle_id',
-        'label'       => 'Livento-Tarif',
+        'label'       => 'Tarif manuell zuordnen',
         'options'     => $options,
         'value'       => get_post_meta($post->ID, '_livento_bundle_id', true),
-        'description' => 'Verknüpft dieses Produkt mit einer Setting-Variante. Der Preis kommt dann aus der Staffel; die Warenkorbmenge ist die Anzahl der Beschäftigten.',
+        'description' => 'Nur für Sonderfälle. Normalerweise leer lassen — die Zuordnung kommt aus Campus Connect.',
         'desc_tip'    => true,
     ));
+    echo '</div>';
 });
 
 add_action('woocommerce_process_product_meta', function ($post_id) {
@@ -5327,13 +5418,41 @@ add_action('woocommerce_process_product_meta', function ($post_id) {
     update_post_meta($post_id, '_livento_bundle_id', $value);
 });
 
-/** Bundle-Kontext eines WooCommerce-Produkts (oder null). */
-function livento_cc_product_bundle($product_id) {
-    $bundle_id = get_post_meta($product_id, '_livento_bundle_id', true);
-    if (!$bundle_id) {
+/** Setting-Variante zu einer WooCommerce-Produkt-ID (ueber course_bundles.wc_product_id). */
+function livento_cc_find_bundle_by_product($product_id) {
+    $product_id = (int) $product_id;
+    if (!$product_id) {
         return null;
     }
-    return livento_cc_find_bundle($bundle_id);
+    foreach (livento_cc_get_tariffs() as $family) {
+        foreach ((array) $family['plans'] as $plan) {
+            foreach ((array) $plan['bundles'] as $bundle) {
+                if (!empty($bundle['wc_product_id']) && (int) $bundle['wc_product_id'] === $product_id) {
+                    return array('family' => $family, 'plan' => $plan, 'bundle' => $bundle);
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Bundle-Kontext eines WooCommerce-Produkts.
+ *
+ * Primaer ueber die Produkt-ID, die in Campus Connect am Bundle hinterlegt ist
+ * (course_bundles.wc_product_id) — das ist die einzige Pflegestelle. Ein zweites
+ * Mapping im Shop waere nicht nur doppelte Buchfuehrung, es funktionierte beim
+ * Einrichten auch gar nicht: Das Auswahlfeld unten kennt nur OEFFENTLICHE Tarife,
+ * ein Bundle wird aber erst oeffentlich, wenn die Produkt-ID drinsteht. Das Feld
+ * bleibt nur als manueller Notnagel erhalten.
+ */
+function livento_cc_product_bundle($product_id) {
+    $context = livento_cc_find_bundle_by_product($product_id);
+    if ($context) {
+        return $context;
+    }
+    $bundle_id = get_post_meta($product_id, '_livento_bundle_id', true);
+    return $bundle_id ? livento_cc_find_bundle($bundle_id) : null;
 }
 
 /**

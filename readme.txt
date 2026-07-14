@@ -3,13 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.29.0
+Stable tag: 1.29.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
 
+= 1.29.1 =
+* Tarif-Zuordnung kommt jetzt aus Campus Connect: Das Plugin erkennt ein Tarif-Produkt an der Produkt-ID, die dort am Bundle hinterlegt ist (course_bundles.wc_product_id). Vorher musste die Variante zusaetzlich im Produkt ausgewaehlt werden — was beim Einrichten gar nicht ging, weil das Auswahlfeld nur bereits oeffentliche Varianten kennt, eine Variante aber erst mit eingetragener Produkt-ID oeffentlich werden kann. Das Auswahlfeld bleibt als manueller Notnagel erhalten; das Produkt-Backend zeigt jetzt an, ob und als welcher Tarif ein Produkt erkannt wurde.
 = 1.29.0 =
 * SLK-Tarife verkaufbar: Neue Shortcodes [livento_tarife] (drei Tariffamilien-Karten + Angebotsrechner) und [livento_tarif family="..."] (Setting-Varianten mit vollstaendiger Kursliste: Kursnummer, Umfang, Module, Lektionen, Zertifikat). Daten aus der Supabase-View public_tariffs und der RPC public_bundle_courses, gecached wie der Kurskatalog.
 * Staffelpreise: Der Preis richtet sich nach der Beschaeftigtenzahl (pauschal je Einrichtung, pro Nutzer mit Mindestbetrag, oder individuelles Angebot). livento_cc_calc_price ist die EINZIGE Preisberechnung - sie speist Tarifkarte, Angebotsrechner (per REST, keine Preis-Mathematik im Browser) UND den WooCommerce-Warenkorbpreis.
