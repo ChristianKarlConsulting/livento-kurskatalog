@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.32.0
+Stable tag: 1.33.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.33.0 =
+* Tarif-CTA-Buttons in CI-Gruen (#004D33) statt Petrol; der stoerende Hover-Farbwechsel wurde entfernt (Hover behaelt dieselbe Farbe). Standard-Basis der Tarif-Detailseiten von "selbstlernkurse" auf "e-learning" geaendert — die "Kurse & Details ansehen"-Links zeigen jetzt auf /e-learning/<slug>/ (per Shortcode-Attribut base="…" weiterhin ueberschreibbar).
 
 = 1.32.0 =
 * Warenkorb-Zaehler im Website-Header: Der Header lauscht auf ein lv:cart-Event (detail.count). Weil die Tickets ueber einen Link (?add-to-cart) und einen Seiten-Reload in den Warenkorb kommen — nicht per AJAX — feuerte das Event nie und der Zaehler blieb leer. Das Plugin sendet lv:cart jetzt beim Aufbau jeder Seite mit dem echten Warenkorbstand (und zusaetzlich bei WooCommerce-AJAX-Add/Remove). count = Anzahl Positionen im Warenkorb. Rein additiv, kein Eingriff in den Kauffluss.

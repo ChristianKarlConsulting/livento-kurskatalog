@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.32.0
+ * Version:           1.33.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,12 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.33.0: Tarif-CTA in CI-Gruen (#004D33) statt Petrol; stoerender Hover-Farbwechsel
+ *          entfernt (Hover behaelt dieselbe Farbe). Standard-Basis der Tarif-Detailseiten
+ *          von "selbstlernkurse" auf "e-learning" geaendert — die "Kurse & Details
+ *          ansehen"-Links zeigen jetzt auf /e-learning/<slug>/ (per Shortcode-Attribut
+ *          base="…" weiterhin ueberschreibbar).
  *
  * v1.32.0: Warenkorb-Zaehler im Header. Der Header lauscht auf `lv:cart` (detail.count);
  *          weil die Tickets per Link (?add-to-cart) und Reload in den Warenkorb kommen —
@@ -2831,7 +2837,7 @@ function livento_cc_shortcodes() {
                 'heading'    => 'Überschrift über den Karten.',
                 'subheading' => 'Zeile darunter.',
                 'users'      => 'Startwert des Rechners (Default 20).',
-                'base'       => 'Slug der Seite, unter der die Detailseiten liegen (Default: selbstlernkurse). Muss zum Eltern-Slug der Unterseiten passen.',
+                'base'       => 'Slug der Seite, unter der die Detailseiten liegen (Default: e-learning). Muss zum Eltern-Slug der Unterseiten passen.',
             ),
         ),
         array(
@@ -3257,7 +3263,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<p>Je eine WordPress-<strong>Seite</strong> anlegen und den Shortcode in den Inhalt setzen:</p>';
     echo '<ul>';
     echo '<li>Seite <code>kurse</code> → <code>[livento_kurse]</code> (Katalog + Kurs-Detailseiten)</li>';
-    echo '<li>Seite <code>selbstlernkurse</code> → <code>[livento_tarife]</code> (Tarif-Landingpage, siehe Abschnitt 7)</li>';
+    echo '<li>Seite <code>e-learning</code> → <code>[livento_tarife]</code> (Tarif-Landingpage, siehe Abschnitt 7)</li>';
     echo '<li><strong>Unterseiten</strong> davon → <code>[livento_tarif family="pflichtticket"]</code> (bzw. <code>komplettticket</code>, <code>rollenticket</code>)</li>';
     echo '<li>Seite <code>foerdermoeglichkeiten</code> → <code>[livento_foerderungen]</code> (Förderungen + Detailseiten)</li>';
     echo '<li>z. B. <code>kursberatung</code> → <code>[livento_kurse_berater]</code></li>';
@@ -3336,8 +3342,8 @@ function livento_cc_admin_tab_anleitung() {
 
     echo '<h4 style="margin:14px 0 4px">Seiten anlegen</h4>';
     echo '<ol>';
-    echo '<li>Seite <code>/selbstlernkurse/</code> mit <code>[livento_tarife]</code> → die Landingpage mit den drei Preis-Karten und dem Angebotsrechner.</li>';
-    echo '<li>Je Familie eine <strong>Unterseite</strong> davon: <code>/selbstlernkurse/pflicht-ticket/</code> mit <code>[livento_tarif family="pflichtticket"]</code>, dazu <code>komplett-ticket</code> und <code>rollen-ticket</code>. Der Seiten-Slug muss dem URL-Kürzel der Tariffamilie in Campus Connect entsprechen — sonst zeigen die Karten der Landingpage ins Leere.</li>';
+    echo '<li>Seite <code>/e-learning/</code> mit <code>[livento_tarife]</code> → die Landingpage mit den drei Preis-Karten und dem Angebotsrechner.</li>';
+    echo '<li>Je Familie eine <strong>Unterseite</strong> davon: <code>/e-learning/pflicht-ticket/</code> mit <code>[livento_tarif family="pflichtticket"]</code>, dazu <code>komplett-ticket</code> und <code>rollen-ticket</code>. Der Seiten-Slug muss dem URL-Kürzel der Tariffamilie in Campus Connect entsprechen — sonst zeigen die Karten der Landingpage ins Leere.</li>';
     echo '<li>Weicht der Eltern-Slug ab, im Landingpage-Shortcode <code>base="…"</code> mitgeben — sonst zeigen die Karten ins Leere.</li>';
     echo '</ol>';
 
@@ -4967,7 +4973,7 @@ add_shortcode('livento_tarife', function ($atts) {
         'heading'    => 'Fortbildung für Ihr ganzes Team',
         'subheading' => 'Fertige Jahres-Lernpfade statt Kurschaos. Rollenbezogen zugewiesen, mit Wissenstest, Zertifikat und Nachweisübersicht.',
         'users'      => 20,
-        'base'       => 'selbstlernkurse',
+        'base'       => 'e-learning',
     ), $atts, 'livento_tarife');
 
     $families = livento_cc_get_tariffs();
@@ -5355,10 +5361,10 @@ function livento_cc_tariff_styles() {
     .lv-tarif__facts strong{display:block;font-size:1.1rem;color:#1d2b30}
     .lv-tarif__list{margin:0 0 1.25rem;padding-left:1.1rem;font-size:.92rem}
     .lv-tarif__list li{margin-bottom:.3rem}
-    .lv-btn,.lv-tarif__cta{display:inline-block;margin-top:auto;text-align:center;background:#0f5c66;color:#fff;padding:.7rem 1.2rem;border-radius:10px;text-decoration:none;font-weight:600}
-    .lv-btn:hover,.lv-tarif__cta:hover{background:#0c4a52;color:#fff}
-    .lv-btn--ghost{background:transparent;color:#0f5c66;border:1px solid #0f5c66}
-    .lv-btn--ghost:hover{background:#0f5c66;color:#fff}
+    .lv-btn,.lv-tarif__cta{display:inline-block;margin-top:auto;text-align:center;background:#004D33;color:#fff;padding:.7rem 1.2rem;border-radius:10px;text-decoration:none;font-weight:600}
+    .lv-btn:hover,.lv-tarif__cta:hover{background:#004D33;color:#fff}
+    .lv-btn--ghost{background:transparent;color:#004D33;border:1px solid #004D33}
+    .lv-btn--ghost:hover{background:#004D33;color:#fff}
     .lv-tarife__foot{margin-top:1.5rem;text-align:center;font-size:.85rem;color:#5c6a70}
     .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.5rem}
     .lv-lead{font-size:1.1rem;color:#5c6a70}
