@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.29.1
+ * Version:           1.32.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,29 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.32.0: Warenkorb-Zaehler im Header. Der Header lauscht auf `lv:cart` (detail.count);
+ *          weil die Tickets per Link (?add-to-cart) und Reload in den Warenkorb kommen —
+ *          nicht per AJAX — feuerte das Event nie. Jetzt wird es beim Seitenaufbau mit dem
+ *          echten Stand gesendet (und bei WC-AJAX-Add/Remove). count = Positionen im
+ *          Warenkorb. Rein additiv, keine Aenderung am Kauffluss.
+ *
+ * v1.31.0: Tarifpreise werden als Bruttopreise inkl. MwSt ausgewiesen (einheitlich mit
+ *          WooCommerce, wo der eingegebene Preis der Kundenpreis ist). Die Betraege bleiben
+ *          unveraendert — nur der Steuerhinweis wechselt von "netto zzgl. USt" auf
+ *          "inkl. MwSt" (Angebotsrechner, Karten, Detailseiten, Fusszeilen). USt-freie
+ *          Tarife (is_vat_exempt) zeigen weiterhin "USt-frei". Der Warenkorbpreis (yearly_net)
+ *          bleibt unveraendert.
+ *
+ * v1.30.0: Tarife heissen Tickets. Wegen einer Namenskollision mit einem Wettbewerber
+ *          wurden die Tariffamilien umbenannt: PflichtStart -> PflichtTicket,
+ *          PflegeKomplett -> KomplettTicket, RollenPlus -> RollenTicket
+ *          (FunktionsbereichPlus entfaellt, laeuft als RollenTicket weiter). Betrifft nur
+ *          Texte und Beispiele — Namen, Schluessel und Slugs kommen live aus Campus Connect.
+ *          NACH DEM UPDATE: Die WordPress-Unterseiten der Tarife auf die neuen Slugs
+ *          (pflicht-ticket, komplett-ticket, rollen-ticket) umstellen und im Shortcode
+ *          family="pflichtticket|komplettticket|rollenticket" setzen. Alte Seiten-Slugs
+ *          auf die neuen weiterleiten (301), sonst laufen bestehende Links ins Leere.
  *
  * Optional: Cache-Purge-Webhook — LIVENTO_CC_PURGE_SECRET setzen, dann kann Campus
  * Connect bei Kursaenderungen POST /wp-json/livento/v1/purge (Header
@@ -2802,7 +2825,7 @@ function livento_cc_shortcodes() {
         array(
             'tag'     => 'livento_tarife',
             'title'   => 'Tarife (Landingpage)',
-            'desc'    => 'Die drei Tariffamilien als Preis-Karten (PflichtStart, PflegeKomplett, RollenPlus) mit Angebotsrechner: Der Besucher gibt seine Beschäftigtenzahl ein, alle Preise aktualisieren sich sofort. Verlinkt auf die Detailseiten.',
+            'desc'    => 'Die drei Tariffamilien als Preis-Karten (PflichtTicket, KomplettTicket, RollenTicket) mit Angebotsrechner: Der Besucher gibt seine Beschäftigtenzahl ein, alle Preise aktualisieren sich sofort. Verlinkt auf die Detailseiten.',
             'example' => '[livento_tarife]',
             'atts'    => array(
                 'heading'    => 'Überschrift über den Karten.',
@@ -2815,9 +2838,9 @@ function livento_cc_shortcodes() {
             'tag'     => 'livento_tarif',
             'title'   => 'Tarif-Detailseite',
             'desc'    => 'Eine Tariffamilie im Detail: alle Setting-Varianten (ambulant, stationär …) mit Preisblock, Kaufbutton und der vollständigen Kursliste — je Kurs Titel, Kursnummer, Umfang, Module, Lektionen und Zertifikat. Preise und Kursliste kommen live aus Campus Connect.',
-            'example' => '[livento_tarif family="pflichtstart"]',
+            'example' => '[livento_tarif family="pflichtticket"]',
             'atts'    => array(
-                'family' => 'Pflicht. Schlüssel der Tariffamilie: pflichtstart, pflegekomplett oder rollenplus.',
+                'family' => 'Pflicht. Schlüssel der Tariffamilie: pflichtticket, komplettticket oder rollenticket (der Slug pflicht-ticket, komplett-ticket, rollen-ticket funktioniert ebenfalls).',
                 'users'  => 'Startwert des Rechners (Default 20).',
             ),
         ),
@@ -3235,7 +3258,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<ul>';
     echo '<li>Seite <code>kurse</code> → <code>[livento_kurse]</code> (Katalog + Kurs-Detailseiten)</li>';
     echo '<li>Seite <code>selbstlernkurse</code> → <code>[livento_tarife]</code> (Tarif-Landingpage, siehe Abschnitt 7)</li>';
-    echo '<li><strong>Unterseiten</strong> davon → <code>[livento_tarif family="pflichtstart"]</code> (bzw. <code>pflegekomplett</code>, <code>rollenplus</code>)</li>';
+    echo '<li><strong>Unterseiten</strong> davon → <code>[livento_tarif family="pflichtticket"]</code> (bzw. <code>komplettticket</code>, <code>rollenticket</code>)</li>';
     echo '<li>Seite <code>foerdermoeglichkeiten</code> → <code>[livento_foerderungen]</code> (Förderungen + Detailseiten)</li>';
     echo '<li>z. B. <code>kursberatung</code> → <code>[livento_kurse_berater]</code></li>';
     echo '<li>z. B. <code>foerderberatung</code> → <code>[livento_foerder_berater]</code></li>';
@@ -3297,7 +3320,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<p>Livento verkauft <strong>Jahres-Lernpakete für Einrichtungen</strong>, keine Einzelkurse. Eine Einrichtung kauft eine Anzahl <em>Lizenzen</em> (= Beschäftigte) und verteilt sie danach selbst an ihre Mitarbeitenden.</p>';
 
     echo '<div class="tip"><strong>Der Aufbau ist dreistufig</strong> — gepflegt wird alles in Campus Connect, nicht hier:<br>'
-       . '<strong>Tariffamilie</strong> (die Preis-Karte: PflichtStart, PflegeKomplett, RollenPlus) → '
+       . '<strong>Tariffamilie</strong> (die Preis-Karte: PflichtTicket, KomplettTicket, RollenTicket) → '
        . '<strong>Produktplan</strong> (Preisstaffel, Laufzeit, Umsatzsteuer) → '
        . '<strong>Setting-Variante</strong> (ambulant, stationär, Therapie … — hier hängen die Kurse und das WooCommerce-Produkt).</div>';
 
@@ -3314,7 +3337,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<h4 style="margin:14px 0 4px">Seiten anlegen</h4>';
     echo '<ol>';
     echo '<li>Seite <code>/selbstlernkurse/</code> mit <code>[livento_tarife]</code> → die Landingpage mit den drei Preis-Karten und dem Angebotsrechner.</li>';
-    echo '<li>Je Familie eine <strong>Unterseite</strong> davon: <code>/selbstlernkurse/pflichtstart/</code> mit <code>[livento_tarif family="pflichtstart"]</code>, dazu <code>pflegekomplett</code> und <code>rollenplus</code>.</li>';
+    echo '<li>Je Familie eine <strong>Unterseite</strong> davon: <code>/selbstlernkurse/pflicht-ticket/</code> mit <code>[livento_tarif family="pflichtticket"]</code>, dazu <code>komplett-ticket</code> und <code>rollen-ticket</code>. Der Seiten-Slug muss dem URL-Kürzel der Tariffamilie in Campus Connect entsprechen — sonst zeigen die Karten der Landingpage ins Leere.</li>';
     echo '<li>Weicht der Eltern-Slug ab, im Landingpage-Shortcode <code>base="…"</code> mitgeben — sonst zeigen die Karten ins Leere.</li>';
     echo '</ol>';
 
@@ -4677,7 +4700,7 @@ function livento_cc_rest_lead($req) {
  * 12. SLK-TARIFE (v1.29.0)
  *
  * Verkauft die Selbstlernkurs-Bundles aus Campus Connect: Tariffamilien
- * (PflichtStart / PflegeKomplett / RollenPlus), Staffelpreise nach
+ * (PflichtTicket / KomplettTicket / RollenTicket), Staffelpreise nach
  * Beschaeftigtenzahl, Angebotsrechner und die vollstaendige Kursliste je
  * Setting-Variante.
  *
@@ -4891,9 +4914,9 @@ function livento_cc_eur($value) {
     return number_format((float) $value, 2, ',', '.') . ' €';
 }
 
-/** Steuerhinweis — B2B-Standard ist netto zzgl. USt. */
+/** Steuerhinweis — Preise sind Bruttopreise inkl. MwSt (einheitlich mit WooCommerce). */
 function livento_cc_tax_note($price) {
-    return !empty($price['is_vat_exempt']) ? 'USt-frei' : 'zzgl. USt';
+    return !empty($price['is_vat_exempt']) ? 'USt-frei' : 'inkl. MwSt';
 }
 
 /* ------------------------------------------------------------
@@ -4925,7 +4948,7 @@ add_action('rest_api_init', function () {
                 if ($best) {
                     $families[$family['key']] = $format($best['price']);
                 }
-                // Jeder Plan einzeln — RollenPlus hat vier Plaene mit UNTERSCHIEDLICHEN
+                // Jeder Plan einzeln — RollenTicket hat vier Plaene mit UNTERSCHIEDLICHEN
                 // Preisen; auf der Detailseite muss jede Variante ihren eigenen zeigen.
                 foreach ((array) $family['plans'] as $plan) {
                     $plans[$plan['id']] = $format(livento_cc_calc_price($plan, $users));
@@ -5027,7 +5050,7 @@ add_shortcode('livento_tarife', function ($atts) {
         </div>
 
         <p class="lv-tarife__foot">
-            Alle Preise netto zzgl. gesetzlicher Umsatzsteuer, 12 Monate Mindestlaufzeit, Abrechnung jährlich im Voraus.
+            Alle Preise inkl. gesetzlicher MwSt., 12 Monate Mindestlaufzeit, Abrechnung jährlich im Voraus.
             Ab 151 Beschäftigten erstellen wir Ihnen ein individuelles Angebot.
         </p>
     </div>
@@ -5037,7 +5060,7 @@ add_shortcode('livento_tarife', function ($atts) {
 });
 
 /* ------------------------------------------------------------
- * Shortcode [livento_tarif family="pflichtstart"] — Detailseite einer Familie
+ * Shortcode [livento_tarif family="pflichtticket"] — Detailseite einer Familie
  * ---------------------------------------------------------- */
 add_shortcode('livento_tarif', function ($atts) {
     $atts   = shortcode_atts(array('family' => '', 'users' => 20), $atts, 'livento_tarif');
@@ -5074,7 +5097,7 @@ add_shortcode('livento_tarif', function ($atts) {
         <div class="lv-calc" data-lv-calc>
             <label for="lv-detail-users">Wie viele Beschäftigte haben Sie?</label>
             <input type="number" id="lv-detail-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
-            <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, netto zzgl. USt.</span>
+            <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, inkl. MwSt.</span>
         </div>
 
         <?php foreach ($variants as $index => $variant) :
@@ -5268,7 +5291,7 @@ function livento_cc_tariff_calc_script() {
             document.querySelectorAll('[data-lv-family]').forEach(function (card) {
                 paint(card, data.families[card.getAttribute('data-lv-family')], false);
             });
-            // Detailseite: jede Variante zeigt den Preis IHRES Plans — RollenPlus hat
+            // Detailseite: jede Variante zeigt den Preis IHRES Plans — RollenTicket hat
             // vier Plaene mit unterschiedlichen Preisen.
             document.querySelectorAll('[data-lv-plan]').forEach(function (section) {
                 paint(section, data.plans[section.getAttribute('data-lv-plan')], true);
@@ -5511,6 +5534,53 @@ add_action('woocommerce_before_add_to_cart_quantity', function () {
         echo '<label class="lv-qty-label" for="quantity">Anzahl Lizenzen (Beschäftigte)</label>';
     }
 });
+
+/**
+ * Warenkorb-Zaehler im Website-Header.
+ *
+ * Der Header lauscht auf ein `lv:cart`-Event (detail.count). Die Tickets landen ueber
+ * einen normalen Link (?add-to-cart=…) im Warenkorb — also per Seiten-Reload, NICHT per
+ * AJAX. Darum feuert von selbst nie ein Event, und der Zaehler bleibt leer, obwohl etwas
+ * im Warenkorb liegt. Wir feuern das Event deshalb beim Laden jeder Seite mit dem echten
+ * Stand; zusaetzlich bei WooCommerce-AJAX-Events (falls Add/Remove doch per AJAX passiert).
+ *
+ * count = Anzahl Positionen (Tickets) im Warenkorb, nicht die Lizenzmenge — der Badge zeigt
+ * also "1", wenn ein Ticket drin liegt. Fuer die Gesamtmenge stattdessen
+ * WC()->cart->get_cart_contents_count() ausgeben.
+ *
+ * Hinweis Caching: Der Startwert wird serverseitig gerendert. Warenkorb-/Checkout-Seiten
+ * werden von WooCommerce nicht gecacht (dort stimmt es also immer). Sollten Landingpages
+ * per Full-Page-Cache ausgeliefert werden, kann der Startwert veralten — dann den Wert
+ * client-seitig aus den WC-Fragmenten lesen statt serverseitig rendern.
+ */
+add_action('wp_footer', function () {
+    if (!function_exists('WC') || is_null(WC()->cart)) {
+        return;
+    }
+    $count = count(WC()->cart->get_cart());
+    ?>
+    <script>
+    (function () {
+        function lvEmit(n) {
+            document.dispatchEvent(new CustomEvent('lv:cart', { detail: { count: n } }));
+        }
+        function lvReady(fn) {
+            if (document.readyState !== 'loading') { fn(); }
+            else { document.addEventListener('DOMContentLoaded', fn); }
+        }
+        lvReady(function () { lvEmit(<?php echo (int) $count; ?>); });
+        if (window.jQuery) {
+            jQuery(function ($) {
+                $(document.body).on('added_to_cart removed_from_cart', function () {
+                    var m = document.cookie.match(/(?:^|;\s*)woocommerce_items_in_cart=(\d+)/);
+                    lvEmit(m ? parseInt(m[1], 10) : 0);
+                });
+            });
+        }
+    })();
+    </script>
+    <?php
+}, 99);
 
 /** Kursliste unter die Produktbeschreibung. */
 add_action('woocommerce_after_single_product_summary', function () {

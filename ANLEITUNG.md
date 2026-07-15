@@ -57,9 +57,9 @@ Lege je eine WordPress-**Seite** an und setze den jeweiligen Shortcode in den In
 |---|---|---|
 | `/kurse/` | `[livento_kurse]` | Kurskatalog mit Filter + Kurs-Detailseiten |
 | `/selbstlernkurse/` | `[livento_tarife]` | Tarif-Landingpage (3 Preis-Karten + Angebotsrechner) |
-| `/selbstlernkurse/pflichtstart/` | `[livento_tarif family="pflichtstart"]` | Tarif-Detailseite (Varianten + Kursliste) |
-| `/selbstlernkurse/pflegekomplett/` | `[livento_tarif family="pflegekomplett"]` | dito |
-| `/selbstlernkurse/rollenplus/` | `[livento_tarif family="rollenplus"]` | dito |
+| `/selbstlernkurse/pflicht-ticket/` | `[livento_tarif family="pflichtticket"]` | Tarif-Detailseite (Varianten + Kursliste) |
+| `/selbstlernkurse/komplett-ticket/` | `[livento_tarif family="komplettticket"]` | dito |
+| `/selbstlernkurse/rollen-ticket/` | `[livento_tarif family="rollenticket"]` | dito |
 | `/foerdermoeglichkeiten/` | `[livento_foerderungen]` | Förderprogramme + Detailseiten |
 | z. B. `/kursberatung/` | `[livento_kurse_berater]` | Kursberater |
 | z. B. `/foerderberatung/` | `[livento_foerder_berater]` | Förderberater |
@@ -206,13 +206,13 @@ Livento verkauft **Jahres-Lernpakete für Einrichtungen**, keine Einzelkurse. Ei
 Gepflegt wird alles in **Campus Connect**, nicht in WordPress:
 
 ```
-Tariffamilie      → die Preis-Karte auf der Website (PflichtStart, PflegeKomplett, RollenPlus)
+Tariffamilie      → die Preis-Karte auf der Website (PflichtTicket, KomplettTicket, RollenTicket)
   └─ Produktplan  → Preisstaffel, Vertragslaufzeit, Umsatzsteuer, Onboarding-Mail
        └─ Setting-Variante → ambulant, stationär, Therapie … — hier hängen die Kurse
                               und das WooCommerce-Produkt
 ```
 
-Ein Warenkorb darf mehrere Varianten enthalten (z. B. 40× PflichtStart stationär + 8× PflichtStart Hauswirtschaft). Daraus werden zwei getrennte Lizenzpakete.
+Ein Warenkorb darf mehrere Varianten enthalten (z. B. 40× PflichtTicket stationär + 8× PflichtTicket Hauswirtschaft). Daraus werden zwei getrennte Lizenzpakete.
 
 ### Einen Tarif einrichten
 

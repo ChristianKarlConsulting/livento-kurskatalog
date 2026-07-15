@@ -3,12 +3,21 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.29.1
+Stable tag: 1.32.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.32.0 =
+* Warenkorb-Zaehler im Website-Header: Der Header lauscht auf ein lv:cart-Event (detail.count). Weil die Tickets ueber einen Link (?add-to-cart) und einen Seiten-Reload in den Warenkorb kommen — nicht per AJAX — feuerte das Event nie und der Zaehler blieb leer. Das Plugin sendet lv:cart jetzt beim Aufbau jeder Seite mit dem echten Warenkorbstand (und zusaetzlich bei WooCommerce-AJAX-Add/Remove). count = Anzahl Positionen im Warenkorb. Rein additiv, kein Eingriff in den Kauffluss.
+
+= 1.31.0 =
+* Tarifpreise werden als Bruttopreise inkl. MwSt ausgewiesen (einheitlich mit WooCommerce, wo der eingegebene Preis der Kundenpreis ist). Die Betraege bleiben unveraendert — nur der Steuerhinweis wechselt von "netto zzgl. USt" auf "inkl. MwSt" (Angebotsrechner, Karten, Detailseiten, Fusszeilen). USt-freie Tarife zeigen weiterhin "USt-frei". Der Warenkorbpreis (yearly_net) bleibt unveraendert.
+
+= 1.30.0 =
+* Tarife heissen jetzt Tickets: Wegen einer Namenskollision mit einem Wettbewerber wurden die Tariffamilien umbenannt — PflichtStart -> PflichtTicket, PflegeKomplett -> KomplettTicket, RollenPlus -> RollenTicket (FunktionsbereichPlus entfaellt, laeuft als RollenTicket weiter). Betrifft nur Texte/Beispiele im Plugin; Namen, Schluessel und Slugs kommen live aus Campus Connect. NACH DEM UPDATE: WordPress-Tarif-Unterseiten auf die neuen Slugs (pflicht-ticket, komplett-ticket, rollen-ticket) umstellen und im Shortcode family="pflichtticket|komplettticket|rollenticket" setzen; alte Seiten-Slugs per 301 weiterleiten.
 
 = 1.29.1 =
 * Tarif-Zuordnung kommt jetzt aus Campus Connect: Das Plugin erkennt ein Tarif-Produkt an der Produkt-ID, die dort am Bundle hinterlegt ist (course_bundles.wc_product_id). Vorher musste die Variante zusaetzlich im Produkt ausgewaehlt werden — was beim Einrichten gar nicht ging, weil das Auswahlfeld nur bereits oeffentliche Varianten kennt, eine Variante aber erst mit eingetragener Produkt-ID oeffentlich werden kann. Das Auswahlfeld bleibt als manueller Notnagel erhalten; das Produkt-Backend zeigt jetzt an, ob und als welcher Tarif ein Produkt erkannt wurde.
