@@ -3,12 +3,22 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.39.0
+Stable tag: 1.40.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.40.0 =
+* Der Preis auf den Ticket-Seiten sagt jetzt, WORAUF er sich bezieht. Bis hier stand dort "348,00 € / Jahr" — direkt neben einem Rechner, der auf 10 Beschaeftigte voreingestellt ist, aber ohne einen Halbsatz, der die beiden Zahlen zueinander ins Verhaeltnis setzt. Ein Erstbesucher las daraus "348 € pro Kopf" und rechnete sich das PflichtTicket bis zu 15-fach zu teuer. Tatsaechlich sind 348 € der Pauschalpreis fuer bis zu 15 Personen, also 1,93 € je Person und Monat — die Seite versteckte damit ausgerechnet ihr staerkstes Argument.
+* Die Faktenbox nennt die Bezugsgroesse direkt am Einstiegspreis: "ab 348,00 € / Jahr — fuer die ganze Einrichtung, bis 15 Beschaeftigte".
+* Die Variantenzeile bindet den Betrag an die Kopfzahl aus dem Rechner: "Gesamtpreis fuer alle 10 Beschaeftigten · entspricht 29,00 € / Monat", darunter "das sind 2,90 € pro Person und Monat".
+* Neue Tabelle "So rechnet sich das" unter dem Rechner mit der vollstaendigen Staffel (bis 15 pauschal, 16-50, 51-150, ab 151 individuell). Die Staffel stand vorher NIRGENDS auf der Seite — die einzige Erklaerung war eine zugeklappte FAQ, die selbst keine Zahlen nannte.
+* Der Rechner-Hinweis sagt jetzt ausdruecklich, dass der angezeigte Preis immer der Gesamtpreis fuers ganze Team ist und nicht mit der Kopfzahl multipliziert wird.
+* Alles aus den Staffeln abgeleitet, nichts hartkodiert — und das ist keine Kosmetik: Nur das PflichtTicket hat ueberhaupt eine Pauschale. KomplettTicket (99 €/Person/Jahr) und RollenTicket (49 €/Person/Jahr) rechnen ab der ERSTEN Person pro Kopf und bekommen darum "pro Person"; ein hartkodiertes "fuer die ganze Einrichtung" waere dort falsch gewesen. Die Staffeltabelle rendert nur, wo es wirklich eine Staffel gibt.
+* Bei genau einer Person entfaellt die Kopfpreis-Zeile: Sie wuerde nur den Monatsbetrag darueber wiederholen und beim PflichtTicket ausgerechnet die hoechste Kopfzahl der Staffel plakatieren, obwohl es bei einer Person keinen Pauschalvorteil zu zeigen gibt.
+* Die neuen Textbausteine kommen wie Netto- und Steuerhinweis fertig formatiert vom Server. Im Browser wird weiterhin kein Preis gerechnet — sonst gaebe es eine zweite Preis-Mathematik, die auseinanderlaufen kann.
 
 = 1.39.0 =
 * Das Hero-Band auf den Ticket-Detailseiten laeuft jetzt randlos ueber die ganze Seitenbreite, statt im 1200-Pixel-Container zu stecken. Der Inhalt im Band bleibt dabei exakt buendig zum Rest der Seite (geprueft von 390 bis 1920 Pixel Breite).

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.39.0
+ * Version:           1.40.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,34 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.40.0: Der Preis sagt endlich, WORAUF er sich bezieht. Bis hier stand auf den
+ *          Ticket-Seiten "348,00 € / Jahr" — direkt neben einem Rechner, der auf 10
+ *          Beschaeftigte voreingestellt ist, aber ohne einen Halbsatz, der die beiden
+ *          Zahlen zueinander ins Verhaeltnis setzt. Ein Erstbesucher las daraus
+ *          "348 € pro Kopf" und rechnete sich das PflichtTicket bis zu 15-fach zu
+ *          teuer (tatsaechlich: 348 € fuer bis zu 15 Personen = 1,93 € je Person und
+ *          Monat). Preis-Ambiguitaet loest sich beim Leser pessimistisch auf — die
+ *          Seite versteckte damit ausgerechnet ihr staerkstes Argument.
+ *          Aufgeloest wurde es bislang NUR in einer zugeklappten FAQ am Seitenende,
+ *          und die nannte nicht einmal Zahlen ("bis zu einer bestimmten Teamgroesse").
+ *          Neu: (1) Bezugsgroesse direkt am Preis — Faktenbox "fuer die ganze
+ *          Einrichtung, bis 15 Beschaeftigte", Variantenzeile "Gesamtpreis fuer alle
+ *          10 Beschaeftigten · 2,90 € pro Person und Monat"; (2) die Staffel steht
+ *          offen als Tabelle unter dem Rechner (sie stand vorher NIRGENDS auf der
+ *          Seite); (3) der Rechner-Hinweis sagt, dass die Zahl immer der Gesamtpreis
+ *          ist und nicht mit der Kopfzahl multipliziert wird.
+ *          ALLES AUS DEN STAFFELN ABGELEITET, nichts hartkodiert — und das ist keine
+ *          Kosmetik: Nur das PflichtTicket hat ueberhaupt eine Pauschale. Komplett-
+ *          Ticket (99 €/Person/Jahr) und RollenTicket (49 €/Person/Jahr) rechnen ab
+ *          der ERSTEN Person pro Kopf; ein hartkodiertes "fuer die ganze Einrichtung"
+ *          waere dort falsch und haette das gespiegelte Missverstaendnis erzeugt
+ *          (99 € fuer den ganzen Betrieb). Daher liefert livento_cc_scope_note() den
+ *          Bezug aus dem pricing_mode, und die Staffeltabelle rendert nur, wo es
+ *          wirklich eine Staffel gibt (Familie mit genau einem Plan und >1 Staffel).
+ *          Die neuen Textbausteine kommen wie Netto und Steuerhinweis fertig
+ *          formatiert vom Server — im Browser wird weiterhin KEIN Preis gerechnet,
+ *          sonst gaebe es eine zweite Mathematik, die auseinanderlaufen kann.
  *
  * v1.39.0: Das Hero-Band laeuft jetzt randlos ueber die ganze Seitenbreite, statt im
  *          1200px-Container zu stecken. Zur Einordnung, warum das hier Arbeit ist und
@@ -5298,6 +5326,130 @@ function livento_cc_net_note($price) {
     return livento_cc_eur(round(((float) $price['yearly_net']) / (1 + LIVENTO_CC_VAT_RATE), 2)) . ' netto';
 }
 
+/**
+ * v1.40.0: Worauf bezieht sich der Betrag — auf die Einrichtung oder auf den Kopf?
+ *
+ * Das ist die eigentliche Korrektur dieser Version. Der Betrag stand bislang nackt da
+ * ("348,00 € / Jahr"), und der Leser musste raten. Er raet pessimistisch, also gegen uns.
+ *
+ * Abgeleitet aus dem pricing_mode und NICHT hartkodiert: Nur das PflichtTicket kennt
+ * eine Pauschale (1-15 Beschaeftigte). KomplettTicket und RollenTicket rechnen ab der
+ * ersten Person pro Kopf — dort waere "fuer die ganze Einrichtung" schlicht gelogen.
+ */
+function livento_cc_scope_note($price) {
+    if (empty($price['mode'])) {
+        return null;
+    }
+    if ($price['mode'] === 'flat') {
+        return 'für die ganze Einrichtung';
+    }
+    if ($price['mode'] === 'per_user') {
+        return 'pro Person';
+    }
+    return null; // individual: der Bezug klaert sich im Gespraech, nicht auf der Seite.
+}
+
+/**
+ * v1.40.0: Der Preis, gebunden an die eingegebene Kopfzahl — "Gesamtpreis für alle 10
+ * Beschäftigten". Bindet die beiden Zahlen aneinander, die auf der Seite bisher
+ * beziehungslos nebeneinander standen (Rechner: 10 · Preis: 348,00 €).
+ */
+function livento_cc_total_note($price) {
+    if (empty($price['users'])) {
+        return null;
+    }
+    $users = (int) $price['users'];
+    return $users === 1
+        ? 'Gesamtpreis für 1 Beschäftigten'
+        : 'Gesamtpreis für alle ' . $users . ' Beschäftigten';
+}
+
+/**
+ * v1.40.0: "1,93 € pro Person und Monat" — macht den Pauschalvorteil rechenbar, statt
+ * ihn dem Leser zu ueberlassen. Genau diese Zahl ist das Verkaufsargument der Seite:
+ * Bei 15 Personen kostet das PflichtTicket weniger als 2 € je Kopf und Monat.
+ *
+ * Bewusst auch im per_user-Modus: dort bestaetigt sie nur den Staffelpreis, aber die
+ * Zeile bleibt ueber alle Familien und Teamgroessen gleich gebaut.
+ */
+function livento_cc_per_user_note($price) {
+    if (empty($price['users']) || !isset($price['yearly_net']) || $price['yearly_net'] === null) {
+        return null;
+    }
+    $users = max(1, (int) $price['users']);
+
+    // Bei einer einzigen Person ist der Kopfpreis per Definition der Monatsbetrag — die
+    // Zeile wuerde nur "entspricht 29,00 € / Monat" direkt darueber wiederholen. Schlimmer:
+    // Beim PflichtTicket steht dann ausgerechnet die groesste Kopfzahl der ganzen Staffel
+    // da (29,00 €), obwohl es bei 1 Person schlicht keinen Pauschalvorteil zu zeigen gibt.
+    if ($users === 1) {
+        return null;
+    }
+
+    $months = max(1, (int) (isset($price['contract_months']) ? $price['contract_months'] : 12));
+    $per    = ((float) $price['yearly_net']) / $months / $users;
+    return livento_cc_eur(round($per, 2)) . ' pro Person und Monat';
+}
+
+/**
+ * v1.40.0: Die Pauschalstaffel einer Familie, oder null wenn sie keine hat.
+ * Fuer die "ab"-Zeile in der Faktenbox: "ab 348,00 € / Jahr — fuer die ganze
+ * Einrichtung, bis 15 Beschaeftigte". Die 15 kommt aus max_users, nicht aus dem Kopf.
+ */
+function livento_cc_flat_tier($family) {
+    foreach ((array) $family['plans'] as $plan) {
+        $tiers = isset($plan['tiers']) && is_array($plan['tiers']) ? $plan['tiers'] : array();
+        foreach ($tiers as $tier) {
+            if (isset($tier['pricing_mode']) && $tier['pricing_mode'] === 'flat') {
+                return $tier;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * v1.40.0: Eine Staffelzeile als Text — "16–50 Beschäftigte" / "ab 151 Beschäftigte".
+ */
+function livento_cc_tier_range_text($tier) {
+    $min = (int) $tier['min_users'];
+    $max = (isset($tier['max_users']) && $tier['max_users'] !== null && $tier['max_users'] !== '')
+        ? (int) $tier['max_users'] : null;
+
+    if ($max === null) {
+        return 'ab ' . $min . ' Beschäftigten';
+    }
+    if ($min <= 1) {
+        return 'bis ' . $max . ' Beschäftigte';
+    }
+    return $min . '–' . $max . ' Beschäftigte';
+}
+
+/**
+ * v1.40.0: Der Preis einer Staffelzeile als Text.
+ * Betraege sind Bruttobetraege (siehe livento_cc_tax_note) — der Steuerhinweis steht
+ * einmal unter der Tabelle, nicht in jeder Zeile.
+ */
+function livento_cc_tier_price_text($tier, $months) {
+    if ($tier['pricing_mode'] === 'individual') {
+        return 'individuelles Angebot';
+    }
+
+    $amount = (float) $tier['amount'];
+    $unit   = ($tier['amount_unit'] === 'month') ? 'Monat' : 'Jahr';
+
+    if ($tier['pricing_mode'] === 'flat') {
+        $yearly = ($tier['amount_unit'] === 'month') ? $amount * $months : $amount;
+        return livento_cc_eur(round($yearly, 2)) . ' / Jahr pauschal für die ganze Einrichtung';
+    }
+
+    $text = livento_cc_eur($amount) . ' pro Person und ' . $unit;
+    if (isset($tier['min_amount']) && $tier['min_amount'] !== null && $tier['min_amount'] !== '') {
+        $text .= ' (mindestens ' . livento_cc_eur((float) $tier['min_amount']) . ' / ' . $unit . ')';
+    }
+    return $text;
+}
+
 /* ------------------------------------------------------------
  * REST: Angebotsrechner
  * Rechnet serverseitig mit livento_cc_calc_price — bewusst KEINE Preis-Mathematik
@@ -5321,6 +5473,13 @@ add_action('rest_api_init', function () {
                     // v1.34.0: Netto hier und nicht im Browser rechnen — sonst gaebe es
                     // eine zweite Preis-Mathematik, die von der serverseitigen abweichen kann.
                     'net_note' => livento_cc_net_note($price),
+                    // v1.40.0: Aus demselben Grund kommen auch Bezugsgroesse und Kopfpreis
+                    // fertig formatiert von hier. Der Rechner aendert die Kopfzahl bei jedem
+                    // Tastendruck — stuende die Division im Browser, waere sie die zweite
+                    // Preis-Mathematik, die v1.34.0 gerade abgeschafft hat.
+                    'total_note'    => livento_cc_total_note($price),
+                    'per_user_note' => livento_cc_per_user_note($price),
+                    'scope_note'    => livento_cc_scope_note($price),
                 );
             };
 
@@ -5404,16 +5563,20 @@ add_shortcode('livento_tarife', function ($atts) {
                     <?php if ($price['mode'] === 'individual') : ?>
                         <strong data-lv-price-main>Individuelles Angebot</strong>
                         <span data-lv-price-sub>Wir rechnen dir das gern durch.</span>
-                    <?php else : ?>
+                    <?php else :
+                        // v1.40.0: Auch die Landingpage-Karte nennt den Bezug. Sie zeigt den
+                        // Monatsbetrag gross ("29,00 € / Monat") — ohne Zusatz laedt gerade das
+                        // zur Kopfpreis-Lesart ein. Baugleich mit dem JS in paint(), damit der
+                        // Erstaufbau und die erste Rechnereingabe nicht springen.
+                        $card_sub = array_filter(array(
+                            livento_cc_eur($price['yearly_net']) . ' pro Jahr',
+                            livento_cc_scope_note($price),
+                            livento_cc_tax_note($price),
+                            livento_cc_net_note($price),
+                        ));
+                    ?>
                         <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?><small> / Monat</small></strong>
-                        <span data-lv-price-sub>
-                            <?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?> pro Jahr · <?php echo esc_html(livento_cc_tax_note($price)); ?><?php
-                            $card_net = livento_cc_net_note($price);
-                            if ($card_net) {
-                                echo ' · ' . esc_html($card_net);
-                            }
-                            ?>
-                        </span>
+                        <span data-lv-price-sub><?php echo esc_html(implode(' · ', $card_sub)); ?></span>
                     <?php endif; ?>
                 </div>
 
@@ -5473,6 +5636,17 @@ add_shortcode('livento_tarif', function ($atts) {
     // ins Product-Schema geht — stuende er nur im Schema, waere das ein Preis-Mismatch.
     $from       = isset($family['price_from']) && is_array($family['price_from']) ? $family['price_from'] : null;
     $from_ok    = $from && isset($from['yearly_net']) && $from['yearly_net'] !== null;
+
+    // v1.40.0: Der "ab"-Preis ist die erste Zahl, die der Besucher sieht — er darf nicht
+    // ohne Bezugsgroesse dastehen. Beim PflichtTicket ist der Einstieg die Pauschale, also
+    // gehoert ihre Obergrenze daneben ("bis 15 Beschaeftigte"); die kommt aus max_users.
+    $from_scope = $from_ok ? livento_cc_scope_note($from) : null;
+    if ($from_scope !== null && $from['mode'] === 'flat') {
+        $flat_tier = livento_cc_flat_tier($family);
+        if ($flat_tier && isset($flat_tier['max_users']) && $flat_tier['max_users'] !== null && $flat_tier['max_users'] !== '') {
+            $from_scope .= ', bis ' . (int) $flat_tier['max_users'] . ' Beschäftigte';
+        }
+    }
     $highlights = livento_cc_tariff_highlights($family);
     $faq        = livento_cc_faq_items($family); // v1.35.0: dieselbe Quelle wie das FAQPage-Schema
     $stats      = livento_cc_tariff_stats($variants); // v1.36.0
@@ -5554,6 +5728,9 @@ add_shortcode('livento_tarif', function ($atts) {
                             <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('price'); ?></span>
                             <span class="lv-fb__rc"><dt>Preis</dt>
                             <dd><strong class="lv-fb__price">ab <?php echo esc_html(livento_cc_eur($from['yearly_net'])); ?> / Jahr</strong>
+                            <?php if ($from_scope) : ?>
+                                <span class="lv-fb__scope"><?php echo esc_html($from_scope); ?></span>
+                            <?php endif; ?>
                             <span class="lv-fb__tax"><?php echo esc_html(livento_cc_tax_note($from));
                                 $from_net = livento_cc_net_note($from);
                                 if ($from_net) { echo ' · ' . esc_html($from_net); } ?></span></dd></span>
@@ -5578,8 +5755,15 @@ add_shortcode('livento_tarif', function ($atts) {
         <div class="lv-calc" id="rechner" data-lv-calc>
             <label for="lv-detail-users">Wie viele Beschäftigte hast du?</label>
             <input type="number" id="lv-detail-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
-            <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, inkl. MwSt.</span>
+            <?php // v1.40.0: Der wichtigste Satz der Seite steht jetzt AM Rechner. Er ist in
+                  // jedem Modus wahr — auch beim per_user-Tarif ist der angezeigte Betrag der
+                  // fertige Gesamtbetrag fuer die eingegebene Kopfzahl, nie ein Kopfpreis.
+                  // Darum hier und nicht in der Staffeltabelle: die rendert nur beim
+                  // PflichtTicket, der Irrtum droht aber auf allen drei Ticket-Seiten. ?>
+            <span class="lv-calc__hint"><strong>Der angezeigte Preis ist immer der Gesamtpreis für dein ganzes Team — du multiplizierst ihn nicht mit der Kopfzahl.</strong> 12 Monate Laufzeit, jährliche Abrechnung, inkl. MwSt.</span>
         </div>
+
+        <?php echo livento_cc_tariff_tiers_table($family); ?>
 
         <?php foreach ($variants as $index => $variant) :
             $plan    = $variant['plan'];
@@ -5619,15 +5803,28 @@ add_shortcode('livento_tarif', function ($atts) {
                         <?php if ($price['mode'] === 'individual') : ?>
                             <strong data-lv-price-main>Individuelles Angebot</strong>
                             <span data-lv-price-sub>Ab 151 Beschäftigten rechnen wir individuell.</span>
-                        <?php else : ?>
+                        <?php else :
+                            // v1.40.0: Zwei Zeilen statt einer. Zeile 1 bindet den Betrag an die
+                            // Kopfzahl aus dem Rechner — "Gesamtpreis" fuehrt, damit auch das
+                            // "entspricht 29,00 € / Monat" dahinter eindeutig als Teambetrag liest
+                            // und nicht wieder als Kopfpreis. Zeile 2 rechnet den Kopfpreis selbst
+                            // vor: 2,90 € je Person und Monat ist das Argument, das die Seite
+                            // bisher verschenkt hat.
+                            $v_line1 = array_filter(array(
+                                livento_cc_total_note($price),
+                                'entspricht ' . livento_cc_eur($price['monthly_net']) . ' / Monat',
+                            ));
+                            $v_per_user = livento_cc_per_user_note($price);
+                            $v_line2 = array_filter(array(
+                                $v_per_user ? 'das sind ' . $v_per_user : null,
+                                livento_cc_tax_note($price),
+                                livento_cc_net_note($price),
+                            ));
+                        ?>
                             <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?><small> / Jahr</small></strong>
                             <span data-lv-price-sub>
-                                entspricht <?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?> / Monat · <?php echo esc_html(livento_cc_tax_note($price)); ?><?php
-                                $variant_net = livento_cc_net_note($price);
-                                if ($variant_net) {
-                                    echo ' · ' . esc_html($variant_net);
-                                }
-                                ?>
+                                <?php echo esc_html(implode(' · ', $v_line1)); ?><br>
+                                <?php echo esc_html(implode(' · ', $v_line2)); ?>
                             </span>
                         <?php endif; ?>
                     </div>
@@ -5828,6 +6025,66 @@ function livento_cc_tariff_highlights($family) {
     return $items;
 }
 
+/**
+ * v1.40.0: Die Preisstaffel offen als Tabelle.
+ *
+ * Sie stand vorher NIRGENDS auf der Seite — weder Pauschalgrenze noch Staffelpreise.
+ * Die einzige Erklaerung war eine zugeklappte FAQ, die selbst keine Zahlen nannte
+ * ("bis zu einer bestimmten Teamgroesse"). Wer wissen wollte, was er zahlt, musste
+ * den Rechner durchprobieren. Das ist die Luecke hinter "der Preisplan kommt nicht
+ * transparent zur Sprache".
+ *
+ * Rendert bewusst NUR, wo es wirklich eine Staffel gibt:
+ *  - genau ein Plan je Familie — das RollenTicket hat 18 Plaene mit je EINER Staffel
+ *    (49 €/Person/Jahr); 18 identische Ein-Zeilen-Tabellen waeren Laerm.
+ *  - mindestens zwei Staffeln — ein einzelner Satz ist keine Staffel, sondern ein
+ *    Preis (KomplettTicket: 99 €/Person/Jahr). Der steht schon an der Variante.
+ * Damit trifft die Tabelle heute genau das PflichtTicket, ohne das irgendwo zu
+ * behaupten: Bekommt das KomplettTicket morgen eine Staffel, erscheint sie von selbst.
+ */
+function livento_cc_tariff_tiers_table($family) {
+    $plans = array_values((array) $family['plans']);
+    if (count($plans) !== 1) {
+        return '';
+    }
+
+    $plan  = $plans[0];
+    $tiers = isset($plan['tiers']) && is_array($plan['tiers']) ? $plan['tiers'] : array();
+    if (count($tiers) < 2) {
+        return '';
+    }
+
+    // Nach Teamgroesse sortieren: Die Tabelle muss aufsteigend lesbar sein, egal wie
+    // die View sie liefert.
+    usort($tiers, function ($a, $b) {
+        return ((int) $a['min_users']) <=> ((int) $b['min_users']);
+    });
+
+    $months = max(1, (int) (isset($plan['contract_months']) ? $plan['contract_months'] : 12));
+    $tax    = !empty($plan['is_vat_exempt']) ? 'USt-frei' : 'inkl. MwSt';
+
+    // Kein Vorspann: Dass der Preis fuer das ganze Team gilt, steht schon direkt darueber
+    // am Rechner (lv-calc__hint). Zweimal derselbe Satz auf zwei Zentimetern liest sich
+    // wie eine Rechtfertigung.
+    $out  = '<section class="lv-tiers" aria-labelledby="lv-tiers-h">';
+    $out .= '<h2 id="lv-tiers-h">So rechnet sich das</h2>';
+    $out .= '<table class="lv-tiers__table"><thead><tr>'
+          . '<th scope="col">Teamgröße</th><th scope="col">Preis</th>'
+          . '</tr></thead><tbody>';
+
+    foreach ($tiers as $tier) {
+        $out .= '<tr><th scope="row">' . esc_html(livento_cc_tier_range_text($tier)) . '</th>'
+              . '<td>' . esc_html(livento_cc_tier_price_text($tier, $months)) . '</td></tr>';
+    }
+
+    $out .= '</tbody></table>';
+    $out .= '<p class="lv-tiers__note">Alle Beträge ' . esc_html($tax) . ' · ' . esc_html($months)
+          . ' Monate Laufzeit · Abrechnung jährlich im Voraus.</p>';
+    $out .= '</section>';
+
+    return $out;
+}
+
 /** Themen-Slug lesbar machen (die Labels leben in Campus Connect; hier reicht eine Normalisierung). */
 function livento_cc_topic_label($slug) {
     if ($slug === '_sonstige' || $slug === '') {
@@ -5857,6 +6114,19 @@ function livento_cc_tariff_calc_script() {
         if (!inputs.length) { return; }
         var timer = null;
 
+        /** Bausteine mit " · " verbinden, leere weglassen. */
+        function join(parts) {
+            return parts.filter(function (p) { return p; }).join(' · ');
+        }
+
+        /** Text fuer innerHTML entschaerfen (Guertel und Hosentraeger — die Bausteine
+         *  kommen ohnehin serverseitig aus Zahlen und festen Wortern). */
+        function esc(text) {
+            var box = document.createElement('div');
+            box.textContent = text;
+            return box.innerHTML;
+        }
+
         function paint(el, info, isDetail) {
             var box = el.querySelector('[data-lv-price]');
             if (!info || !box) { return; }
@@ -5872,11 +6142,23 @@ function livento_cc_tariff_calc_script() {
                     ? 'Ab 151 Beschäftigten rechnen wir individuell.'
                     : 'Wir rechnen dir das gern durch.';
             } else if (isDetail) {
-                main.innerHTML  = info.yearly + '<small> / Jahr</small>';
-                sub.textContent = 'entspricht ' + info.monthly + ' / Monat · ' + info.tax_note + net;
+                // v1.40.0: Zwei Zeilen, identisch zusammengesetzt wie serverseitig gerendert.
+                // Hier wird weiterhin NICHT gerechnet — alle Bausteine kommen fertig
+                // formatiert vom Endpunkt, das JS fuegt sie nur zusammen.
+                main.innerHTML = info.yearly + '<small> / Jahr</small>';
+                var l1 = join([info.total_note, 'entspricht ' + info.monthly + ' / Monat']);
+                var l2 = join([
+                    info.per_user_note ? 'das sind ' + info.per_user_note : null,
+                    info.tax_note,
+                    info.net_note
+                ]);
+                // innerHTML statt textContent nur wegen des <br>. Unbedenklich: jeder
+                // Baustein ist serverseitig aus Zahlen und festen Wortern gebaut, es
+                // faellt nichts vom Besucher hier hinein.
+                sub.innerHTML = esc(l1) + '<br>' + esc(l2);
             } else {
                 main.innerHTML  = info.monthly + '<small> / Monat</small>';
-                sub.textContent = info.yearly + ' pro Jahr · ' + info.tax_note + net;
+                sub.textContent = join([info.yearly + ' pro Jahr', info.scope_note]) + ' · ' + info.tax_note + net;
             }
         }
 
@@ -6003,6 +6285,10 @@ function livento_cc_tariff_styles() {
     .lv-fb__row dt{margin:0;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:#5c6a70}
     .lv-fb__row dd{margin:.1rem 0 0;font-size:.92rem;color:#1d2b30}
     .lv-fb__price{display:block;font-size:1.35rem;line-height:1.2}
+    /* v1.40.0: Die Bezugsgroesse steht zwischen Betrag und Steuerhinweis — dunkler und
+       eine Spur groesser als der Steuerhinweis, weil sie kein Kleingedrucktes ist,
+       sondern die Bedingung, unter der die Zahl darueber ueberhaupt stimmt. */
+    .lv-fb__scope{display:block;font-size:.85rem;font-weight:600;color:#004D33;margin-top:.1rem}
     .lv-fb__tax{display:block;font-size:.8rem;color:#5c6a70}
     .lv-fb__actions{display:grid;gap:.5rem;margin-top:1rem}
     .lv-fb__actions .lv-btn{margin-top:0}
@@ -6025,6 +6311,18 @@ function livento_cc_tariff_styles() {
     .lv-faq__answer p:last-child{margin-bottom:0}
     /* v1.36.0: „So laeuft's ab" — nummerierte Schritte via counter, damit die Ziffern
        im CI-Gruen stehen koennen (ein normales <ol> faerbt nur den Text). */
+    /* v1.40.0: Staffeltabelle. Steht direkt unter dem Rechner, in derselben Kartenoptik
+       wie „So laeuft's ab". Auf schmalen Schirmen scrollt sie NICHT horizontal — zwei
+       Spalten passen, die Zellen duerfen umbrechen. */
+    .lv-tiers{max-width:48rem;margin-top:2rem}
+    .lv-tiers h2{margin:0 0 .75rem}
+    .lv-tiers__table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e8ea;border-radius:12px;overflow:hidden}
+    .lv-tiers__table th,.lv-tiers__table td{text-align:left;padding:.7rem .9rem;border-bottom:1px solid #eef1f2;font-size:.92rem;vertical-align:top}
+    .lv-tiers__table thead th{background:#f5f7f8;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:#5c6a70}
+    .lv-tiers__table tbody th{font-weight:600;white-space:nowrap;color:#1d2b30}
+    .lv-tiers__table tbody tr:last-child th,.lv-tiers__table tbody tr:last-child td{border-bottom:0}
+    .lv-tiers__note{margin:.5rem 0 0;font-size:.82rem;color:#5c6a70}
+    @media(max-width:480px){.lv-tiers__table tbody th{white-space:normal}}
     .lv-tarif-ablauf{max-width:48rem;margin-top:2rem}
     .lv-tarif-ablauf h2{margin:0 0 .75rem}
     .lv-steps{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;gap:.75rem}
