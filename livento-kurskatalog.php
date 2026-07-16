@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.38.0
+ * Version:           1.39.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,26 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.39.0: Das Hero-Band laeuft jetzt randlos ueber die ganze Seitenbreite, statt im
+ *          1200px-Container zu stecken. Zur Einordnung, warum das hier Arbeit ist und
+ *          auf /foerdermoeglichkeiten/ nicht: Die Vorbildseite steht auf Astras
+ *          Full-Width-Template (Body-Klasse ast-page-builder-template), ihr Container
+ *          deckelt gar nicht erst — .lv-ahero ist dort gratis randlos. Die Ticket-Seiten
+ *          stehen auf ast-plain-container (1200px) und muessen ausbrechen:
+ *          margin-inline:calc(50% - 50vw) zieht das Band an die Raender,
+ *          padding-inline:max(1.25rem, calc(50vw - 37.5rem)) holt den INHALT wieder auf
+ *          die 1200px-Spur, damit er buendig zum Rest der Seite bleibt.
+ *          DIE FALLE: 100vw zaehlt die Scrollbar mit, 100% nicht — auf Windows mit
+ *          klassischer Scrollbar ragt das Band ~15px ueber den Viewport und erzeugt
+ *          Querscroll auf jeder Ticket-Seite. Dagegen html{overflow-x:clip}. BEWUSST clip
+ *          und nicht hidden: hidden macht das Element zum Scroll-Container und bricht
+ *          damit position:sticky (.lv-fb) und Anker-Sprunge (#rechner) — clip kappt nur
+ *          den Ueberstand. Untergrenze dafuer ist Safari 16; darunter bleibt der
+ *          Querscroll, das ist bewusst in Kauf genommen.
+ *          Der Alternativweg waere gewesen, die drei Seiten auf das Full-Width-Template
+ *          zu stellen (identischer Mechanismus wie die Vorbildseite, kein vw noetig) —
+ *          verworfen, weil er einen manuellen Handgriff je Seite braucht.
  *
  * v1.38.0: Der Kopf der Ticket-Detailseiten traegt jetzt dieselbe Bildsprache wie die
  *          Orientierungsseiten /kurse/ und /foerdermoeglichkeiten/. Inhaltlich fehlte
@@ -5937,11 +5957,28 @@ function livento_cc_tariff_styles() {
     /* v1.38.0: Hero-Band in der Bildsprache der Orientierungsseiten (.lv-ahero auf
        /foerdermoeglichkeiten/): derselbe warme Verlauf, dasselbe Eyebrow-Muster, dieselbe
        Qurova-Headline in CI-Gruen. Die weisse Faktenbox setzt sich vor dem Verlauf ab.
-       Bewusst KEIN max-width am Band — es fuellt den Theme-Container; die Zeilenlaenge
-       begrenzt weiterhin __head (48rem). Kein Full-Bleed via 100vw: der Trick bricht in
-       Containern mit overflow und zieht bei sichtbarer Scrollbar Querscroll nach sich. */
-    .lv-tarif-band{background:radial-gradient(120% 120% at 50% 0%,#fff6f1 0%,#fcefe9 55%,#f4f7ec 100%);border-radius:20px;padding:clamp(2rem,4vw,3.5rem) clamp(1.25rem,3vw,2.5rem);margin-bottom:2rem}
-    @media(max-width:640px){.lv-tarif-band{border-radius:14px}}
+       Die Zeilenlaenge begrenzt weiterhin __head (48rem).
+
+       v1.39.0 — FULL-BLEED: Das Band bricht aus dem 1200px-Theme-Container aus und laeuft
+       randlos ueber die Seite (wie .lv-ahero auf /foerdermoeglichkeiten/, das dort aber
+       gratis randlos ist, weil die Seite auf Astras Full-Width-Template steht — diese
+       Seiten stehen auf ast-plain-container und muessen ausbrechen).
+         margin-inline: calc(50% - 50vw)  → 50% = halbe Containerbreite, 50vw = halbe
+           Viewportbreite; die Differenz zieht das Band beidseitig bis an den Rand. Relativ
+           gerechnet, also unabhaengig davon, wie breit der Theme-Container gerade ist.
+         padding-inline: max(1.25rem, calc(50vw - 37.5rem)) → holt den INHALT wieder auf die
+           1200px-Spur (37.5rem = 600px = halbe Containerbreite), faellt unter ~1240px
+           Viewport auf 20px Rand zurueck. Der Inhalt bleibt damit buendig zum Rest der Seite.
+       ACHTUNG 100vw: das zaehlt die Scrollbar MIT, 100% nicht — auf Windows mit klassischer
+       Scrollbar ragt das Band dadurch ~15px ueber den Viewport und erzeugt Querscroll.
+       Dagegen html{overflow-x:clip} weiter unten. Bewusst clip und NICHT hidden: hidden
+       macht das Element zum Scroll-Container und bricht damit position:sticky (.lv-fb) und
+       Anker-Sprunge (#rechner); clip kappt nur den Ueberstand und laesst beides heil. */
+    .lv-tarif-band{background:radial-gradient(120% 120% at 50% 0%,#fff6f1 0%,#fcefe9 55%,#f4f7ec 100%);margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);padding:clamp(2rem,4vw,3.5rem) max(1.25rem,calc(50vw - 37.5rem));margin-bottom:2rem}
+    /* Der Guard zum Ausbruch oben — kappt die ~15px, die 100vw durch die mitgezaehlte
+       Scrollbar zu viel ergibt. Greift global, wird aber nur auf Seiten ausgeliefert, die
+       ueberhaupt einen Tarif-Shortcode rendern. clip statt hidden, siehe oben. */
+    html{overflow-x:clip}
     .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.75rem}
     .lv-tarif-detail__eyebrow{display:inline-block;margin-bottom:.6rem;font-family:"Inter Tight","Inter",sans-serif;font-weight:700;font-size:1rem;color:#004D33}
     .lv-tarif-detail__head h1{margin:0 0 .5rem;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(30px,4.4vw,48px);line-height:1.08;color:#004D33}

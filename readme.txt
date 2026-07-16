@@ -3,12 +3,18 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.38.0
+Stable tag: 1.39.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.39.0 =
+* Das Hero-Band auf den Ticket-Detailseiten laeuft jetzt randlos ueber die ganze Seitenbreite, statt im 1200-Pixel-Container zu stecken. Der Inhalt im Band bleibt dabei exakt buendig zum Rest der Seite (geprueft von 390 bis 1920 Pixel Breite).
+* Zur Einordnung, warum das hier ueberhaupt Arbeit ist: Die Vorbildseite /foerdermoeglichkeiten/ steht auf Astras Full-Width-Template, ihr Container deckelt gar nicht erst — dort ist der Hero gratis randlos. Die Ticket-Seiten stehen auf dem normalen Container (1200 Pixel) und muessen ausbrechen.
+* DIE FALLE dabei: 100vw zaehlt die Scrollbar mit, 100% nicht. Auf Windows mit klassischer Scrollbar ragt das Band dadurch rund 15 Pixel ueber den Viewport und erzeugt Querscroll auf jeder Ticket-Seite. Dagegen steht html{overflow-x:clip} — bewusst clip und NICHT hidden: hidden macht das Element zum Scroll-Container und bricht damit die klebende Faktenbox und die Ankersprunge zum Preisrechner. clip kappt nur den Ueberstand und laesst beides heil. Untergrenze dafuer ist Safari 16; darunter bleibt der Querscroll, das ist bewusst in Kauf genommen.
+* Verworfene Alternative: die drei Seiten auf das Full-Width-Template stellen (derselbe Mechanismus wie die Vorbildseite, ganz ohne vw und ohne globale Regel). Haette einen manuellen Handgriff je Seite gebraucht.
 
 = 1.38.0 =
 * Der Kopf der Ticket-Detailseiten traegt jetzt dieselbe Bildsprache wie die Orientierungsseiten /kurse/ und /foerdermoeglichkeiten/: ein Band mit demselben warmen Verlauf, Eyebrow "E-Learning-Ticket", Ueberschrift in Qurova und CI-Gruen, Lead in derselben Groesse. Inhaltlich fehlte hier nichts — Ueberschrift, Claim, Beschreibung, Leistungen und Faktenbox stehen seit 1.36.0 — es fehlte die Fassung: alles lag als nackter Text auf Weiss. Die weisse Faktenbox setzt sich jetzt vom Verlauf ab, statt weiss auf weiss zu stehen.
