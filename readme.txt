@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.34.0
+Stable tag: 1.35.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.35.0 =
+* Sichtbares FAQ-Accordion auf den Ticket-Detailseiten. Das FAQPage-Schema kam schon mit v1.34.0, die Fragen standen aber nirgends auf der Seite — Google verlangt ausdruecklich, dass ausgezeichnete FAQ-Inhalte sichtbar sind. Folgenlos war das nur, weil die Fragen bis Campus Connect v3.165.0 gar nicht gepflegt werden konnten; jetzt, wo sie hinterlegt sind, muss beides zusammen raus. Sichtbare Ausgabe und Schema kommen aus derselben Funktion und koennen nicht auseinanderlaufen. <details>/<summary> statt JavaScript: laeuft ohne Skript und ist auch zugeklappt fuer Crawler lesbar.
+* WooCommerce-Hinweis "Kein Livento-Tarif" nennt jetzt ALLE Bedingungen. Er riet bisher nur dazu, die Variante "oeffentlich zu schalten" — die Website verlangt aber zusaetzlich, dass die Bundle-Ausgabe AKTIV ist, und das ist ein anderer Schalter in einem anderen Dialog (Kursbundles -> Variante -> Bearbeiten -> "Bundle-Ausgabe aktiv"). Wer nur die Freischaltung setzte, wurde vom Hinweis zu genau dem Schritt geschickt, den er schon gemacht hatte. Betraf real zwei fertig eingerichtete RollenTicket-Varianten.
+* KORREKTUR zum Changelog von 1.34.0: Dort steht, Rank Math habe die Ticket-Seiten als Article deklariert und das Plugin raeume diesen Widerspruch weg. Das trifft nicht zu — der Befund stammte aus einer veralteten Seiten-Cache-Kopie (WP-Optimize). Ein frisches Rendering zeigt, dass Rank Math auf diesen Seiten nur eine BreadcrumbList ausgibt. Das Entfernen von Article/BlogPosting bleibt als Absicherung im Code, ist derzeit aber wirkungslos. Der echte Schema-Fehler (fixer Preis im Product statt AggregateOffer) war real und ist mit 1.34.0 behoben.
 
 = 1.34.0 =
 * SEO fuer die Ticket-Detailseiten (/e-learning/<slug>/): Diese Seiten hatten bisher WEDER Title (der Browser zeigte das rohe URL-Kuerzel "pflicht-ticket") NOCH Meta-Description, Canonical, og-Tags oder eine H1-Ueberschrift. Ursache: Die SEO-Logik des Plugins haengt am ?kurs=-Gate und hat diese Seiten nie erreicht — sie sind, anders als die Kursdetailseiten, echte WordPress-Seiten. Neu erkennt ein eigener Hook sie am Seiten-Slug (Seiten-Slug == Familien-Slug ist ohnehin Pflicht) und setzt Title, Meta-Description, Canonical und og-Tags aus public_tariffs.

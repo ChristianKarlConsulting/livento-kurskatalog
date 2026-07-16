@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.34.0
+ * Version:           1.35.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,25 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.35.0: Sichtbares FAQ-Accordion auf den Ticket-Detailseiten. Das FAQPage-Schema
+ *          kam schon mit v1.34.0, die Fragen standen aber nirgends auf der Seite —
+ *          Google verlangt ausdruecklich, dass ausgezeichnete FAQ-Inhalte sichtbar
+ *          sind, Schema allein waere ein Richtlinienverstoss gewesen. Praktisch war
+ *          das folgenlos, weil product_families.faq bis hier leer war; jetzt, wo die
+ *          Fragen gepflegt werden, muss beides zusammen raus. Sichtbare Ausgabe und
+ *          Schema speisen sich aus derselben livento_cc_faq_items() und koennen
+ *          daher nicht auseinanderlaufen. <details>/<summary> statt JS: laeuft ohne
+ *          Skript und ist auch zugeklappt fuer Crawler lesbar.
+ *
+ *          KORREKTUR zu v1.34.0: Dessen Changelog behauptet, Rank Math habe diese
+ *          Seiten als Article deklariert und das Plugin raeume den Widerspruch weg.
+ *          Das trifft nicht zu — der Befund stammte aus einer veralteten Seiten-
+ *          Cache-Kopie (WP-Optimize). Ein frisches Rendering zeigt, dass Rank Math
+ *          hier nur eine BreadcrumbList ausgibt. Das Entfernen von Article/
+ *          BlogPosting bleibt als Absicherung im Code, ist aber wirkungslos, solange
+ *          die Rank-Math-Schema-Einstellung fuer Seiten nicht wieder greift. Der
+ *          echte Schema-Fehler (fixer Preis im Product) war real und ist behoben.
  *
  * v1.34.0: SEO fuer die Ticket-Detailseiten (/e-learning/<slug>/). Diese Seiten hatten
  *          bis hier WEDER Title (der Browser zeigte den rohen Slug "pflicht-ticket")
@@ -3647,7 +3666,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li><strong>Neuer Kurs fehlt:</strong> Cache leeren oder Webhook einrichten.</li>';
     echo '<li><strong>Tarifseite bleibt leer:</strong> In Campus Connect ist noch keine Tariffamilie öffentlich geschaltet (<em>Kursbundles → Produktpläne &amp; Vorlagen → Familie → „Auf der Website anzeigen"</em>). Danach Cache leeren.</li>';
     echo '<li><strong>Variante fehlt auf der Tarifseite:</strong> Sie braucht Produktplan, URL-Kürzel <em>und</em> WooCommerce-Produkt-ID — erst dann lässt sie sich veröffentlichen.</li>';
-    echo '<li><strong>Produkt zeigt „Kein Livento-Tarif":</strong> Die Produkt-ID steht noch nicht in Campus Connect am Bundle, oder die Variante ist dort noch nicht öffentlich. Danach Cache leeren.</li>';
+    echo '<li><strong>Produkt zeigt „Kein Livento-Tarif":</strong> Drei moegliche Ursachen. (1) Die Produkt-ID steht noch nicht in Campus Connect am Bundle. (2) Die Variante ist dort noch nicht oeffentlich. (3) <strong>Die Bundle-Ausgabe ist inaktiv</strong> — „Bundle-Ausgabe aktiv" sitzt im Dialog <em>Bearbeiten</em> und ist ein anderer Schalter als „auf der Website zeigen und verkaufen" unter <em>Verkauf &amp; Website</em>. Die Website verlangt beide. Danach Cache leeren.</li>';
     echo '<li><strong>Preis im Warenkorb weicht ab:</strong> Der Cache ist alt. Cache leeren; die Staffel wird sonst nur alle 3 Stunden neu geladen.</li>';
     echo '</ul></div></details>';
 }
@@ -5388,6 +5407,7 @@ add_shortcode('livento_tarif', function ($atts) {
     $from       = isset($family['price_from']) && is_array($family['price_from']) ? $family['price_from'] : null;
     $from_ok    = $from && isset($from['yearly_net']) && $from['yearly_net'] !== null;
     $highlights = livento_cc_tariff_highlights($family);
+    $faq        = livento_cc_faq_items($family); // v1.35.0: dieselbe Quelle wie das FAQPage-Schema
 
     ob_start();
     livento_cc_tariff_styles();
@@ -5521,6 +5541,22 @@ add_shortcode('livento_tarif', function ($atts) {
             <?php endif; ?>
         </section>
         <?php endforeach; ?>
+
+        <?php if (!empty($faq)) : ?>
+            <?php // v1.35.0: Sichtbar UND als FAQPage-Schema. Google verlangt, dass
+                  // ausgezeichnete FAQ-Inhalte auf der Seite auch tatsaechlich stehen —
+                  // Schema allein waere ein Richtlinienverstoss. Beide Ausgaben speisen
+                  // sich aus livento_cc_faq_items(), koennen also nicht auseinanderlaufen. ?>
+            <section class="lv-tarif-faq">
+                <h2>Häufige Fragen</h2>
+                <?php foreach ($faq as $item) : ?>
+                    <details class="lv-faq__item">
+                        <summary><?php echo esc_html($item['q']); ?></summary>
+                        <div class="lv-faq__answer"><?php echo wp_kses_post(wpautop($item['a'])); ?></div>
+                    </details>
+                <?php endforeach; ?>
+            </section>
+        <?php endif; ?>
     </div>
     <?php
     livento_cc_tariff_calc_script();
@@ -5716,6 +5752,18 @@ function livento_cc_tariff_styles() {
     .lv-tarif-detail__highlights li{position:relative;padding-left:1.6rem;font-size:.97rem}
     /* Haken als ::before statt als Listenpunkt: bleibt Text, kostet kein Bild. */
     .lv-tarif-detail__highlights li::before{content:"✓";position:absolute;left:0;top:0;color:#004D33;font-weight:700}
+    /* v1.35.0: FAQ-Accordion. <details> statt JS — funktioniert ohne Skript und ist
+       fuer Crawler auch im zugeklappten Zustand lesbar. */
+    .lv-tarif-faq{max-width:48rem;margin-top:2rem}
+    .lv-tarif-faq h2{margin:0 0 .75rem}
+    .lv-faq__item{border:1px solid #e3e8ea;border-radius:12px;background:#fff;margin-bottom:.6rem}
+    .lv-faq__item summary{cursor:pointer;font-weight:600;padding:.85rem 1rem;list-style:none;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+    .lv-faq__item summary::-webkit-details-marker{display:none}
+    .lv-faq__item summary::after{content:"+";color:#004D33;font-weight:700;font-size:1.2rem;line-height:1}
+    .lv-faq__item[open] summary::after{content:"–"}
+    .lv-faq__answer{padding:0 1rem 1rem;color:#5c6a70}
+    .lv-faq__answer p{margin:0 0 .6rem}
+    .lv-faq__answer p:last-child{margin-bottom:0}
     .lv-variant{border:1px solid #e3e8ea;border-radius:16px;padding:1.25rem;margin-bottom:1.25rem;background:#fff}
     .lv-variant__bar{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
     .lv-variant__bar h3{margin:0}
@@ -5765,10 +5813,15 @@ add_action('woocommerce_product_options_general_product_data', function () {
            . esc_html($auto['family']['name'] . ' · ' . $auto['bundle']['name'])
            . '<br><span class="description">Preis, Mengenfeld und Kursliste werden automatisch gesetzt. Hier ist nichts weiter zu tun.</span></p>';
     } else {
+        // v1.35.0: Die Variante muss OEFFENTLICH und AKTIV sein — beides sind getrennte
+        // Schalter in zwei verschiedenen Dialogen. Der Hinweis nannte nur "oeffentlich"
+        // und schickte damit Leute zu dem Schritt, den sie schon gemacht hatten.
         echo '<p class="form-field"><strong>Kein Livento-Tarif.</strong><br><span class="description">'
-           . 'Damit dieses Produkt ein Tarif wird: Produkt speichern, die Produkt-ID (' . (int) $post->ID . ') in Campus Connect '
-           . 'unter <em>Kursbundles → Variante → Verkauf &amp; Website</em> eintragen und die Variante öffentlich schalten. '
-           . 'Danach erscheint sie hier automatisch.</span></p>';
+           . 'Damit dieses Produkt ein Tarif wird, muss die Variante in Campus Connect <strong>drei</strong> Dinge erfüllen:'
+           . '<br>1. Die Produkt-ID (' . (int) $post->ID . ') steht unter <em>Kursbundles → Variante → Verkauf &amp; Website</em> — dort auch „auf der Website zeigen und verkaufen“ einschalten.'
+           . '<br>2. Die Ausgabe ist <strong>aktiv</strong>: <em>Kursbundles → Variante → Bearbeiten → „Bundle-Ausgabe aktiv“</em>. Das ist ein <strong>anderer</strong> Schalter als der unter Punkt 1 — fehlt er, bleibt die Freischaltung wirkungslos.'
+           . '<br>3. Danach hier den <em>Cache leeren</em> (Livento → Einstellungen), sonst dauert es bis zu 3 Stunden.'
+           . '</span></p>';
     }
 
     $options = array('' => '— automatisch (empfohlen) —');
