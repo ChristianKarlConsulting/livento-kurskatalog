@@ -3,12 +3,23 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.36.0
+Stable tag: 1.38.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.38.0 =
+* Der Kopf der Ticket-Detailseiten traegt jetzt dieselbe Bildsprache wie die Orientierungsseiten /kurse/ und /foerdermoeglichkeiten/: ein Band mit demselben warmen Verlauf, Eyebrow "E-Learning-Ticket", Ueberschrift in Qurova und CI-Gruen, Lead in derselben Groesse. Inhaltlich fehlte hier nichts — Ueberschrift, Claim, Beschreibung, Leistungen und Faktenbox stehen seit 1.36.0 — es fehlte die Fassung: alles lag als nackter Text auf Weiss. Die weisse Faktenbox setzt sich jetzt vom Verlauf ab, statt weiss auf weiss zu stehen.
+* BEWUSST ANDERS als die Orientierungsseiten: kein zentrierter, luftiger 80-Pixel-Hero und keine CTA-Buttons im Kopf. /kurse/ und /foerdermoeglichkeiten/ sind Seiten zum Stoebern, dort braucht der Besucher zuerst Einordnung. Die Ticket-Seiten sind Entscheidungsseiten — wer hier landet, kam ueber /e-learning/ und will wissen, was drin ist und was es kostet. Ein hoher Hero schoebe Preis und CTA unter die Falz; die Faktenbox haelt beides schon oben, ein zweiter CTA im Kopf waere nur eine Dublette daneben.
+* Kein Full-Bleed ueber den 100vw-Trick: der bricht in Containern mit overflow und erzeugt bei sichtbarer Scrollbar Querscroll. Das Band fuellt den Theme-Container und ist mit abgerundeten Ecken abgesetzt.
+* Die Reihenfolge auf schmalen Schirmen bleibt wie mit 1.36.0 eingerichtet — die Faktenbox steht vor dem Fliesstext, Titel und Claim davor.
+
+= 1.37.0 =
+* Die Danke-Seite nach dem Kauf sagte die Unwahrheit: "Sie erhalten gleich zwei E-Mails". Die zweite gab es nie — das Passwort wurde mangels Platzhalter in der Vorlage verworfen. Seit Campus Connect v3.169.0 kommt EINE Mail, die Zugangsdaten und Team-Link zusammen enthaelt; der Text sagt das jetzt auch.
+* Dazu der Hinweis, dass jede angelegte Person ihre Zugangsdaten automatisch bekommt und sofort startet: Die Kurse sind E-Learnings, es gibt keine Termine und keine Wartezeit.
+* HINWEIS: 1.37.0 wurde seinerzeit nicht als Release ausgeliefert — die Korrektur war also bis 1.38.0 nicht live. Beide Versionen gehen mit 1.38.0 zusammen raus.
 
 = 1.36.0 =
 * Die Ticket-Detailseiten bekommen die Struktur der Kursdetailseiten: zweispaltiger Hero mit Faktenbox "Auf einen Blick" (Zuschnitte, Kurse, Umfang, Laufzeit, "ab"-Preis), primaerer CTA "Preis fuer dein Team berechnen", "So laeuft's ab" in vier Schritten und ein Schluss-CTA nach der FAQ. Die Kennzahlen sind Spannen (z. B. "11-24 Kurse"), weil das PflichtTicket je Zuschnitt unterschiedlich gross ist — eine einzelne Zahl waere fuer die meisten Zuschnitte falsch. Auf schmalen Schirmen rutscht die Faktenbox vor den Fliesstext, Titel und Claim bleiben aber davor.

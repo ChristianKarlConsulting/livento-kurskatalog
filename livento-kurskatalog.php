@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.36.0
+ * Version:           1.38.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,32 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.38.0: Der Kopf der Ticket-Detailseiten traegt jetzt dieselbe Bildsprache wie die
+ *          Orientierungsseiten /kurse/ und /foerdermoeglichkeiten/. Inhaltlich fehlte
+ *          dort nichts (H1, Claim, Beschreibung, Highlights und Faktenbox stehen seit
+ *          v1.36.0) — es fehlte die Fassung: alles lag als nackter Text auf Weiss.
+ *          Neu: .lv-tarif-band legt den warmen Verlauf von .lv-ahero unter Kopf UND
+ *          Raster, dazu Eyebrow „E-Learning-Ticket", Qurova-Headline in CI-Gruen und
+ *          der Lead in der Groesse von .lv-ahero__sub.
+ *          BEWUSST ANDERS als .lv-ahero: kein zentrierter 80px-Hero und keine CTA-
+ *          Buttons im Kopf. /kurse/ und /foerdermoeglichkeiten/ sind Orientierungs-
+ *          seiten — dort stoebert der Besucher und braucht Einordnung. Die Ticket-
+ *          seiten sind Entscheidungsseiten: wer hier landet, kam ueber /e-learning/
+ *          und will wissen, was drin ist und was es kostet. Ein hoher, luftiger Hero
+ *          schoebe Preis und CTA unter die Falz, und die Faktenbox haelt beides schon
+ *          oben — ein zweiter CTA im Kopf waere nur eine Dublette 300px daneben.
+ *          Kein Full-Bleed via 100vw-Trick: bricht in Containern mit overflow und
+ *          erzeugt bei sichtbarer Scrollbar Querscroll. Das Band fuellt den Theme-
+ *          Container und ist mit border-radius abgesetzt.
+ *
+ * v1.37.0: Die Danke-Seite sagte die Unwahrheit: „Sie erhalten gleich zwei E-Mails" —
+ *          die zweite gab es nie, weil das Passwort mangels Platzhalter in der Vorlage
+ *          verworfen wurde. Seit Campus Connect v3.169.0 kommt EINE Mail mit Zugangs-
+ *          daten und Team-Link zusammen; der Text sagt das jetzt auch. Dazu der Hinweis,
+ *          dass die Kurse E-Learnings sind — ohne Termine, ohne Wartezeit.
+ *          (Nachgetragen mit v1.38.0: v1.37.0 wurde nie als Release ausgeliefert, der
+ *          Eintrag fehlte hier. Beide Aenderungen gehen mit v1.38.0 zusammen raus.)
  *
  * v1.36.0: Die Ticket-Detailseiten bekommen die Struktur der Kursdetailseiten (Stufe 3).
  *          Bis hier war die Seite eine Textwueste: H1, Claim, Beschreibung, Rechner,
@@ -5437,11 +5463,17 @@ add_shortcode('livento_tarif', function ($atts) {
     livento_cc_tariff_styles();
     ?>
     <div class="lv-tarif-detail">
-        <?php // v1.36.0: Titel und Claim stehen bewusst AUSSERHALB des Rasters. Lagen sie
+        <?php // v1.38.0: Kopf und Raster liegen zusammen im Hero-Band, damit die Seite oben
+              // dieselbe Bildsprache traegt wie die Orientierungsseiten (lv-ahero). Die
+              // Faktenbox bleibt bewusst IM Band: auf einer Entscheidungsseite darf der
+              // Preis nicht unter die Falz rutschen, nur damit der Hero luftiger wirkt.
+              // v1.36.0: Titel und Claim stehen bewusst AUSSERHALB des Rasters. Lagen sie
               // darin, zog die Umsortierung auf schmalen Schirmen (Faktenbox nach vorn) das
               // H1 mit nach unten — der Besucher sah dann Preise, bevor er wusste, worauf er
               // ist. So bleibt die Reihenfolge: Titel, worum es geht, Preis/CTA, Details. ?>
+        <div class="lv-tarif-band">
         <header class="lv-tarif-detail__head">
+            <span class="lv-tarif-detail__eyebrow">E-Learning-Ticket</span>
             <h1><?php echo esc_html($family['name']); ?></h1>
             <?php if (!empty($family['claim'])) : ?><p class="lv-lead"><?php echo esc_html($family['claim']); ?></p><?php endif; ?>
         </header>
@@ -5521,6 +5553,7 @@ add_shortcode('livento_tarif', function ($atts) {
                 </div>
             </aside>
         </div>
+        </div><?php // /.lv-tarif-band ?>
 
         <div class="lv-calc" id="rechner" data-lv-calc>
             <label for="lv-detail-users">Wie viele Beschäftigte hast du?</label>
@@ -5901,14 +5934,24 @@ function livento_cc_tariff_styles() {
     .lv-btn--ghost{background:transparent;color:#004D33;border:1px solid #004D33}
     .lv-btn--ghost:hover{background:#004D33;color:#fff}
     .lv-tarife__foot{margin-top:1.5rem;text-align:center;font-size:.85rem;color:#5c6a70}
-    .lv-tarif-detail__head{max-width:48rem;margin-bottom:1rem}
-    .lv-tarif-detail__head h1{margin:0 0 .35rem}
-    .lv-lead{font-size:1.1rem;color:#5c6a70;margin:0}
+    /* v1.38.0: Hero-Band in der Bildsprache der Orientierungsseiten (.lv-ahero auf
+       /foerdermoeglichkeiten/): derselbe warme Verlauf, dasselbe Eyebrow-Muster, dieselbe
+       Qurova-Headline in CI-Gruen. Die weisse Faktenbox setzt sich vor dem Verlauf ab.
+       Bewusst KEIN max-width am Band — es fuellt den Theme-Container; die Zeilenlaenge
+       begrenzt weiterhin __head (48rem). Kein Full-Bleed via 100vw: der Trick bricht in
+       Containern mit overflow und zieht bei sichtbarer Scrollbar Querscroll nach sich. */
+    .lv-tarif-band{background:radial-gradient(120% 120% at 50% 0%,#fff6f1 0%,#fcefe9 55%,#f4f7ec 100%);border-radius:20px;padding:clamp(2rem,4vw,3.5rem) clamp(1.25rem,3vw,2.5rem);margin-bottom:2rem}
+    @media(max-width:640px){.lv-tarif-band{border-radius:14px}}
+    .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.75rem}
+    .lv-tarif-detail__eyebrow{display:inline-block;margin-bottom:.6rem;font-family:"Inter Tight","Inter",sans-serif;font-weight:700;font-size:1rem;color:#004D33}
+    .lv-tarif-detail__head h1{margin:0 0 .5rem;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(30px,4.4vw,48px);line-height:1.08;color:#004D33}
+    .lv-lead{font-size:clamp(16px,1.4vw,19px);line-height:1.65;color:#334155;margin:0}
+    .lv-tarif-detail__text{color:#334155}
     /* v1.36.0: Hero zweispaltig wie die Kursdetailseite — Text links, Faktenbox rechts.
        Unter 60rem stapelt es, die Faktenbox rutscht dann VOR den Fliesstext (order:-1),
        damit Preis und CTA auf dem Handy nicht unter 2000 Zeichen Beschreibung liegen.
        H1 und Claim stehen ausserhalb dieses Rasters, sonst zoege order:-1 sie mit. */
-    .lv-tarif-hero{display:grid;gap:1.5rem;align-items:start;margin-bottom:1.5rem}
+    .lv-tarif-hero{display:grid;gap:1.5rem;align-items:start;margin-bottom:0}
     @media(min-width:60rem){.lv-tarif-hero{grid-template-columns:minmax(0,1fr) 20rem}}
     @media(max-width:59.99rem){.lv-tarif-hero .lv-fb{order:-1}}
     .lv-fb{border:1px solid #e3e8ea;border-radius:16px;background:#fff;padding:1.25rem;position:sticky;top:1rem}
@@ -6270,9 +6313,14 @@ add_action('woocommerce_thankyou', function ($order_id) {
 
     livento_cc_tariff_styles();
     echo '<section class="lv-variant"><h3>So geht es weiter</h3>';
-    echo '<p>Ihre Lizenzen sind aktiv. Sie erhalten gleich zwei E-Mails: Ihre Zugangsdaten für Campus Connect '
-       . 'und eine Nachricht mit dem Link in Ihren Team-Bereich.</p>';
+    // Seit Campus Connect v3.169.0 kommt EINE Mail, die Zugangsdaten und Team-Link
+    // zusammen enthaelt. Vorher stand hier "gleich zwei E-Mails" — die zweite gab
+    // es nie, weil das Passwort mangels Platzhalter in der Vorlage verworfen wurde.
+    echo '<p>Ihre Lizenzen sind aktiv. Sie erhalten dazu eine E-Mail mit Ihren Zugangsdaten '
+       . 'für Campus Connect und dem Link in Ihren Team-Bereich.</p>';
     echo '<p>Dort legen Sie Ihre Mitarbeitenden an — einzeln oder per CSV-Import — und weisen ihnen die Lizenzplätze zu. '
+       . 'Jede Person bekommt ihre Zugangsdaten automatisch per E-Mail und startet sofort: '
+       . 'Die Kurse sind E-Learnings, es gibt keine Termine und keine Wartezeit. '
        . 'Verlässt jemand das Unternehmen, geben Sie den Platz einfach wieder frei.</p>';
     echo '</section>';
 }, 15);
