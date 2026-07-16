@@ -3,12 +3,18 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.35.0
+Stable tag: 1.36.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.36.0 =
+* Die Ticket-Detailseiten bekommen die Struktur der Kursdetailseiten: zweispaltiger Hero mit Faktenbox "Auf einen Blick" (Zuschnitte, Kurse, Umfang, Laufzeit, "ab"-Preis), primaerer CTA "Preis fuer dein Team berechnen", "So laeuft's ab" in vier Schritten und ein Schluss-CTA nach der FAQ. Die Kennzahlen sind Spannen (z. B. "11-24 Kurse"), weil das PflichtTicket je Zuschnitt unterschiedlich gross ist — eine einzelne Zahl waere fuer die meisten Zuschnitte falsch. Auf schmalen Schirmen rutscht die Faktenbox vor den Fliesstext, Titel und Claim bleiben aber davor.
+* Die Variantenbeschreibung wird auf der Ticket-Seite NICHT mehr gerendert. Es ist der WooCommerce-Produkttext ("Was du kaufst ... So geht es nach dem Kauf weiter ..."); auf einer Produktseite steht er allein und ergibt Sinn, auf der Ticket-Seite stapelten sich vier davon, zu 98 % wortgleich — rund 5.500 Zeichen Wiederholung. Denselben Inhalt erzaehlt "So laeuft's ab" jetzt einmal. Auf den Produktseiten bleibt der Text unveraendert.
+* Neu: ein sichtbarer Hinweis je Variante aus dem neuen Feld course_bundles.public_note (Campus Connect v3.167.0) — z. B. welche Themen noch produziert werden. Erscheint ueber der Kursliste. BENOETIGT Campus Connect v3.167.0; aeltere Staende liefern das Feld nicht, dann bleibt der Hinweis einfach aus.
+* "So laeuft's ab" schliesst eine Luecke: Diese Information stand bisher nur in den Produktplan-Texten (die das Plugin nicht rendert) und in der Willkommensmail — also erst NACH dem Kauf, waehrend genau das die Frage davor ist.
 
 = 1.35.0 =
 * Sichtbares FAQ-Accordion auf den Ticket-Detailseiten. Das FAQPage-Schema kam schon mit v1.34.0, die Fragen standen aber nirgends auf der Seite — Google verlangt ausdruecklich, dass ausgezeichnete FAQ-Inhalte sichtbar sind. Folgenlos war das nur, weil die Fragen bis Campus Connect v3.165.0 gar nicht gepflegt werden konnten; jetzt, wo sie hinterlegt sind, muss beides zusammen raus. Sichtbare Ausgabe und Schema kommen aus derselben Funktion und koennen nicht auseinanderlaufen. <details>/<summary> statt JavaScript: laeuft ohne Skript und ist auch zugeklappt fuer Crawler lesbar.

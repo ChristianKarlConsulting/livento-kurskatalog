@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.35.0
+ * Version:           1.36.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,27 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.36.0: Die Ticket-Detailseiten bekommen die Struktur der Kursdetailseiten (Stufe 3).
+ *          Bis hier war die Seite eine Textwueste: H1, Claim, Beschreibung, Rechner,
+ *          Produktkarten, Kursliste — ohne Hierarchie, ohne Faktenbox, ohne Abschluss.
+ *          Neu:
+ *          - Zweispaltiger Hero mit Faktenbox „Auf einen Blick" (Muster: lvk-factbox der
+ *            Kursseite, eigene lv-fb-Klassen, weil das Tarif-CSS getrennt ausgeliefert
+ *            wird). Zeigt Zuschnitte, Kurse, Umfang, Laufzeit und den „ab"-Preis. Die
+ *            Kennzahlen sind SPANNEN (11–24 Kurse), weil das PflichtTicket je Zuschnitt
+ *            unterschiedlich gross ist — eine einzelne Zahl waere fuer die meisten falsch.
+ *          - Der „ab"-Preis ist aus dem Fliesstext in die Faktenbox gewandert; er bleibt
+ *            sichtbar, weil er als lowPrice im Product-Schema steht.
+ *          - Primaerer CTA „Preis fuer dein Team berechnen" (Anker auf den Rechner) und
+ *            sekundaerer Beratungs-CTA — vorher fuehrte die Seite nur ueber die
+ *            Produktkarten zum Kauf.
+ *          - „So laeuft's ab" in vier Schritten. Diese Information stand bisher nur in
+ *            product_plans.description (wird nicht gerendert) und in der Willkommensmail,
+ *            also erst NACH dem Kauf — waehrend genau das die Frage davor ist.
+ *          - Schluss-CTA nach der FAQ.
+ *          - Auf schmalen Schirmen rutscht die Faktenbox VOR den Fliesstext, damit Preis
+ *            und CTA nicht unter der Beschreibung begraben liegen.
  *
  * v1.35.0: Sichtbares FAQ-Accordion auf den Ticket-Detailseiten. Das FAQPage-Schema
  *          kam schon mit v1.34.0, die Fragen standen aber nirgends auf der Seite —
@@ -5408,45 +5429,100 @@ add_shortcode('livento_tarif', function ($atts) {
     $from_ok    = $from && isset($from['yearly_net']) && $from['yearly_net'] !== null;
     $highlights = livento_cc_tariff_highlights($family);
     $faq        = livento_cc_faq_items($family); // v1.35.0: dieselbe Quelle wie das FAQPage-Schema
+    $stats      = livento_cc_tariff_stats($variants); // v1.36.0
+    $beratung   = livento_cc_beratung_url() ?: home_url('/kontakt/');
+    $dec        = function ($x) { return rtrim(rtrim(number_format((float) $x, 1, ',', '.'), '0'), ','); };
 
     ob_start();
     livento_cc_tariff_styles();
     ?>
     <div class="lv-tarif-detail">
+        <?php // v1.36.0: Titel und Claim stehen bewusst AUSSERHALB des Rasters. Lagen sie
+              // darin, zog die Umsortierung auf schmalen Schirmen (Faktenbox nach vorn) das
+              // H1 mit nach unten — der Besucher sah dann Preise, bevor er wusste, worauf er
+              // ist. So bleibt die Reihenfolge: Titel, worum es geht, Preis/CTA, Details. ?>
         <header class="lv-tarif-detail__head">
             <h1><?php echo esc_html($family['name']); ?></h1>
             <?php if (!empty($family['claim'])) : ?><p class="lv-lead"><?php echo esc_html($family['claim']); ?></p><?php endif; ?>
-
-            <?php if ($from_ok) : ?>
-                <p class="lv-tarif-detail__from">
-                    <span class="lv-tarif-detail__from-label">ab</span>
-                    <strong><?php echo esc_html(livento_cc_eur($from['yearly_net'])); ?></strong>
-                    <span class="lv-tarif-detail__from-unit">/ Jahr</span>
-                    <span class="lv-tarif-detail__from-tax">
-                        <?php echo esc_html(livento_cc_tax_note($from)); ?><?php
-                        $from_net = livento_cc_net_note($from);
-                        if ($from_net) {
-                            echo ' · ' . esc_html($from_net);
-                        }
-                        ?>
-                    </span>
-                </p>
-            <?php endif; ?>
-
-            <?php if (!empty($family['public_description'])) : ?>
-                <div class="lv-tarif-detail__text"><?php echo wp_kses_post(wpautop($family['public_description'])); ?></div>
-            <?php endif; ?>
-
-            <?php if (!empty($highlights)) : ?>
-                <ul class="lv-tarif-detail__highlights">
-                    <?php foreach ($highlights as $highlight) : ?>
-                        <li><?php echo esc_html($highlight); ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php endif; ?>
         </header>
 
-        <div class="lv-calc" data-lv-calc>
+        <div class="lv-tarif-hero">
+            <div class="lv-tarif-hero__main">
+                <?php if (!empty($family['public_description'])) : ?>
+                    <div class="lv-tarif-detail__text"><?php echo wp_kses_post(wpautop($family['public_description'])); ?></div>
+                <?php endif; ?>
+
+                <?php if (!empty($highlights)) : ?>
+                    <ul class="lv-tarif-detail__highlights">
+                        <?php foreach ($highlights as $highlight) : ?>
+                            <li><?php echo esc_html($highlight); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+
+            <?php // v1.36.0: Faktenbox nach dem Muster der Kursdetailseite (lvk-factbox).
+                  // Der "ab"-Preis steht hier, weil er als lowPrice ins Product-Schema geht —
+                  // stuende er nur im Schema, waere das ein Preis-Mismatch. ?>
+            <aside class="lv-fb" aria-label="Auf einen Blick">
+                <p class="lv-fb__eyebrow">Auf einen Blick</p>
+                <p class="lv-fb__title"><?php echo esc_html($family['name']); ?></p>
+
+                <dl class="lv-fb__list">
+                    <?php if ($stats['varianten'] > 1) : ?>
+                        <div class="lv-fb__row">
+                            <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('format'); ?></span>
+                            <span class="lv-fb__rc"><dt>Zuschnitte</dt>
+                            <dd><?php echo esc_html($stats['varianten']); ?> je Einrichtungsart</dd></span>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($stats['kurse_max'] > 0) : ?>
+                        <div class="lv-fb__row">
+                            <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('cert'); ?></span>
+                            <span class="lv-fb__rc"><dt>Kurse</dt>
+                            <dd><?php echo esc_html(livento_cc_span($stats['kurse_min'], $stats['kurse_max'])); ?> Kurse, je mit Wissenstest und Zertifikat</dd></span>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($stats['std_max'] > 0) : ?>
+                        <div class="lv-fb__row">
+                            <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('hours'); ?></span>
+                            <span class="lv-fb__rc"><dt>Umfang</dt>
+                            <dd><?php echo esc_html(livento_cc_span($stats['std_min'], $stats['std_max'], $dec)); ?> Stunden</dd></span>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($stats['monate'] > 0) : ?>
+                        <div class="lv-fb__row">
+                            <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('clock'); ?></span>
+                            <span class="lv-fb__rc"><dt>Laufzeit</dt>
+                            <dd><?php echo esc_html($stats['monate']); ?> Monate · Abrechnung jährlich im Voraus</dd></span>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($from_ok) : ?>
+                        <div class="lv-fb__row">
+                            <span class="lv-fb__ic" aria-hidden="true"><?php echo livento_cc_fb_icon('price'); ?></span>
+                            <span class="lv-fb__rc"><dt>Preis</dt>
+                            <dd><strong class="lv-fb__price">ab <?php echo esc_html(livento_cc_eur($from['yearly_net'])); ?> / Jahr</strong>
+                            <span class="lv-fb__tax"><?php echo esc_html(livento_cc_tax_note($from));
+                                $from_net = livento_cc_net_note($from);
+                                if ($from_net) { echo ' · ' . esc_html($from_net); } ?></span></dd></span>
+                        </div>
+                    <?php endif; ?>
+                </dl>
+
+                <div class="lv-fb__actions">
+                    <a class="lv-btn" href="#rechner">Preis für dein Team berechnen</a>
+                    <a class="lv-btn lv-btn--ghost" href="<?php echo esc_url($beratung); ?>">Unsicher? Kostenlose Beratung</a>
+                </div>
+
+                <div class="lv-fb__trust">
+                    <span>✓ AZAV-zertifiziert</span>
+                    <span>✓ Zertifikat je Kurs</span>
+                    <span>✓ Rechnung auf die Einrichtung</span>
+                </div>
+            </aside>
+        </div>
+
+        <div class="lv-calc" id="rechner" data-lv-calc>
             <label for="lv-detail-users">Wie viele Beschäftigte hast du?</label>
             <input type="number" id="lv-detail-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
             <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, inkl. MwSt.</span>
@@ -5506,8 +5582,20 @@ add_shortcode('livento_tarif', function ($atts) {
                 </div>
             </div>
 
-            <?php if (!empty($bundle['description'])) : ?>
-                <p class="lv-variant__desc"><?php echo esc_html($bundle['description']); ?></p>
+            <?php /* v1.36.0: bundle['description'] wird hier NICHT mehr gerendert.
+               Es ist der WooCommerce-Produkttext ("Was du kaufst … So geht es nach dem
+               Kauf weiter … Personalwechsel? Kein Problem …"). Auf einer Produktseite
+               steht er allein und ergibt Sinn; hier stapelten sich vier davon, zu 98 %
+               wortgleich — 5.546 Zeichen Wiederholung auf einer Seite. Genau diesen
+               Inhalt erzaehlt "So laeuft's ab" jetzt EINMAL, die Kennzahlen stehen in
+               der Faktenbox, der Rest in der Kursliste. Auf den WooCommerce-Produkt-
+               seiten bleibt der Text unangetastet. */ ?>
+
+            <?php if (!empty($bundle['public_note'])) : ?>
+                <?php // Ehrlicher Hinweis an der Variante — z. B. welche Themen noch
+                      // produziert werden. Getrennt vom internen description-Feld, in
+                      // dem solche Notizen bisher nur intern standen. ?>
+                <p class="lv-variant__note"><?php echo esc_html($bundle['public_note']); ?></p>
             <?php endif; ?>
 
             <?php if (!empty($courses)) : ?>
@@ -5542,6 +5630,32 @@ add_shortcode('livento_tarif', function ($atts) {
         </section>
         <?php endforeach; ?>
 
+        <?php // v1.36.0: „So laeuft's ab". Die Schritte stehen bisher nur in den
+              // product_plans.description-Texten (die das Plugin nicht rendert) und in
+              // der Willkommensmail — also erst NACH dem Kauf. Vor dem Kauf ist genau
+              // das die Frage: „Was passiert, wenn ich hier klicke?" ?>
+        <section class="lv-tarif-ablauf">
+            <h2>So läuft's ab</h2>
+            <ol class="lv-steps">
+                <li>
+                    <strong>Ticket buchen</strong>
+                    <span>Die Bestellmenge ist die Zahl deiner Beschäftigten. Rechnung auf die Einrichtung, Abrechnung jährlich im Voraus.</span>
+                </li>
+                <li>
+                    <strong>Zugang kommt automatisch</strong>
+                    <span>Wir legen deinen Arbeitgeber-Zugang und dein Lizenzpaket an. Die Zugangsdaten kommen per E-Mail — du musst niemanden anrufen.</span>
+                </li>
+                <li>
+                    <strong>Team eintragen</strong>
+                    <span>Einzeln oder per CSV-Import. Halte Vorname, Nachname, E-Mail und Geburtsdatum bereit — das Geburtsdatum steht später auf dem Zertifikat.</span>
+                </li>
+                <li>
+                    <strong>Nachweise sammeln sich von allein</strong>
+                    <span>Jede Person lernt im eigenen Tempo, legt den Wissenstest ab und bekommt ihr Zertifikat. Du siehst im Team-Bereich, wer wo steht. Verlässt jemand die Einrichtung, gibst du den Platz frei und besetzt ihn neu.</span>
+                </li>
+            </ol>
+        </section>
+
         <?php if (!empty($faq)) : ?>
             <?php // v1.35.0: Sichtbar UND als FAQPage-Schema. Google verlangt, dass
                   // ausgezeichnete FAQ-Inhalte auf der Seite auch tatsaechlich stehen —
@@ -5557,6 +5671,17 @@ add_shortcode('livento_tarif', function ($atts) {
                 <?php endforeach; ?>
             </section>
         <?php endif; ?>
+
+        <?php // v1.36.0: Schluss-CTA. Wer bis hierher gelesen hat, soll nicht wieder
+              // hochscrollen muessen, um zum Rechner zu kommen. ?>
+        <section class="lv-tarif-cta">
+            <h2>Bereit für dein Team?</h2>
+            <p>Trag deine Beschäftigtenzahl ein und du siehst deinen Preis sofort — ohne Anfrage, ohne Wartezeit.</p>
+            <div class="lv-tarif-cta__actions">
+                <a class="lv-btn" href="#rechner">Preis für dein Team berechnen</a>
+                <a class="lv-btn lv-btn--ghost" href="<?php echo esc_url($beratung); ?>">Lieber kurz sprechen?</a>
+            </div>
+        </section>
     </div>
     <?php
     livento_cc_tariff_calc_script();
@@ -5580,6 +5705,43 @@ function livento_cc_tariff_cta($bundle, $price, $users) {
 
     return '<a class="lv-btn" href="' . esc_url($url) . '" data-lv-cart="' . esc_attr((int) $bundle['wc_product_id']) . '">'
          . 'Jetzt buchen</a>';
+}
+
+/**
+ * v1.36.0: Kennzahlen einer Familie ueber alle Setting-Varianten hinweg.
+ *
+ * Fuer die Faktenbox „Auf einen Blick" — sie steht ganz oben, bevor die Varianten
+ * gerendert werden, muss also vorher rechnen. Bewusst Spannen (min–max) statt einer
+ * Zahl: Das PflichtTicket hat je nach Zuschnitt zwischen 11 und 24 Kursen; „20 Kurse"
+ * waere fuer drei von vier Zuschnitten schlicht falsch.
+ */
+function livento_cc_tariff_stats($variants) {
+    $kurse_min = null; $kurse_max = 0;
+    $std_min   = null; $std_max   = 0.0;
+    $monate    = null;
+    foreach ($variants as $v) {
+        $k = (int) $v['bundle']['course_count'];
+        $s = (float) $v['bundle']['total_hours_sum'];
+        if ($kurse_min === null || $k < $kurse_min) { $kurse_min = $k; }
+        if ($k > $kurse_max) { $kurse_max = $k; }
+        if ($std_min === null || $s < $std_min) { $std_min = $s; }
+        if ($s > $std_max) { $std_max = $s; }
+        $m = (int) (isset($v['plan']['contract_months']) ? $v['plan']['contract_months'] : 12);
+        // Nur zeigen, wenn alle Plaene dieselbe Laufzeit haben — sonst waere die Angabe geraten.
+        if ($monate === null) { $monate = $m; } elseif ($monate !== $m) { $monate = 0; }
+    }
+    return array(
+        'varianten' => count($variants),
+        'kurse_min' => (int) $kurse_min, 'kurse_max' => $kurse_max,
+        'std_min'   => (float) $std_min, 'std_max'   => $std_max,
+        'monate'    => (int) $monate,
+    );
+}
+
+/** v1.36.0: „11" bzw. „11–24" — eine Spanne nur dann, wenn sie eine ist. */
+function livento_cc_span($min, $max, $fmt = null) {
+    $f = $fmt ? $fmt : function ($x) { return (string) (int) $x; };
+    return $min === $max ? $f($min) : $f($min) . '–' . $f($max);
 }
 
 /**
@@ -5739,15 +5901,32 @@ function livento_cc_tariff_styles() {
     .lv-btn--ghost{background:transparent;color:#004D33;border:1px solid #004D33}
     .lv-btn--ghost:hover{background:#004D33;color:#fff}
     .lv-tarife__foot{margin-top:1.5rem;text-align:center;font-size:.85rem;color:#5c6a70}
-    .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.5rem}
+    .lv-tarif-detail__head{max-width:48rem;margin-bottom:1rem}
     .lv-tarif-detail__head h1{margin:0 0 .35rem}
-    .lv-lead{font-size:1.1rem;color:#5c6a70}
-    /* v1.34.0: "ab X / Jahr" — derselbe Betrag, der als lowPrice ins Schema geht. */
-    .lv-tarif-detail__from{display:flex;align-items:baseline;flex-wrap:wrap;gap:.4rem;margin:1rem 0 1.25rem}
-    .lv-tarif-detail__from-label{font-size:.95rem;color:#5c6a70}
-    .lv-tarif-detail__from strong{font-size:1.9rem;line-height:1.1;color:#1d2b30}
-    .lv-tarif-detail__from-unit{font-size:.95rem;color:#5c6a70}
-    .lv-tarif-detail__from-tax{flex-basis:100%;font-size:.85rem;color:#5c6a70}
+    .lv-lead{font-size:1.1rem;color:#5c6a70;margin:0}
+    /* v1.36.0: Hero zweispaltig wie die Kursdetailseite — Text links, Faktenbox rechts.
+       Unter 60rem stapelt es, die Faktenbox rutscht dann VOR den Fliesstext (order:-1),
+       damit Preis und CTA auf dem Handy nicht unter 2000 Zeichen Beschreibung liegen.
+       H1 und Claim stehen ausserhalb dieses Rasters, sonst zoege order:-1 sie mit. */
+    .lv-tarif-hero{display:grid;gap:1.5rem;align-items:start;margin-bottom:1.5rem}
+    @media(min-width:60rem){.lv-tarif-hero{grid-template-columns:minmax(0,1fr) 20rem}}
+    @media(max-width:59.99rem){.lv-tarif-hero .lv-fb{order:-1}}
+    .lv-fb{border:1px solid #e3e8ea;border-radius:16px;background:#fff;padding:1.25rem;position:sticky;top:1rem}
+    @media(max-width:59.99rem){.lv-fb{position:static}}
+    .lv-fb__eyebrow{margin:0;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#5c6a70}
+    .lv-fb__title{margin:.15rem 0 .9rem;font-weight:700;font-size:1.05rem;color:#1d2b30}
+    .lv-fb__list{margin:0;padding:0}
+    .lv-fb__row{display:flex;gap:.7rem;align-items:flex-start;padding:.55rem 0;border-top:1px solid #f2f5f6}
+    .lv-fb__row:first-child{border-top:0}
+    .lv-fb__ic{color:#004D33;flex-shrink:0;line-height:0;margin-top:.1rem}
+    .lv-fb__rc{display:block}
+    .lv-fb__row dt{margin:0;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:#5c6a70}
+    .lv-fb__row dd{margin:.1rem 0 0;font-size:.92rem;color:#1d2b30}
+    .lv-fb__price{display:block;font-size:1.35rem;line-height:1.2}
+    .lv-fb__tax{display:block;font-size:.8rem;color:#5c6a70}
+    .lv-fb__actions{display:grid;gap:.5rem;margin-top:1rem}
+    .lv-fb__actions .lv-btn{margin-top:0}
+    .lv-fb__trust{display:flex;flex-wrap:wrap;gap:.5rem .9rem;margin-top:.9rem;padding-top:.8rem;border-top:1px solid #f2f5f6;font-size:.78rem;color:#5c6a70}
     .lv-tarif-detail__highlights{list-style:none;margin:1.25rem 0 0;padding:0;display:grid;gap:.55rem}
     .lv-tarif-detail__highlights li{position:relative;padding-left:1.6rem;font-size:.97rem}
     /* Haken als ::before statt als Listenpunkt: bleibt Text, kostet kein Bild. */
@@ -5764,12 +5943,29 @@ function livento_cc_tariff_styles() {
     .lv-faq__answer{padding:0 1rem 1rem;color:#5c6a70}
     .lv-faq__answer p{margin:0 0 .6rem}
     .lv-faq__answer p:last-child{margin-bottom:0}
+    /* v1.36.0: „So laeuft's ab" — nummerierte Schritte via counter, damit die Ziffern
+       im CI-Gruen stehen koennen (ein normales <ol> faerbt nur den Text). */
+    .lv-tarif-ablauf{max-width:48rem;margin-top:2rem}
+    .lv-tarif-ablauf h2{margin:0 0 .75rem}
+    .lv-steps{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;gap:.75rem}
+    .lv-steps li{counter-increment:s;position:relative;padding:.9rem 1rem .9rem 3.2rem;border:1px solid #e3e8ea;border-radius:12px;background:#fff}
+    .lv-steps li::before{content:counter(s);position:absolute;left:1rem;top:.9rem;width:1.5rem;height:1.5rem;border-radius:50%;background:#004D33;color:#fff;font-size:.82rem;font-weight:700;display:flex;align-items:center;justify-content:center}
+    .lv-steps strong{display:block;margin-bottom:.15rem}
+    .lv-steps span{font-size:.92rem;color:#5c6a70}
+    /* v1.36.0: Schluss-CTA */
+    .lv-tarif-cta{max-width:48rem;margin-top:2rem;padding:1.5rem;border-radius:16px;background:#f5f7f8;border:1px solid #e3e8ea;text-align:center}
+    .lv-tarif-cta h2{margin:0 0 .35rem}
+    .lv-tarif-cta p{margin:0 0 1rem;color:#5c6a70}
+    .lv-tarif-cta__actions{display:flex;flex-wrap:wrap;gap:.6rem;justify-content:center}
+    .lv-tarif-cta__actions .lv-btn{margin-top:0}
     .lv-variant{border:1px solid #e3e8ea;border-radius:16px;padding:1.25rem;margin-bottom:1.25rem;background:#fff}
     .lv-variant__bar{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
     .lv-variant__bar h3{margin:0}
     .lv-variant__meta{margin:.25rem 0 0;font-size:.9rem;color:#5c6a70}
     .lv-variant__buy{display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap}
-    .lv-variant__desc{margin:1rem 0 0;color:#5c6a70}
+    /* v1.36.0: Ehrlicher Hinweis an der Variante (z. B. "Themen in Produktion").
+       Bernstein statt Rot: Es ist eine Information, keine Fehlermeldung. */
+    .lv-variant__note{margin:1rem 0 0;padding:.7rem .9rem;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:.88rem}
     .lv-courses{margin-top:1rem;border-top:1px solid #eef1f2;padding-top:.75rem}
     .lv-courses summary{cursor:pointer;font-weight:600}
     .lv-courses__group{margin-top:1rem}
