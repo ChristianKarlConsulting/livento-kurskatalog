@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.33.0
+ * Version:           1.34.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -140,6 +140,31 @@
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
  *
+ * v1.34.0: SEO fuer die Ticket-Detailseiten (/e-learning/<slug>/). Diese Seiten hatten
+ *          bis hier WEDER Title (der Browser zeigte den rohen Slug "pflicht-ticket")
+ *          NOCH Meta-Description, Canonical, og-Tags oder ein H1 — die komplette
+ *          SEO-Maschinerie haengt am ?kurs=-Gate und hat sie nie erreicht. Neu:
+ *          - Eigener wp-Hook, der die Seite am Slug erkennt (Seiten-Slug == Familien-Slug
+ *            ist ohnehin Pflicht, siehe Admin-Hilfe). Bewusst NICHT ueber das
+ *            Shortcode-Attribut: der Shortcode steckt in einem Elementor-Widget und
+ *            steht damit nicht in post_content.
+ *          - Title/Meta/Canonical/og aus public_tariffs (neue Spalte meta_title,
+ *            vorhandene meta_description — die wurde bislang NIE gelesen).
+ *          - H2 -> H1; highlights werden endlich gerendert (existierten, waren aber
+ *            nur auf der Landing sichtbar — das war die eigentliche "Leblosigkeit").
+ *          - Schema: Product mit AggregateOffer (lowPrice aus price_from) statt Offer
+ *            mit Festpreis, dazu FAQPage + Breadcrumb, alles im RM-@graph. Der
+ *            Article-Knoten faellt auf diesen Seiten weg — eine Produktseite ist kein
+ *            Artikel, und die Seite behauptete bis hier beides gleichzeitig.
+ *          - "ab X € / Jahr" sichtbar im Kopf, identisch mit lowPrice im Schema
+ *            (sonst Preis-Mismatch: die Seite zeigte den Preis fuer N Beschaeftigte,
+ *            das Schema einen fixen Betrag).
+ *          - Nettobetrag zusaetzlich zum Bruttopreis (B2B rechnet netto, die Kasse
+ *            bucht brutto). Serverseitig im REST-Format, nicht im JS.
+ *          - Durchgaengig Du-Form: der Rechner siezte ("haben Sie?"), direkt daneben
+ *            duzte der Text.
+ *          BENOETIGT Migration v3.164.0 (meta_title + public_tariffs neu).
+ *
  * v1.33.0: Tarif-CTA in CI-Gruen (#004D33) statt Petrol; stoerender Hover-Farbwechsel
  *          entfernt (Hover behaelt dieselbe Farbe). Standard-Basis der Tarif-Detailseiten
  *          von "selbstlernkurse" auf "e-learning" geaendert — die "Kurse & Details
@@ -184,6 +209,10 @@ if (!defined('ABSPATH')) {
 
 // Supabase-Projekt (Produktion). Bei Bedarf auf Dev umstellen.
 define('LIVENTO_CC_SUPABASE_URL', 'https://ighppnxvttxmwexhhfnn.supabase.co');
+
+// v1.34.0: USt-Satz fuer die Netto-Nebenangabe (Regelsteuersatz). Nur fuer die
+// Anzeige — abgerechnet wird der Bruttobetrag, der aus fn_calc_tariff_price kommt.
+define('LIVENTO_CC_VAT_RATE', 0.19);
 
 // Oeffentlicher anon-Key (KEIN service_role!). BEVORZUGT im WP-Backend unter
 // „Livento Katalog → Einstellungen" hinterlegen — das ueberlebt Plugin-Updates.
@@ -795,6 +824,245 @@ add_action('wp', function () {
         livento_cc_seo_apply_manual($offering, $seo);
     }
 });
+
+/**
+ * v1.34.0: SEO fuer die Ticket-Detailseiten (/e-learning/<slug>/).
+ *
+ * Bewusst ein ZWEITER wp-Hook: der Kurs-Hook oben steigt aus, wenn kein ?kurs=
+ * gesetzt ist — und Tarifseiten setzen das nie, weil sie keine virtuellen
+ * Rewrite-Seiten sind, sondern echte WordPress-Seiten mit [livento_tarif] in
+ * einem Elementor-Widget. Genau deshalb hatten sie bis v1.33.0 keinerlei SEO.
+ */
+add_action('wp', function () {
+    if (livento_cc_current_slug()) {
+        return; // Kursdetailseite — die hat ihren eigenen Hook oben
+    }
+    $family = livento_cc_current_family();
+    if (!$family) {
+        return;
+    }
+
+    $seo = livento_cc_tariff_seo_values($family);
+    add_filter('pre_get_document_title', function () use ($seo) {
+        return $seo['title'];
+    }, 20);
+    add_filter('body_class', function ($classes) {
+        $classes[] = 'lvk-tarif-detail';
+        return $classes;
+    });
+
+    if (livento_cc_rankmath_active()) {
+        livento_cc_tariff_seo_apply_rankmath($family, $seo);
+    } else {
+        livento_cc_tariff_seo_apply_manual($family, $seo);
+    }
+});
+
+/**
+ * v1.34.0: Tariffamilie der aktuell aufgerufenen Seite — oder null.
+ *
+ * Erkennung ueber den Seiten-Slug, nicht ueber das family-Attribut des Shortcodes:
+ * Der Shortcode steckt in einem Elementor-Widget, seine Attribute stehen also in
+ * _elementor_data und nicht in post_content — has_shortcode() liefe ins Leere.
+ * Dass der Seiten-Slug dem Familien-Slug entspricht, ist ohnehin dokumentierte
+ * Pflicht (Admin-Hilfe, Abschnitt Tarife), also ein belastbarer Anker.
+ */
+function livento_cc_current_family() {
+    static $cache = false; // false = noch nicht ermittelt, null = keine Tarifseite
+    if ($cache !== false) {
+        return $cache;
+    }
+    $cache = null;
+    if (!is_page()) {
+        return null;
+    }
+    $post = get_post();
+    if ($post && !empty($post->post_name)) {
+        // find_family matcht Key ODER Slug; die Landing ("e-learning") und
+        // /e-learning/individuell/ treffen bewusst keine Familie -> null.
+        $cache = livento_cc_find_family($post->post_name);
+    }
+    return $cache;
+}
+
+/**
+ * v1.34.0: SEO-Werte einer Ticket-Detailseite.
+ *
+ * meta_title, weil "PflichtTicket | Livento" ein reiner Markenbegriff waere, nach
+ * dem niemand sucht. Fallback bleibt trotzdem besser als der Status quo (roher Slug).
+ * Whitespace wird normalisiert: meta_description ist ein Freitextfeld, in dem schon
+ * einmal eine mehrzeilige Liste gelandet ist — mb_substr() haette daraus eine
+ * Description mit Zeilenumbruechen gemacht.
+ */
+function livento_cc_tariff_seo_values($family) {
+    $descr_src = !empty($family['meta_description'])
+        ? $family['meta_description']
+        : (!empty($family['claim']) ? $family['claim'] : $family['public_description']);
+    $descr = trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $descr_src)));
+
+    return array(
+        'url'   => get_permalink(),
+        'title' => !empty($family['meta_title']) ? $family['meta_title'] : $family['name'] . ' | Livento',
+        'descr' => mb_substr($descr, 0, 160),
+        'img'   => !empty($family['public_image_url']) ? $family['public_image_url'] : '',
+    );
+}
+
+/** Variante A: Rank Math fuettern (genau EINE Ausgabe) und den @graph umbauen. */
+function livento_cc_tariff_seo_apply_rankmath($family, $seo) {
+    add_filter('rank_math/frontend/canonical',   function () use ($seo) { return $seo['url']; });
+    add_filter('rank_math/frontend/description', function () use ($seo) { return $seo['descr']; });
+    add_filter('rank_math/frontend/title',       function () use ($seo) { return $seo['title']; });
+    add_filter('rank_math/frontend/robots',      function () {
+        return array('index' => 'index', 'follow' => 'follow');
+    });
+    add_filter('rank_math/opengraph/url',                     function () use ($seo) { return $seo['url']; });
+    add_filter('rank_math/opengraph/facebook/og_title',       function () use ($seo) { return $seo['title']; });
+    add_filter('rank_math/opengraph/facebook/og_description', function () use ($seo) { return $seo['descr']; });
+    add_filter('rank_math/opengraph/type',                    function () { return 'website'; });
+    if (!empty($seo['img'])) {
+        add_filter('rank_math/opengraph/facebook/og_image',            function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/facebook/og_image_secure_url', function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/facebook/og_image_width',  '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_height', '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_type',   '__return_empty_string');
+        add_filter('rank_math/opengraph/facebook/og_image_alt',        function () use ($family) { return $family['name']; });
+        add_filter('rank_math/opengraph/twitter/twitter_image',        function () use ($seo) { return $seo['img']; });
+        add_filter('rank_math/opengraph/twitter/twitter_image_alt',    function () use ($family) { return $family['name']; });
+    }
+
+    add_filter('rank_math/json_ld', function ($data, $jsonld) use ($family, $seo) {
+        if (!is_array($data)) {
+            $data = array();
+        }
+
+        // Article raus: Rank Math haengt an Seiten per Default einen Article-Knoten
+        // (samt Autor-Person). Zusammen mit unserem Product behauptete die Seite
+        // gleichzeitig "Artikel" und "Produkt" — ein widerspruechliches Signal.
+        foreach ($data as $k => $piece) {
+            if (!isset($piece['@type'])) {
+                continue;
+            }
+            if (array_intersect((array) $piece['@type'], array('Article', 'BlogPosting', 'NewsArticle'))) {
+                unset($data[$k]);
+            }
+        }
+
+        $product = livento_cc_jsonld_tariff_product($family, $seo['url']);
+        if ($product) {
+            $data['livento_tariff'] = $product;
+        }
+
+        $faq = livento_cc_jsonld_faq($family);
+        if ($faq) {
+            unset($faq['@context']); // im @graph redundant
+            $data['livento_faq'] = $faq;
+        }
+
+        // Letzte Brotkrume traegt sonst den WordPress-Seitentitel — und der ist bei
+        // diesen Seiten der rohe Slug ("pflicht-ticket").
+        foreach ($data as $k => $piece) {
+            if (!isset($piece['@type']) || $piece['@type'] !== 'BreadcrumbList') {
+                continue;
+            }
+            if (empty($piece['itemListElement']) || !is_array($piece['itemListElement'])) {
+                continue;
+            }
+            $items = $piece['itemListElement'];
+            $last  = count($items) - 1;
+            if ($last >= 0) {
+                $items[$last]['name']            = $family['name'];
+                $data[$k]['itemListElement']     = $items;
+            }
+            break;
+        }
+        return $data;
+    }, 99, 2);
+
+    // Sichtbare Brotkrumenleiste: ebenfalls den Slug durch den Familiennamen ersetzen.
+    add_filter('rank_math/frontend/breadcrumb/items', function ($crumbs) use ($family, $seo) {
+        if (is_array($crumbs) && !empty($crumbs)) {
+            $crumbs[count($crumbs) - 1] = array($family['name'], $seo['url']);
+        }
+        return $crumbs;
+    });
+}
+
+/** Fallback (Rank Math nicht aktiv): Tags selbst ausgeben. */
+function livento_cc_tariff_seo_apply_manual($family, $seo) {
+    add_action('wp_head', function () use ($family, $seo) {
+        echo "\n<!-- Livento Tarif -->\n";
+        echo '<link rel="canonical" href="' . esc_url($seo['url']) . '">' . "\n";
+        echo '<meta name="description" content="' . esc_attr($seo['descr']) . '">' . "\n";
+        echo '<meta name="robots" content="index,follow">' . "\n";
+        echo '<meta property="og:type" content="website">' . "\n";
+        echo '<meta property="og:title" content="' . esc_attr($seo['title']) . '">' . "\n";
+        echo '<meta property="og:description" content="' . esc_attr($seo['descr']) . '">' . "\n";
+        echo '<meta property="og:url" content="' . esc_url($seo['url']) . '">' . "\n";
+        if ($seo['img']) {
+            echo '<meta property="og:image" content="' . esc_url($seo['img']) . '">' . "\n";
+            echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
+            echo '<meta name="twitter:image" content="' . esc_url($seo['img']) . '">' . "\n";
+        }
+        $product = livento_cc_jsonld_tariff_product($family, $seo['url']);
+        if ($product) {
+            $product['@context'] = 'https://schema.org';
+            echo '<script type="application/ld+json">' . wp_json_encode($product) . '</script>' . "\n";
+        }
+        $faq = livento_cc_jsonld_faq($family);
+        if ($faq) {
+            echo '<script type="application/ld+json">' . wp_json_encode($faq) . '</script>' . "\n";
+        }
+    }, 1);
+}
+
+/**
+ * v1.34.0: schema.org/Product der Familie mit AggregateOffer.
+ *
+ * AggregateOffer statt eines Offer je Variante mit Festbetrag: Der Preis haengt an
+ * der Teamgroesse. Ein fixer Betrag war schlicht falsch — die Seite zeigte den Preis
+ * fuer N Beschaeftigte, das Schema behauptete ihn als DEN Preis. Preis-Mismatch
+ * zwischen Schema und sichtbarer Seite ist genau das, was Google an Product prueft.
+ * lowPrice kommt aus price_from der View, also aus derselben fn_calc_tariff_price
+ * wie der sichtbare "ab"-Preis im Seitenkopf — eine Quelle, keine zweite Rechnung.
+ * Kein highPrice: nach oben ist die Staffel offen (ab 151 Beschaeftigten individuell).
+ */
+function livento_cc_jsonld_tariff_product($family, $url) {
+    $from = isset($family['price_from']) && is_array($family['price_from']) ? $family['price_from'] : null;
+    if (!$from || !isset($from['yearly_net']) || $from['yearly_net'] === null) {
+        return null; // reiner Angebotsfall: lieber gar kein Preis-Schema als ein geratenes
+    }
+
+    $offer_count = 0;
+    foreach ((array) $family['plans'] as $plan) {
+        $offer_count += count((array) $plan['bundles']);
+    }
+
+    $descr_src = !empty($family['meta_description'])
+        ? $family['meta_description']
+        : (!empty($family['claim']) ? $family['claim'] : $family['public_description']);
+
+    $product = array(
+        '@type'       => 'Product',
+        'name'        => $family['name'],
+        'description' => mb_substr(trim(preg_replace('/\s+/', ' ', wp_strip_all_tags((string) $descr_src))), 0, 300),
+        'brand'       => array('@type' => 'Brand', 'name' => 'Livento'),
+        'offers'      => array(
+            '@type'         => 'AggregateOffer',
+            'lowPrice'      => number_format((float) $from['yearly_net'], 2, '.', ''),
+            'priceCurrency' => 'EUR',
+            'availability'  => 'https://schema.org/InStock',
+            'url'           => $url,
+        ),
+    );
+    if ($offer_count > 0) {
+        $product['offers']['offerCount'] = $offer_count;
+    }
+    if (!empty($family['public_image_url'])) {
+        $product['image'] = $family['public_image_url'];
+    }
+    return $product;
+}
 
 /** Ist Rank Math aktiv? Dann fuettern wir es, statt selbst Tags auszugeben (Dublettenschutz). */
 function livento_cc_rankmath_active() {
@@ -4925,6 +5193,25 @@ function livento_cc_tax_note($price) {
     return !empty($price['is_vat_exempt']) ? 'USt-frei' : 'inkl. MwSt';
 }
 
+/**
+ * v1.34.0: Nettobetrag zum Jahresbrutto, z. B. "292,44 € netto" — oder null.
+ *
+ * Warum ueberhaupt beides: Die Tickets werden an Einrichtungen verkauft, und ein
+ * Einkaeufer denkt in netto. Die Kasse bucht aber brutto (WooCommerce rechnet den
+ * eingetragenen Betrag als Kundenpreis ab, siehe v1.31.0) — der Bruttobetrag muss
+ * also fuehrend bleiben. Netto daneben, statt eines von beidem zu verschweigen.
+ * Bei USt-freien Tarifen (§ 4 Nr. 21 UStG) gibt es keinen Nettobetrag zu zeigen.
+ */
+function livento_cc_net_note($price) {
+    if (!empty($price['is_vat_exempt'])) {
+        return null;
+    }
+    if (!isset($price['yearly_net']) || $price['yearly_net'] === null) {
+        return null;
+    }
+    return livento_cc_eur(round(((float) $price['yearly_net']) / (1 + LIVENTO_CC_VAT_RATE), 2)) . ' netto';
+}
+
 /* ------------------------------------------------------------
  * REST: Angebotsrechner
  * Rechnet serverseitig mit livento_cc_calc_price — bewusst KEINE Preis-Mathematik
@@ -4945,6 +5232,9 @@ add_action('rest_api_init', function () {
                     'monthly'  => isset($price['monthly_net']) ? livento_cc_eur($price['monthly_net']) : null,
                     'yearly'   => isset($price['yearly_net']) ? livento_cc_eur($price['yearly_net']) : null,
                     'tax_note' => livento_cc_tax_note($price),
+                    // v1.34.0: Netto hier und nicht im Browser rechnen — sonst gaebe es
+                    // eine zweite Preis-Mathematik, die von der serverseitigen abweichen kann.
+                    'net_note' => livento_cc_net_note($price),
                 );
             };
 
@@ -4970,7 +5260,7 @@ add_action('rest_api_init', function () {
  * ---------------------------------------------------------- */
 add_shortcode('livento_tarife', function ($atts) {
     $atts = shortcode_atts(array(
-        'heading'    => 'Fortbildung für Ihr ganzes Team',
+        'heading'    => 'Fortbildung für dein ganzes Team',
         'subheading' => 'Fertige Jahres-Lernpfade statt Kurschaos. Rollenbezogen zugewiesen, mit Wissenstest, Zertifikat und Nachweisübersicht.',
         'users'      => 20,
         'base'       => 'e-learning',
@@ -4994,7 +5284,7 @@ add_shortcode('livento_tarife', function ($atts) {
         </header>
 
         <div class="lv-calc" data-lv-calc>
-            <label for="lv-calc-users">Wie viele Beschäftigte haben Sie?</label>
+            <label for="lv-calc-users">Wie viele Beschäftigte hast du?</label>
             <input type="number" id="lv-calc-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
             <span class="lv-calc__hint">Der Preis richtet sich nach der Teamgröße. 12 Monate Laufzeit, jährliche Abrechnung.</span>
         </div>
@@ -5027,11 +5317,16 @@ add_shortcode('livento_tarife', function ($atts) {
                 <div class="lv-tarif__price" data-lv-price>
                     <?php if ($price['mode'] === 'individual') : ?>
                         <strong data-lv-price-main>Individuelles Angebot</strong>
-                        <span data-lv-price-sub>Wir rechnen Ihnen das gern durch.</span>
+                        <span data-lv-price-sub>Wir rechnen dir das gern durch.</span>
                     <?php else : ?>
                         <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?><small> / Monat</small></strong>
                         <span data-lv-price-sub>
-                            <?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?> pro Jahr · <?php echo esc_html(livento_cc_tax_note($price)); ?>
+                            <?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?> pro Jahr · <?php echo esc_html(livento_cc_tax_note($price)); ?><?php
+                            $card_net = livento_cc_net_note($price);
+                            if ($card_net) {
+                                echo ' · ' . esc_html($card_net);
+                            }
+                            ?>
                         </span>
                     <?php endif; ?>
                 </div>
@@ -5057,7 +5352,7 @@ add_shortcode('livento_tarife', function ($atts) {
 
         <p class="lv-tarife__foot">
             Alle Preise inkl. gesetzlicher MwSt., 12 Monate Mindestlaufzeit, Abrechnung jährlich im Voraus.
-            Ab 151 Beschäftigten erstellen wir Ihnen ein individuelles Angebot.
+            Ab 151 Beschäftigten erstellen wir dir ein individuelles Angebot.
         </p>
     </div>
     <?php
@@ -5088,20 +5383,51 @@ add_shortcode('livento_tarif', function ($atts) {
         return '<p>Für diesen Tarif sind derzeit keine Inhalte freigeschaltet.</p>';
     }
 
+    // v1.34.0: Einstiegspreis der Familie. Muss sichtbar sein, weil er als lowPrice
+    // ins Product-Schema geht — stuende er nur im Schema, waere das ein Preis-Mismatch.
+    $from       = isset($family['price_from']) && is_array($family['price_from']) ? $family['price_from'] : null;
+    $from_ok    = $from && isset($from['yearly_net']) && $from['yearly_net'] !== null;
+    $highlights = livento_cc_tariff_highlights($family);
+
     ob_start();
     livento_cc_tariff_styles();
     ?>
     <div class="lv-tarif-detail">
         <header class="lv-tarif-detail__head">
-            <h2><?php echo esc_html($family['name']); ?></h2>
+            <h1><?php echo esc_html($family['name']); ?></h1>
             <?php if (!empty($family['claim'])) : ?><p class="lv-lead"><?php echo esc_html($family['claim']); ?></p><?php endif; ?>
+
+            <?php if ($from_ok) : ?>
+                <p class="lv-tarif-detail__from">
+                    <span class="lv-tarif-detail__from-label">ab</span>
+                    <strong><?php echo esc_html(livento_cc_eur($from['yearly_net'])); ?></strong>
+                    <span class="lv-tarif-detail__from-unit">/ Jahr</span>
+                    <span class="lv-tarif-detail__from-tax">
+                        <?php echo esc_html(livento_cc_tax_note($from)); ?><?php
+                        $from_net = livento_cc_net_note($from);
+                        if ($from_net) {
+                            echo ' · ' . esc_html($from_net);
+                        }
+                        ?>
+                    </span>
+                </p>
+            <?php endif; ?>
+
             <?php if (!empty($family['public_description'])) : ?>
                 <div class="lv-tarif-detail__text"><?php echo wp_kses_post(wpautop($family['public_description'])); ?></div>
+            <?php endif; ?>
+
+            <?php if (!empty($highlights)) : ?>
+                <ul class="lv-tarif-detail__highlights">
+                    <?php foreach ($highlights as $highlight) : ?>
+                        <li><?php echo esc_html($highlight); ?></li>
+                    <?php endforeach; ?>
+                </ul>
             <?php endif; ?>
         </header>
 
         <div class="lv-calc" data-lv-calc>
-            <label for="lv-detail-users">Wie viele Beschäftigte haben Sie?</label>
+            <label for="lv-detail-users">Wie viele Beschäftigte hast du?</label>
             <input type="number" id="lv-detail-users" min="1" step="1" value="<?php echo esc_attr($users); ?>" data-lv-calc-input>
             <span class="lv-calc__hint">12 Monate Laufzeit, jährliche Abrechnung, inkl. MwSt.</span>
         </div>
@@ -5147,7 +5473,12 @@ add_shortcode('livento_tarif', function ($atts) {
                         <?php else : ?>
                             <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['yearly_net'])); ?><small> / Jahr</small></strong>
                             <span data-lv-price-sub>
-                                entspricht <?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?> / Monat · <?php echo esc_html(livento_cc_tax_note($price)); ?>
+                                entspricht <?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?> / Monat · <?php echo esc_html(livento_cc_tax_note($price)); ?><?php
+                                $variant_net = livento_cc_net_note($price);
+                                if ($variant_net) {
+                                    echo ' · ' . esc_html($variant_net);
+                                }
+                                ?>
                             </span>
                         <?php endif; ?>
                     </div>
@@ -5190,8 +5521,6 @@ add_shortcode('livento_tarif', function ($atts) {
             <?php endif; ?>
         </section>
         <?php endforeach; ?>
-
-        <?php echo livento_cc_tariff_schema($family, $variants, $users); ?>
     </div>
     <?php
     livento_cc_tariff_calc_script();
@@ -5217,6 +5546,37 @@ function livento_cc_tariff_cta($bundle, $price, $users) {
          . 'Jetzt buchen</a>';
 }
 
+/**
+ * v1.34.0: Highlights einer Familie als Liste von Strings.
+ *
+ * Die Spalte existiert seit v3.157.0 und ist gut gepflegt — sie wurde bis hier nur
+ * auf der Landing gerendert, nicht auf der Detailseite. Genau diese sieben Punkte
+ * ("Nachweisuebersicht fuer das ganze Team auf Knopfdruck") waren der Unterschied
+ * zwischen einer leblosen und einer verkaufenden Seite.
+ * Wie bei livento_cc_faq_items(): PostgREST liefert das JSON i. d. R. dekodiert,
+ * String-Fallback zur Sicherheit; leere Eintraege fliegen raus.
+ */
+function livento_cc_tariff_highlights($family) {
+    $raw = isset($family['highlights']) ? $family['highlights'] : array();
+    if (is_string($raw)) {
+        $raw = json_decode($raw, true);
+    }
+    if (!is_array($raw)) {
+        return array();
+    }
+    $items = array();
+    foreach ($raw as $entry) {
+        if (!is_scalar($entry)) {
+            continue;
+        }
+        $text = trim((string) $entry);
+        if ($text !== '') {
+            $items[] = $text;
+        }
+    }
+    return $items;
+}
+
 /** Themen-Slug lesbar machen (die Labels leben in Campus Connect; hier reicht eine Normalisierung). */
 function livento_cc_topic_label($slug) {
     if ($slug === '_sonstige' || $slug === '') {
@@ -5225,37 +5585,11 @@ function livento_cc_topic_label($slug) {
     return ucfirst(str_replace('-', ' ', $slug));
 }
 
-/** Schema.org: die Familie als Product mit Offer je Variante. */
-function livento_cc_tariff_schema($family, $variants, $users) {
-    $offers = array();
-    foreach ($variants as $variant) {
-        $price = livento_cc_calc_price($variant['plan'], $users);
-        if ($price['mode'] === 'individual') {
-            continue;
-        }
-        $offers[] = array(
-            '@type'         => 'Offer',
-            'name'          => $variant['bundle']['name'],
-            'price'         => number_format($price['yearly_net'], 2, '.', ''),
-            'priceCurrency' => 'EUR',
-            'availability'  => 'https://schema.org/InStock',
-            'url'           => get_permalink(),
-        );
-    }
-    if (empty($offers)) {
-        return '';
-    }
-
-    $schema = array(
-        '@context'    => 'https://schema.org',
-        '@type'       => 'Product',
-        'name'        => $family['name'],
-        'description' => $family['claim'] ?: $family['public_description'],
-        'brand'       => array('@type' => 'Brand', 'name' => 'Livento'),
-        'offers'      => $offers,
-    );
-    return '<script type="application/ld+json">' . wp_json_encode($schema) . '</script>';
-}
+/* v1.34.0: livento_cc_tariff_schema() ist entfallen. Sie gab das Product im Body aus,
+ * mit einem Offer je Variante zum Festpreis fuer die gerade eingestellte Teamgroesse —
+ * also einem Preis, der sich mit jeder Eingabe im Rechner aenderte. Ersetzt durch
+ * livento_cc_jsonld_tariff_product() (AggregateOffer, lowPrice aus price_from), das
+ * ueber den SEO-Pfad in den <head> bzw. den Rank-Math-@graph geht. */
 
 /** Angebotsrechner: holt die Preise vom REST-Endpunkt, rechnet NICHT selbst. */
 function livento_cc_tariff_calc_script() {
@@ -5278,17 +5612,20 @@ function livento_cc_tariff_calc_script() {
             var main = box.querySelector('[data-lv-price-main]');
             var sub  = box.querySelector('[data-lv-price-sub]');
 
+            // v1.34.0: net_note kommt fertig formatiert vom Server (eine Preisquelle).
+            var net = info.net_note ? ' · ' + info.net_note : '';
+
             if (info.mode === 'individual') {
                 main.textContent = 'Individuelles Angebot';
                 sub.textContent  = isDetail
                     ? 'Ab 151 Beschäftigten rechnen wir individuell.'
-                    : 'Wir rechnen Ihnen das gern durch.';
+                    : 'Wir rechnen dir das gern durch.';
             } else if (isDetail) {
                 main.innerHTML  = info.yearly + '<small> / Jahr</small>';
-                sub.textContent = 'entspricht ' + info.monthly + ' / Monat · ' + info.tax_note;
+                sub.textContent = 'entspricht ' + info.monthly + ' / Monat · ' + info.tax_note + net;
             } else {
                 main.innerHTML  = info.monthly + '<small> / Monat</small>';
-                sub.textContent = info.yearly + ' pro Jahr · ' + info.tax_note;
+                sub.textContent = info.yearly + ' pro Jahr · ' + info.tax_note + net;
             }
         }
 
@@ -5367,7 +5704,18 @@ function livento_cc_tariff_styles() {
     .lv-btn--ghost:hover{background:#004D33;color:#fff}
     .lv-tarife__foot{margin-top:1.5rem;text-align:center;font-size:.85rem;color:#5c6a70}
     .lv-tarif-detail__head{max-width:48rem;margin-bottom:1.5rem}
+    .lv-tarif-detail__head h1{margin:0 0 .35rem}
     .lv-lead{font-size:1.1rem;color:#5c6a70}
+    /* v1.34.0: "ab X / Jahr" — derselbe Betrag, der als lowPrice ins Schema geht. */
+    .lv-tarif-detail__from{display:flex;align-items:baseline;flex-wrap:wrap;gap:.4rem;margin:1rem 0 1.25rem}
+    .lv-tarif-detail__from-label{font-size:.95rem;color:#5c6a70}
+    .lv-tarif-detail__from strong{font-size:1.9rem;line-height:1.1;color:#1d2b30}
+    .lv-tarif-detail__from-unit{font-size:.95rem;color:#5c6a70}
+    .lv-tarif-detail__from-tax{flex-basis:100%;font-size:.85rem;color:#5c6a70}
+    .lv-tarif-detail__highlights{list-style:none;margin:1.25rem 0 0;padding:0;display:grid;gap:.55rem}
+    .lv-tarif-detail__highlights li{position:relative;padding-left:1.6rem;font-size:.97rem}
+    /* Haken als ::before statt als Listenpunkt: bleibt Text, kostet kein Bild. */
+    .lv-tarif-detail__highlights li::before{content:"✓";position:absolute;left:0;top:0;color:#004D33;font-weight:700}
     .lv-variant{border:1px solid #e3e8ea;border-radius:16px;padding:1.25rem;margin-bottom:1.25rem;background:#fff}
     .lv-variant__bar{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
     .lv-variant__bar h3{margin:0}

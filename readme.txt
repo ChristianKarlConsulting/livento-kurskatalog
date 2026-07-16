@@ -3,12 +3,21 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.33.0
+Stable tag: 1.34.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.34.0 =
+* SEO fuer die Ticket-Detailseiten (/e-learning/<slug>/): Diese Seiten hatten bisher WEDER Title (der Browser zeigte das rohe URL-Kuerzel "pflicht-ticket") NOCH Meta-Description, Canonical, og-Tags oder eine H1-Ueberschrift. Ursache: Die SEO-Logik des Plugins haengt am ?kurs=-Gate und hat diese Seiten nie erreicht — sie sind, anders als die Kursdetailseiten, echte WordPress-Seiten. Neu erkennt ein eigener Hook sie am Seiten-Slug (Seiten-Slug == Familien-Slug ist ohnehin Pflicht) und setzt Title, Meta-Description, Canonical und og-Tags aus public_tariffs.
+* Die gepflegten "Leistungen" (highlights) erscheinen jetzt auch auf der Detailseite — bisher wurden sie nur auf der Uebersicht /e-learning/ gerendert, obwohl sie je Ticket vollstaendig hinterlegt sind. H2 ist zu H1 geworden.
+* Neue Spalte meta_title in Campus Connect (Migration v3.164.0) fuer einen suchtauglichen Titel; leer bedeutet Rueckfall auf "{Name} | Livento". BENOETIGT Campus Connect v3.164.0 — aeltere Staende liefern die Spalte nicht, dann greift der Rueckfall.
+* Schema korrigiert: Die Seite sendete zwei widerspruechliche JSON-LD-Bloecke — Rank Math deklarierte sie als Article, das Plugin separat als Product mit FIXEM Preis, obwohl der Preis staffelabhaengig ist. Jetzt ein Product mit AggregateOffer (lowPrice aus price_from, also aus derselben Berechnung wie der sichtbare Preis), dazu FAQPage und BreadcrumbList im Rank-Math-@graph; der Article-Knoten entfaellt auf diesen Seiten. Die letzte Brotkrume zeigt den Ticketnamen statt des rohen Slugs.
+* Der Einstiegspreis ("ab X EUR / Jahr") steht jetzt sichtbar im Seitenkopf — sonst waere lowPrice im Schema ein Preis-Mismatch zur Seite.
+* Zu jedem Preis wird zusaetzlich der Nettobetrag ausgewiesen (Einrichtungen kalkulieren netto, die Kasse bucht brutto). Berechnet serverseitig im REST-Format, damit es keine zweite Preis-Mathematik im Browser gibt.
+* Durchgaengig Du-Form: Der Angebotsrechner siezte ("Wie viele Beschaeftigte haben Sie?"), waehrend direkt daneben geduzt wurde.
 
 = 1.33.0 =
 * Tarif-CTA-Buttons in CI-Gruen (#004D33) statt Petrol; der stoerende Hover-Farbwechsel wurde entfernt (Hover behaelt dieselbe Farbe). Standard-Basis der Tarif-Detailseiten von "selbstlernkurse" auf "e-learning" geaendert — die "Kurse & Details ansehen"-Links zeigen jetzt auf /e-learning/<slug>/ (per Shortcode-Attribut base="…" weiterhin ueberschreibbar).
