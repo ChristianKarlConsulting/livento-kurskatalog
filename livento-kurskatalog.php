@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.41.0
+ * Version:           1.42.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -5346,6 +5346,53 @@ function livento_cc_cheapest_plan($family, $users) {
     return $best;
 }
 
+/**
+ * v1.42.0: Der niedrigste Kopfpreis einer Familie — "ab X pro Person und Monat".
+ *
+ * Die Familien-Karte zeigt bewusst den Kopfpreis, nicht die Teamsumme. Vorher stand dort
+ * der Gesamtpreis fuer 20 Beschaeftigte MIT "pro Person" darunter — die Summe las sich damit
+ * wie ein Kopfpreis (das 20-Fache). Diese Funktion liefert den kleinsten Monatsbetrag je Kopf
+ * (brutto) ueber alle Plaene und Staffeln und ob er von der Teamgroesse abhaengt ("ab").
+ *
+ * flat     => bester Kopfpreis am oberen Ende der Pauschale (Betrag / max_users)
+ * per_user => der Kopfbetrag selbst (min_amount hebt ihn nur fuer kleine Teams, nicht den Boden)
+ * individual / ohne Betrag => zaehlt nicht mit
+ */
+function livento_cc_family_per_user_floor($family) {
+    $vals    = array();
+    $is_flat = false;
+
+    foreach ((array) $family['plans'] as $plan) {
+        $months = max(1, (int) (isset($plan['contract_months']) ? $plan['contract_months'] : 12));
+        $tiers  = isset($plan['tiers']) && is_array($plan['tiers']) ? $plan['tiers'] : array();
+
+        foreach ($tiers as $tier) {
+            $mode = isset($tier['pricing_mode']) ? $tier['pricing_mode'] : '';
+            if ($mode === 'individual' || !isset($tier['amount']) || $tier['amount'] === null || $tier['amount'] === '') {
+                continue;
+            }
+            $amount    = (float) $tier['amount'];
+            $per_month = (isset($tier['amount_unit']) && $tier['amount_unit'] === 'month') ? $amount : $amount / $months;
+
+            if ($mode === 'flat') {
+                // Pauschale: der guenstigste Kopfpreis entsteht am oberen Ende der Staffel.
+                $max       = (isset($tier['max_users']) && $tier['max_users']) ? (int) $tier['max_users'] : 1;
+                $per_month = $max > 0 ? $per_month / $max : $per_month;
+                $is_flat   = true;
+            }
+            $vals[] = $per_month;
+        }
+    }
+
+    if (empty($vals)) {
+        return null;
+    }
+    $floor = round(min($vals), 2);
+    // "ab", sobald der Kopfpreis variiert: Pauschale, Staffel oder unterschiedliche Plaene.
+    $is_from = $is_flat || round(min($vals), 2) !== round(max($vals), 2);
+    return array('monthly' => $floor, 'is_from' => $is_from);
+}
+
 function livento_cc_eur($value) {
     return number_format((float) $value, 2, ',', '.') . ' €';
 }
@@ -5528,6 +5575,16 @@ add_action('rest_api_init', function () {
                     'total_note'    => livento_cc_total_note($price),
                     'per_user_note' => livento_cc_per_user_note($price),
                     'scope_note'    => livento_cc_scope_note($price),
+                    // v1.42.0: Der Kopfpreis fuer die eingegebene Teamgroesse — genau die kleine
+                    // Zahl, die die Familien-Karte gross zeigt. Kopfpreis = Teamsumme / Kopfzahl
+                    // (gilt fuer flat wie per_user). Fertig formatiert von hier, damit im Browser
+                    // keine zweite Preis-Mathematik entsteht (vgl. net_note oben).
+                    'head_monthly'  => (isset($price['monthly_net']) && !empty($price['users']))
+                        ? livento_cc_eur(round(((float) $price['monthly_net']) / max(1, (int) $price['users']), 2))
+                        : null,
+                    'head_net'      => (isset($price['monthly_net']) && !empty($price['users']) && empty($price['is_vat_exempt']))
+                        ? livento_cc_eur(round(((float) $price['monthly_net']) / max(1, (int) $price['users']) / (1 + LIVENTO_CC_VAT_RATE), 2)) . ' netto'
+                        : null,
                 );
             };
 
@@ -5564,6 +5621,19 @@ add_shortcode('livento_tarife', function ($atts) {
         return '<p>Die Tarife sind derzeit nicht abrufbar.</p>';
     }
 
+    // v1.42.0: Merchandising-Reihenfolge der Landingpage-Karten — KomplettTicket links,
+    // PflichtTicket in die Mitte (Anker-Position), RollenTicket rechts. Bewusst nur hier
+    // fuers Schaufenster; die kanonische sort_order in der DB bleibt unangetastet. Familien
+    // ohne feste Position folgen dahinter in ihrer sort_order.
+    $card_order = array('komplettticket' => 0, 'pflichtticket' => 1, 'rollenticket' => 2);
+    usort($families, function ($a, $b) use ($card_order) {
+        $ra = isset($card_order[$a['key']]) ? $card_order[$a['key']] : 99;
+        $rb = isset($card_order[$b['key']]) ? $card_order[$b['key']] : 99;
+        return ($ra === $rb)
+            ? (int) $a['sort_order'] - (int) $b['sort_order']
+            : $ra - $rb;
+    });
+
     $users = max(1, (int) $atts['users']);
     $base  = trim($atts['base'], '/');
 
@@ -5584,9 +5654,6 @@ add_shortcode('livento_tarife', function ($atts) {
 
         <div class="lv-tarife__grid">
             <?php foreach ($families as $family) :
-                $best  = livento_cc_cheapest_plan($family, $users);
-                $price = $best ? $best['price'] : array('mode' => 'individual');
-
                 // Kennzahlen ueber alle Varianten der Familie.
                 $courses = 0; $hours = 0; $variants = 0;
                 foreach ((array) $family['plans'] as $plan) {
@@ -5607,24 +5674,29 @@ add_shortcode('livento_tarife', function ($atts) {
                     <p class="lv-tarif__claim"><?php echo esc_html($family['claim']); ?></p>
                 <?php endif; ?>
 
+                <?php
+                    // v1.42.0: Die Karte nennt den KOPFPREIS je Monat, nicht die Teamsumme.
+                    // Vorher stand hier der Gesamtpreis fuer 20 Beschaeftigte MIT "pro Person"
+                    // darunter — die Teamsumme las sich damit wie ein Kopfpreis (das 20-Fache),
+                    // eine schlicht falsche Aussage. Erstaufbau: der niedrigste Kopfpreis der
+                    // Familie ("ab X", solange die Teamgroesse noch nicht eingegeben ist). Sobald
+                    // der Besucher im Rechner eine Zahl eintraegt, ersetzt paint() (JS, siehe
+                    // render()) das durch den EXAKTEN Kopfpreis fuer diese Teamgroesse.
+                    $floor = livento_cc_family_per_user_floor($family);
+                ?>
                 <div class="lv-tarif__price" data-lv-price>
-                    <?php if ($price['mode'] === 'individual') : ?>
+                    <?php if (!$floor) : ?>
                         <strong data-lv-price-main>Individuelles Angebot</strong>
                         <span data-lv-price-sub>Wir rechnen dir das gern durch.</span>
                     <?php else :
-                        // v1.40.0: Auch die Landingpage-Karte nennt den Bezug. Sie zeigt den
-                        // Monatsbetrag gross ("29,00 € / Monat") — ohne Zusatz laedt gerade das
-                        // zur Kopfpreis-Lesart ein. Baugleich mit dem JS in paint(), damit der
-                        // Erstaufbau und die erste Rechnereingabe nicht springen.
-                        $card_sub = array_filter(array(
-                            livento_cc_eur($price['yearly_net']) . ' pro Jahr',
-                            livento_cc_scope_note($price),
-                            livento_cc_tax_note($price),
-                            livento_cc_net_note($price),
-                        ));
+                        $head_sub = array(
+                            'pro Beschäftigtem',
+                            'inkl. MwSt',
+                            livento_cc_eur(round($floor['monthly'] / (1 + LIVENTO_CC_VAT_RATE), 2)) . ' netto',
+                        );
                     ?>
-                        <strong data-lv-price-main><?php echo esc_html(livento_cc_eur($price['monthly_net'])); ?><small> / Monat</small></strong>
-                        <span data-lv-price-sub><?php echo esc_html(implode(' · ', $card_sub)); ?></span>
+                        <strong data-lv-price-main><?php echo esc_html(($floor['is_from'] ? 'ab ' : '') . livento_cc_eur($floor['monthly'])); ?><small> / Monat</small></strong>
+                        <span data-lv-price-sub><?php echo esc_html(implode(' · ', $head_sub)); ?></span>
                     <?php endif; ?>
                 </div>
 
@@ -6187,9 +6259,6 @@ function livento_cc_tariff_calc_script() {
             var main = box.querySelector('[data-lv-price-main]');
             var sub  = box.querySelector('[data-lv-price-sub]');
 
-            // v1.34.0: net_note kommt fertig formatiert vom Server (eine Preisquelle).
-            var net = info.net_note ? ' · ' + info.net_note : '';
-
             if (info.mode === 'individual') {
                 main.textContent = 'Individuelles Angebot';
                 sub.textContent  = isDetail
@@ -6211,13 +6280,18 @@ function livento_cc_tariff_calc_script() {
                 // faellt nichts vom Besucher hier hinein.
                 sub.innerHTML = esc(l1) + '<br>' + esc(l2);
             } else {
-                main.innerHTML  = info.monthly + '<small> / Monat</small>';
-                sub.textContent = join([info.yearly + ' pro Jahr', info.scope_note]) + ' · ' + info.tax_note + net;
+                // v1.42.0: Familien-Karte — der Kopfpreis fuer die eingegebene Teamgroesse,
+                // NIE die Teamsumme. "ab" faellt hier weg: nach der Eingabe ist es der exakte
+                // Kopfpreis (PflichtTicket sinkt mit der Teamgroesse; Komplett/Rollen konstant).
+                main.innerHTML  = info.head_monthly + '<small> / Monat</small>';
+                sub.textContent = join(['pro Beschäftigtem', info.tax_note, info.head_net]);
             }
         }
 
         function render(data) {
-            // Landingpage: eine Karte je Familie ("ab X").
+            // v1.42.0: Familien-Karte — Kopfpreis fuer die eingegebene Teamgroesse. Der
+            // Erstaufbau zeigt den "ab"-Kopfpreis; sobald der Besucher eine Zahl eintraegt,
+            // ersetzt paint() ihn durch den exakten Kopfpreis (die Teamsumme wird NIE gezeigt).
             document.querySelectorAll('[data-lv-family]').forEach(function (card) {
                 paint(card, data.families[card.getAttribute('data-lv-family')], false);
             });

@@ -3,12 +3,18 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.41.0
+Stable tag: 1.42.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.42.0 =
+* Die Tarif-Karten auf /e-learning/ nannten den Gesamtpreis fuer 20 Beschaeftigte, hefteten aber "pro Person" darunter — die Teamsumme las sich damit wie ein Kopfpreis, also das 20-Fache des tatsaechlichen. Aus 99 € pro Person und Jahr (KomplettTicket) wurde auf der Karte "1.980 € pro Jahr · pro Person", aus 49 € (RollenTicket) "980 € pro Jahr · pro Person". Jetzt zeigt jede Karte den echten Kopfpreis je Monat: KomplettTicket 8,25 €, RollenTicket 4,08 €, PflichtTicket "ab 1,49 €" (Pauschale/Staffel, haengt an der Teamgroesse).
+* Der Rechner ist an die Kopfpreise gekoppelt: der Erstaufbau zeigt den "ab"-Preis, nach Eingabe der Teamgroesse den EXAKTEN Kopfpreis (PflichtTicket sinkt 1,93 → 1,79 → 1,49; Komplett/Rollen bleiben konstant). Die grosse absolute Jahressumme faellt weg — sie schreckte nur ab, statt zu ueberzeugen.
+* Reihenfolge der Karten: KomplettTicket links, PflichtTicket in die Mitte (Anker-Position), RollenTicket rechts. Nur die Schaufenster-Reihenfolge; die kanonische Sortierung in der Datenbank bleibt unangetastet.
+* Kopfpreis = Teamsumme / Kopfzahl, weiterhin serverseitig gerechnet — im Browser wird kein Preis gerechnet, damit keine zweite Preis-Mathematik entsteht.
 
 = 1.41.0 =
 * Die Kursliste nannte die Stundeneinheit falsch: Der Code verglich hours_unit gegen 'stunden', in der Datenbank stehen aber 'Zeitstunden' (176 Kurse) und 'unterrichtsstunden' (5). Der Vergleich traf keinen von beiden, also stand bei ALLEN Kursen 'UE'. Ein Kurs mit 2 Zeitstunden (120 Min.) erschien damit als '2 UE' (90 Min.) - wir haben unsere Kurse oeffentlich kuerzer dargestellt, als sie sind. Bei Pflichtunterweisungen ist diese Zahl die Nachweisgrundlage.
