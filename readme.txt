@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.40.0
+Stable tag: 1.41.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.41.0 =
+* Die Kursliste nannte die Stundeneinheit falsch: Der Code verglich hours_unit gegen 'stunden', in der Datenbank stehen aber 'Zeitstunden' (176 Kurse) und 'unterrichtsstunden' (5). Der Vergleich traf keinen von beiden, also stand bei ALLEN Kursen 'UE'. Ein Kurs mit 2 Zeitstunden (120 Min.) erschien damit als '2 UE' (90 Min.) - wir haben unsere Kurse oeffentlich kuerzer dargestellt, als sie sind. Bei Pflichtunterweisungen ist diese Zahl die Nachweisgrundlage.
+* Neu je Kurs: die Regelwerke, auf denen er beruht, mit Fassung - z. B. 'Grundlage: TRBA 250 (Ausgabe November 2025) - BioStoffV (Fassung 2013)'. Das ist bewusst eine Tatsache, keine Pruefbehauptung: Campus Connect v3.171.0 hat 'Rechtsstand geprueft' aus 355 Kursinhalten entfernt, weil es ein Stempel war. Wer die Fassung nennt, sagt etwas Nachpruefbares - und ein Wettbewerber auf der 2018er TRBA 250 kann diesen Satz nicht schreiben.
+* Quelle ist public_bundle_courses (Campus Connect v3.175.0); gepflegt wird unter Einstellungen > Kurse > Regelwerke und im Kursdialog.
 
 = 1.40.0 =
 * Der Preis auf den Ticket-Seiten sagt jetzt, WORAUF er sich bezieht. Bis hier stand dort "348,00 € / Jahr" — direkt neben einem Rechner, der auf 10 Beschaeftigte voreingestellt ist, aber ohne einen Halbsatz, der die beiden Zahlen zueinander ins Verhaeltnis setzt. Ein Erstbesucher las daraus "348 € pro Kopf" und rechnete sich das PflichtTicket bis zu 15-fach zu teuer. Tatsaechlich sind 348 € der Pauschalpreis fuer bis zu 15 Personen, also 1,93 € je Person und Monat — die Seite versteckte damit ausgerechnet ihr staerkstes Argument.

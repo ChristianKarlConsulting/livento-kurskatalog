@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.40.0
+ * Version:           1.41.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -5194,6 +5194,54 @@ function livento_cc_get_bundle_courses($bundle_id) {
     return $data;
 }
 
+/**
+ * Beschriftung der Stundeneinheit (v1.41.0).
+ *
+ * Vorher stand hier `$u === 'stunden' ? 'Std.' : 'UE'`. In der Datenbank stehen aber
+ * 'Zeitstunden' (176 Kurse) und 'unterrichtsstunden' (5) — der Vergleich traf KEINEN
+ * von beiden, also zeigte die Seite ausnahmslos 'UE'. Ein Kurs mit 2 Zeitstunden
+ * (120 Min.) stand damit als '2 UE' (90 Min.) auf der Verkaufsseite: Wir haben unsere
+ * Kurse kuerzer dargestellt, als sie sind — bei Pflichtunterweisungen ist das die
+ * Nachweisgrundlage.
+ */
+function livento_cc_hours_unit_label($unit) {
+    $u = strtolower(trim((string) $unit));
+    if ($u === 'unterrichtsstunden' || $u === 'ue') {
+        return 'UE';
+    }
+    // Zeitstunden, 'stunden' und alles Unbekannte: Zeitstunden sind der Normalfall.
+    return 'Std.';
+}
+
+/**
+ * Regelwerke eines Kurses als Fliesstext (v1.41.0).
+ *
+ * Bewusst eine TATSACHE, keine Pruefbehauptung: 'TRBA 250 (Ausgabe November 2025)'
+ * statt 'geprueft von …'. Campus Connect v3.171.0 hat die Behauptung
+ * 'Rechtsstand geprueft' aus 355 Kursinhalten entfernt, weil sie ein Stempel war;
+ * sie kommt hier nicht durch die Hintertuer zurueck. Wer die Fassung nennt, sagt
+ * etwas Nachpruefbares — und ein Wettbewerber auf der 2018er TRBA kann es nicht.
+ */
+function livento_cc_course_norms_line($course) {
+    if (empty($course['norms']) || !is_array($course['norms'])) {
+        return '';
+    }
+    $teile = array();
+    foreach ($course['norms'] as $n) {
+        if (empty($n['key'])) {
+            continue;
+        }
+        $t = esc_html($n['key']);
+        if (!empty($n['edition_label'])) {
+            // Nur die Kurzform in Klammern — die volle GMBl-Angabe spraengt die Zeile.
+            $kurz = preg_replace('/,.*$/', '', $n['edition_label']);
+            $t .= ' <span class="lv-course__norm-ed">(' . esc_html($kurz) . ')</span>';
+        }
+        $teile[] = $t;
+    }
+    return $teile ? implode(' · ', $teile) : '';
+}
+
 /** Familie per Schluessel oder Slug. */
 function livento_cc_find_family($key_or_slug) {
     foreach (livento_cc_get_tariffs() as $family) {
@@ -5863,13 +5911,19 @@ add_shortcode('livento_tarif', function ($atts) {
                                                 <em><?php echo esc_html($course['course_number']); ?></em> ·
                                             <?php endif; ?>
                                             <?php echo esc_html(rtrim(rtrim(number_format((float) $course['total_hours'], 1, ',', '.'), '0'), ',')); ?>
-                                            <?php echo esc_html($course['hours_unit'] === 'stunden' ? 'Std.' : 'UE'); ?> ·
+                                            <?php echo esc_html(livento_cc_hours_unit_label($course['hours_unit'])); ?> ·
                                             <?php echo esc_html((int) $course['module_count']); ?> Module ·
                                             <?php echo esc_html((int) $course['lesson_count']); ?> Lektionen
                                             <?php if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) : ?>
                                                 · <strong>Zertifikat</strong>
                                             <?php endif; ?>
                                         </span>
+                                        <?php $normen = livento_cc_course_norms_line($course); ?>
+                                        <?php if ($normen) : ?>
+                                            <span class="lv-course__norms">
+                                                Grundlage: <?php echo wp_kses_post($normen); ?>
+                                            </span>
+                                        <?php endif; ?>
                                     </li>
                                 <?php endforeach; ?>
                             </ul>
@@ -6354,6 +6408,9 @@ function livento_cc_tariff_styles() {
     .lv-course__title{display:block;font-weight:600}
     .lv-course__meta{display:block;font-size:.82rem;color:#5c6a70}
     .lv-course__meta em{font-style:normal;font-family:ui-monospace,monospace}
+    /* v1.41.0: Regelwerke je Kurs. Zurueckhaltend — es ist ein Beleg, keine Werbung. */
+    .lv-course__norms{display:block;margin-top:2px;font-size:.78rem;color:#6b7a80;line-height:1.45}
+    .lv-course__norm-ed{color:#8a969b}
     @media(max-width:640px){.lv-variant__bar{flex-direction:column;align-items:flex-start}}
     </style>
     <?php
