@@ -6650,7 +6650,7 @@ add_action('woocommerce_after_single_product_summary', function () {
             echo '<em>' . esc_html($course['course_number']) . '</em> · ';
         }
         echo esc_html(rtrim(rtrim(number_format((float) $course['total_hours'], 1, ',', '.'), '0'), ',')) . ' '
-           . esc_html($course['hours_unit'] === 'stunden' ? 'Std.' : 'UE') . ' · '
+           . esc_html(livento_cc_hours_unit_label($course['hours_unit'])) . ' · '
            . esc_html((int) $course['module_count']) . ' Module · '
            . esc_html((int) $course['lesson_count']) . ' Lektionen';
         if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) {
