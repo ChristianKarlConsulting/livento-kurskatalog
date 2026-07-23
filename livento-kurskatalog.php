@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.42.0
+ * Version:           1.43.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,26 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.43.0: Testzugang ueber die Ticketseite anfragen (Campus Connect Feature 158).
+ *          Neuer Abschnitt "Erst testen, dann entscheiden" auf den Ticket-Detailseiten
+ *          (Anker #testzugang) mit eigenem Formular; unter jedem Kaufknopf steht dezent
+ *          "oder erst 14 Tage testen". Der Kaufknopf bleibt bewusst die Hauptaktion —
+ *          ein gleich grosser Testknopf daneben holt zuverlaessig auch die ab, die
+ *          ohnehin gekauft haetten.
+ *          Das Formular geht an den WP-REST-Proxy /wp-json/livento/v1/trial, der die
+ *          Anfrage serverseitig an die Campus-Connect-Function submit-trial-request
+ *          weiterreicht (kein CORS, anon-Schluessel bleibt aus der Seite draussen).
+ *          Nach bestaetigtem Eingang Redirect auf /danke-anfrage/ — damit ist die
+ *          Conversion als URL-Ziel messbar, nicht nur als dataLayer-Event.
+ *          ZWEI Haekchen: Datenschutzhinweis (Pflicht) und Werbeeinwilligung
+ *          (freiwillig). Den Testzugang von der Werbeeinwilligung abhaengig zu machen
+ *          waere eine unzulaessige Kopplung — die Datenverarbeitung selbst ist
+ *          Vertragsanbahnung und braucht keine Einwilligung.
+ *          Die bundle_id der angesehenen Setting-Variante reist mit, damit in Campus
+ *          Connect genau das angefragte Ticket freigegeben wird. Sperre je IP und
+ *          E-Mail per Transient, Honeypot wie beim Lead-Formular. Neue Diagnose im
+ *          Admin-Tab "Einstellungen".
  *
  * v1.40.0: Der Preis sagt endlich, WORAUF er sich bezieht. Bis hier stand auf den
  *          Ticket-Seiten "348,00 € / Jahr" — direkt neben einem Rechner, der auf 10
@@ -6048,6 +6068,10 @@ add_shortcode('livento_tarif', function ($atts) {
             </section>
         <?php endif; ?>
 
+        <?php // v1.43.0: Testzugang. Steht VOR dem Schluss-CTA, damit der Kaufweg das
+              // letzte Wort behaelt. ?>
+        <?php echo livento_cc_trial_section($variants); ?>
+
         <?php // v1.36.0: Schluss-CTA. Wer bis hierher gelesen hat, soll nicht wieder
               // hochscrollen muessen, um zum Rechner zu kommen. ?>
         <section class="lv-tarif-cta">
@@ -6069,7 +6093,8 @@ function livento_cc_tariff_cta($bundle, $price, $users) {
     // Individuell (ab 151 Beschaeftigte) oder ohne WooCommerce-Produkt: kein Warenkorb.
     if ($price['mode'] === 'individual' || empty($bundle['wc_product_id'])) {
         $anchor = '#angebot';
-        return '<a class="lv-btn lv-btn--ghost" href="' . esc_url($anchor) . '">Angebot anfordern</a>';
+        return '<a class="lv-btn lv-btn--ghost" href="' . esc_url($anchor) . '">Angebot anfordern</a>'
+             . livento_cc_trial_link($bundle);
     }
 
     $url = !empty($bundle['wc_checkout_url'])
@@ -6080,7 +6105,325 @@ function livento_cc_tariff_cta($bundle, $price, $users) {
         );
 
     return '<a class="lv-btn" href="' . esc_url($url) . '" data-lv-cart="' . esc_attr((int) $bundle['wc_product_id']) . '">'
-         . 'Jetzt buchen</a>';
+         . 'Jetzt buchen</a>'
+         . livento_cc_trial_link($bundle);
+}
+
+/**
+ * v1.43.0: Dezenter Textlink zum Testzugang unter dem Kaufknopf.
+ *
+ * Bewusst KEIN gleichrangiger Knopf: Der Kaufknopf bleibt die Hauptaktion. Ein gleich
+ * grosser "Kostenlos testen" daneben holt zuverlaessig auch die ab, die ohnehin gekauft
+ * haetten — aus einem Kauf werden dann 14 Tage Wartezeit mit ungewissem Ausgang.
+ *
+ * Die bundle_id reist im data-Attribut mit, damit das Formular weiter unten genau die
+ * Setting-Variante uebernimmt, die der Besucher gerade ansieht.
+ */
+function livento_cc_trial_link($bundle) {
+    if (empty($bundle['id'])) {
+        return '';
+    }
+    return '<a class="lv-trial-link" href="#testzugang"'
+         . ' data-lv-trial-bundle="' . esc_attr($bundle['id']) . '"'
+         . ' data-lv-trial-name="' . esc_attr((string) $bundle['name']) . '">'
+         . 'oder erst 14 Tage testen</a>';
+}
+
+/**
+ * v1.43.0: Abschnitt "Erst testen, dann entscheiden" samt Anfrageformular.
+ *
+ * Erklaert zuerst, was passiert — ein Formular ohne Kontext beantwortet die Frage nicht,
+ * die der Besucher an dieser Stelle hat ("was kostet mich das, und was passiert danach?").
+ */
+function livento_cc_trial_section($variants) {
+    if (empty($variants)) {
+        return '';
+    }
+
+    $options = '';
+    foreach ($variants as $v) {
+        if (empty($v['bundle']['id'])) { continue; }
+        $options .= '<option value="' . esc_attr($v['bundle']['id']) . '">'
+                  . esc_html((string) $v['bundle']['name']) . '</option>';
+    }
+    if ($options === '') {
+        return '';
+    }
+
+    $datenschutz = livento_cc_privacy_url();
+
+    ob_start(); ?>
+    <section class="lv-trial" id="testzugang">
+        <h2>Erst testen, dann entscheiden</h2>
+        <p class="lv-trial__lead">
+            Sieh dir das Ticket mit deinem eigenen Team an, bevor du buchst — mit echten
+            Kursen, echtem Lernfortschritt und gültigen Zertifikaten.
+        </p>
+
+        <ul class="lv-trial__facts">
+            <li><strong>Bis zu 5 Plätze</strong> für 14 oder 28 Tage.</li>
+            <li><strong>Die Zeit läuft erst los</strong>, wenn du die erste Person einlädst — nicht ab Freischaltung.</li>
+            <li><strong>Zertifikate bleiben gültig</strong>, auch wenn du dich gegen eine Buchung entscheidest.</li>
+            <li><strong>Buchst du später</strong>, macht dein Team genau dort weiter, wo es aufgehört hat.</li>
+        </ul>
+
+        <p class="lv-trial__note">
+            Wir schalten jeden Testzugang von Hand frei und melden uns in der Regel
+            innerhalb eines Werktages bei dir.
+        </p>
+
+        <form class="lv-trial-form" novalidate
+              data-endpoint="<?php echo esc_url(rest_url('livento/v1/trial')); ?>"
+              data-redirect="https://livento-bildung.de/danke-anfrage/">
+            <div class="lv-trial-form__grid">
+                <label class="lv-trial-field lv-trial-field--wide">
+                    <span>Einrichtung *</span>
+                    <input type="text" name="company_name" autocomplete="organization" required>
+                </label>
+                <label class="lv-trial-field">
+                    <span>Vorname *</span>
+                    <input type="text" name="first_name" autocomplete="given-name" required>
+                </label>
+                <label class="lv-trial-field">
+                    <span>Nachname *</span>
+                    <input type="text" name="last_name" autocomplete="family-name" required>
+                </label>
+                <label class="lv-trial-field">
+                    <span>E-Mail *</span>
+                    <input type="email" name="email" autocomplete="email" required>
+                </label>
+                <label class="lv-trial-field">
+                    <span>Telefon (optional)</span>
+                    <input type="tel" name="phone" autocomplete="tel">
+                </label>
+                <label class="lv-trial-field">
+                    <span>Beschäftigte *</span>
+                    <input type="number" name="employee_count" min="1" step="1" required>
+                </label>
+                <label class="lv-trial-field">
+                    <span>Testdauer *</span>
+                    <select name="requested_days">
+                        <option value="14">14 Tage</option>
+                        <option value="28">28 Tage (4 Wochen)</option>
+                    </select>
+                </label>
+                <label class="lv-trial-field lv-trial-field--wide">
+                    <span>Welches Ticket möchtest du testen? *</span>
+                    <select name="bundle_id"><?php echo $options; ?></select>
+                </label>
+            </div>
+
+            <?php // Honeypot — fuer Menschen unsichtbar. ?>
+            <div class="lvk-hp" aria-hidden="true">
+                <input type="text" name="hp_field" tabindex="-1" autocomplete="off">
+            </div>
+
+            <?php /* ZWEI Haekchen, nur das erste ist Pflicht. Die Verarbeitung der Angaben
+               ist Vertragsanbahnung und braucht keine Einwilligung; den Testzugang von der
+               Werbeeinwilligung abhaengig zu machen waere eine unzulaessige Kopplung. */ ?>
+            <label class="lv-trial-consent">
+                <input type="checkbox" name="privacy_ack" value="1" required>
+                <span>Ich habe die <a href="<?php echo esc_url($datenschutz); ?>" target="_blank" rel="noopener">Datenschutzhinweise</a> zur Kenntnis genommen. *</span>
+            </label>
+            <label class="lv-trial-consent">
+                <input type="checkbox" name="marketing_consent" value="1">
+                <span>Zusätzlich möchte ich Informationen zu Angeboten und Weiterbildungsthemen von Livento per E-Mail erhalten. (freiwillig)</span>
+            </label>
+
+            <p class="lv-trial-err" hidden></p>
+            <button type="submit" class="lv-btn">Testzugang anfragen</button>
+            <p class="lv-trial__small">* Pflichtfelder. Kein Abo, keine Zahlungsdaten — der Zugang endet automatisch.</p>
+        </form>
+    </section>
+    <?php
+    return ob_get_clean() . livento_cc_trial_js();
+}
+
+/** Datenschutzseite: WordPress-Einstellung, sonst der uebliche Pfad. */
+function livento_cc_privacy_url() {
+    $url = function_exists('get_privacy_policy_url') ? get_privacy_policy_url() : '';
+    return $url ? $url : home_url('/datenschutz/');
+}
+
+/**
+ * v1.43.0: Absenden des Testzugang-Formulars.
+ *
+ * Der Redirect auf die Danke-Seite passiert ERST nach bestaetigtem Eingang. Sonst
+ * zaehlt die Conversion auch dann, wenn die Anfrage nie angekommen ist — und niemand
+ * merkt es, weil der Besucher die Danke-Seite gesehen hat.
+ */
+function livento_cc_trial_js() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  var form=document.querySelector('.lv-trial-form');
+  if(!form) return;
+  var err=form.querySelector('.lv-trial-err');
+  var btn=form.querySelector('button[type=submit]');
+  var sel=form.querySelector('[name=bundle_id]');
+  var busy=false;
+
+  // "oder erst 14 Tage testen" uebernimmt die angesehene Setting-Variante.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-lv-trial-bundle]'), function(a){
+    a.addEventListener('click', function(){
+      var id=a.getAttribute('data-lv-trial-bundle');
+      if(sel && id){ sel.value=id; }
+    });
+  });
+
+  // Beschaeftigtenzahl aus dem Preisrechner vorbelegen — die Zahl hat der Besucher
+  // oben schon eingetippt, ein zweites Mal ist reine Reibung.
+  var calc=document.querySelector('[data-lv-users], #lv-users, input[name=lv_users]');
+  var empField=form.querySelector('[name=employee_count]');
+  if(calc && empField){
+    var sync=function(){ if(!empField.value && calc.value) empField.value=calc.value; };
+    sync();
+    calc.addEventListener('change', sync);
+  }
+
+  function fail(msg){ if(err){ err.textContent=msg; err.hidden=false; } }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    if(busy) return;
+    if(err) err.hidden=true;
+
+    var g=function(n){ var el=form.querySelector('[name="'+n+'"]'); return el?String(el.value||'').trim():''; };
+    var checked=function(n){ var el=form.querySelector('[name="'+n+'"]'); return !!(el&&el.checked); };
+
+    if(!g('company_name')||!g('first_name')||!g('last_name')) return fail('Bitte Einrichtung und Namen ausfüllen.');
+    if(!/.+@.+\..+/.test(g('email'))) return fail('Bitte eine gültige E-Mail-Adresse angeben.');
+    if(!g('employee_count')) return fail('Bitte die Zahl der Beschäftigten angeben.');
+    if(!checked('privacy_ack')) return fail('Bitte die Kenntnisnahme der Datenschutzhinweise bestätigen.');
+
+    var payload={
+      company_name:g('company_name'), first_name:g('first_name'), last_name:g('last_name'),
+      email:g('email'), phone:g('phone'), employee_count:Number(g('employee_count')),
+      requested_days:Number(g('requested_days')), bundle_id:g('bundle_id'),
+      source_url:location.href, hp_field:g('hp_field'),
+      privacy_ack:true,
+      privacy_ack_text:'Ich habe die Datenschutzhinweise zur Kenntnis genommen.',
+      marketing_consent:checked('marketing_consent'),
+      marketing_text:checked('marketing_consent')
+        ? 'Informationen zu Angeboten und Weiterbildungsthemen von Livento per E-Mail.' : null
+    };
+
+    busy=true; if(btn){ btn.disabled=true; btn.textContent='Wird gesendet …'; }
+    fetch(form.getAttribute('data-endpoint'),{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    }).then(function(r){
+      return r.json().catch(function(){ return {ok:r.ok}; });
+    }).then(function(j){
+      if(!j||j.ok!==true){ throw new Error((j&&j.message)||'Die Anfrage konnte nicht gesendet werden.'); }
+      try{ window.dataLayer=window.dataLayer||[];
+        window.dataLayer.push({event:'generate_lead',lead_type:'testzugang',lead_source:'ticketseite'}); }catch(_e){}
+      location.href=form.getAttribute('data-redirect');
+    }).catch(function(ex){
+      busy=false; if(btn){ btn.disabled=false; btn.textContent='Testzugang anfragen'; }
+      fail(ex && ex.message ? ex.message : 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.');
+    });
+  });
+})();
+</script>
+JS;
+}
+
+/**
+ * v1.43.0: REST-Proxy fuer die Testanfrage.
+ *
+ * Serverseitig weiter an Campus Connect — kein CORS, und der anon-Schluessel bleibt aus
+ * dem Quelltext der Seite draussen. Die Sperren sitzen hier, weil Campus Connect hinter
+ * dem Proxy nur noch die IP des Hosters sieht.
+ */
+add_action('rest_api_init', function () {
+    register_rest_route('livento/v1', '/trial', array(
+        'methods'             => 'POST',
+        'callback'            => 'livento_cc_rest_trial',
+        'permission_callback' => '__return_true',
+    ));
+});
+function livento_cc_rest_trial($req) {
+    $p = $req->get_json_params();
+    if (!is_array($p)) { $p = array(); }
+
+    // Honeypot: ausgefuelltes verstecktes Feld = Bot -> "ok" vortaeuschen.
+    if (!empty($p['hp_field'])) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+
+    $email = isset($p['email']) ? sanitize_email($p['email']) : '';
+    if (!is_email($email)) {
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Bitte eine gültige E-Mail-Adresse angeben.'), 200);
+    }
+    if (empty($p['privacy_ack'])) {
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Bitte die Kenntnisnahme der Datenschutzhinweise bestätigen.'), 200);
+    }
+
+    // Sperre: 5 Anfragen je IP und Stunde, eine je E-Mail und Tag. Bewusst als stiller
+    // Erfolg — eine Fehlermeldung wuerde nur einem Bot verraten, dass er erkannt wurde.
+    $ip      = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+    $ip_key  = 'lvk_trial_ip_' . md5($ip);
+    $mail_key = 'lvk_trial_mail_' . md5(strtolower($email));
+    if (get_transient($mail_key)) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+    $hits = (int) get_transient($ip_key);
+    if ($hits >= 5) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+    set_transient($ip_key, $hits + 1, HOUR_IN_SECONDS);
+    set_transient($mail_key, 1, DAY_IN_SECONDS);
+
+    $key = livento_cc_anon_key();
+    if ($key === '') {
+        error_log('[livento] Testanfrage: kein Supabase-Schluessel hinterlegt.');
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte melde dich telefonisch.'), 200);
+    }
+
+    $payload = array(
+        'company_name'      => isset($p['company_name']) ? sanitize_text_field($p['company_name']) : '',
+        'first_name'        => isset($p['first_name']) ? sanitize_text_field($p['first_name']) : '',
+        'last_name'         => isset($p['last_name']) ? sanitize_text_field($p['last_name']) : '',
+        'email'             => $email,
+        'phone'             => isset($p['phone']) ? sanitize_text_field($p['phone']) : '',
+        'employee_count'    => isset($p['employee_count']) ? (int) $p['employee_count'] : null,
+        'requested_days'    => isset($p['requested_days']) ? (int) $p['requested_days'] : 14,
+        'bundle_id'         => isset($p['bundle_id']) ? sanitize_text_field($p['bundle_id']) : null,
+        'source_url'        => isset($p['source_url']) ? esc_url_raw($p['source_url']) : '',
+        'privacy_ack'       => true,
+        'privacy_ack_text'  => isset($p['privacy_ack_text']) ? sanitize_text_field($p['privacy_ack_text']) : '',
+        'marketing_consent' => !empty($p['marketing_consent']),
+        'marketing_text'    => isset($p['marketing_text']) ? sanitize_text_field((string) $p['marketing_text']) : null,
+    );
+
+    $res = wp_remote_post(LIVENTO_CC_SUPABASE_URL . '/functions/v1/submit-trial-request', array(
+        'timeout' => 15,
+        'headers' => array(
+            'Content-Type'         => 'application/json',
+            'apikey'               => $key,
+            'Authorization'        => 'Bearer ' . $key,
+            // Damit Campus Connect nicht nur den Hoster sieht.
+            'x-livento-client-ip'  => $ip,
+        ),
+        'body'    => wp_json_encode($payload),
+    ));
+
+    if (is_wp_error($res)) {
+        error_log('[livento] Testanfrage fehlgeschlagen: ' . $res->get_error_message());
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.'), 200);
+    }
+    $code = (int) wp_remote_retrieve_response_code($res);
+    if ($code < 200 || $code >= 300) {
+        error_log('[livento] Testanfrage: Campus Connect antwortete HTTP ' . $code . ' — ' . substr((string) wp_remote_retrieve_body($res), 0, 300));
+        // Die Sperre wieder loesen, sonst blockiert ein Serverfehler den zweiten Versuch.
+        delete_transient($mail_key);
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.'), 200);
+    }
+
+    return new WP_REST_Response(array('ok' => true), 200);
 }
 
 /**
@@ -6464,6 +6807,29 @@ function livento_cc_tariff_styles() {
     .lv-tarif-cta p{margin:0 0 1rem;color:#5c6a70}
     .lv-tarif-cta__actions{display:flex;flex-wrap:wrap;gap:.6rem;justify-content:center}
     .lv-tarif-cta__actions .lv-btn{margin-top:0}
+
+    /* v1.43.0 Testzugang. Der Textlink ist bewusst zurueckhaltend: Der Kaufknopf
+       bleibt die Hauptaktion, der Test ist das Angebot fuer Zoegernde. */
+    .lv-trial-link{display:block;margin-top:.55rem;text-align:center;font-size:.88rem;color:#5c6a70;text-decoration:underline}
+    .lv-trial-link:hover{color:#004D33}
+    .lv-trial{max-width:48rem;margin-top:2.5rem;padding:1.75rem;border-radius:16px;background:#fff;border:1px solid #e3e8ea}
+    .lv-trial h2{margin:0 0 .35rem}
+    .lv-trial__lead{margin:0 0 1rem;color:#5c6a70}
+    .lv-trial__facts{list-style:none;margin:0 0 1rem;padding:0;display:grid;gap:.5rem}
+    .lv-trial__facts li{position:relative;padding-left:1.6rem;font-size:.97rem}
+    .lv-trial__facts li::before{content:"✓";position:absolute;left:0;top:0;color:#004D33;font-weight:700}
+    .lv-trial__note{margin:0 0 1.25rem;padding:.75rem 1rem;border-radius:10px;background:#f5f7f8;font-size:.92rem;color:#5c6a70}
+    .lv-trial-form__grid{display:grid;gap:.85rem;grid-template-columns:repeat(2,minmax(0,1fr))}
+    @media(max-width:640px){.lv-trial-form__grid{grid-template-columns:1fr}}
+    .lv-trial-field{display:flex;flex-direction:column;gap:.3rem;font-size:.88rem;color:#5c6a70}
+    .lv-trial-field--wide{grid-column:1/-1}
+    .lv-trial-field input,.lv-trial-field select{padding:.6rem .7rem;border:1px solid #d5dcdf;border-radius:9px;font-size:.97rem;color:#20343c;background:#fff}
+    .lv-trial-field input:focus,.lv-trial-field select:focus{outline:2px solid #004D33;outline-offset:1px}
+    .lv-trial-consent{display:flex;gap:.6rem;align-items:flex-start;margin-top:.9rem;font-size:.9rem;color:#5c6a70}
+    .lv-trial-consent input{margin-top:.25rem}
+    .lv-trial-err{margin:.8rem 0 0;color:#b3261e;font-size:.9rem}
+    .lv-trial-form .lv-btn{margin-top:1.1rem}
+    .lv-trial__small{margin:.7rem 0 0;font-size:.83rem;color:#7a878d}
     .lv-variant{border:1px solid #e3e8ea;border-radius:16px;padding:1.25rem;margin-bottom:1.25rem;background:#fff}
     .lv-variant__bar{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
     .lv-variant__bar h3{margin:0}
