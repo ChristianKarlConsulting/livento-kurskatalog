@@ -3,12 +3,21 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.43.0
+Stable tag: 1.44.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.44.0 =
+* Mehrtaegige Weiterbildungen zeigen auf der Kursseite jetzt die Unterrichtszeiten und Wochentage. Bisher war nur ein Start-/Enddatum sichtbar - weder Uhrzeiten noch die Wochentage, an denen Unterricht ist. Interessenten konnten dadurch nicht einschaetzen, ob ein Kurs neben Beruf/Alltag machbar ist.
+* Neu in der Faktenbox "Auf einen Blick": eine abgeleitete Zusammenfassung (z. B. "Mo & Mi · 17:00-20:15 Uhr, dazu einzelne Sa 08:30-15:30 Uhr"). Im Kurstext ein eigener Abschnitt "Unterrichtszeiten & Termine" mit einer aufklappbaren Liste ALLER konkreten Termine (Datum + Uhrzeit).
+* Die Zeiten werden automatisch aus den in Campus Connect hinterlegten Lektionsterminen abgeleitet (neue View-Spalte public_offerings.schedule) - nichts zusaetzlich zu pflegen. Gezaehlt werden nur Live-/Praesenztermine (Ganztag/Halbtag/Abendkurs/Wochenende); flexible Selbstlernphasen und externes Praktikum bleiben bewusst aussen vor.
+* Zusaetzlich als schema.org courseSchedule (byDay + Start-/Endzeit) im courseInstance-JSON-LD - hilft Google Rich Results und KI-Suchmaschinen, den Unterrichtsrhythmus zu verstehen.
+
+= 1.43.0 =
+* Testzugang ueber die Ticketseite anfragen: interessierte Einrichtungen fordern einen Testzugang direkt auf der Ticketseite an; die Anfrage landet in Campus Connect und wird dort mit einem Klick freigegeben.
 
 = 1.42.0 =
 * Die Tarif-Karten auf /e-learning/ nannten den Gesamtpreis fuer 20 Beschaeftigte, hefteten aber "pro Person" darunter — die Teamsumme las sich damit wie ein Kopfpreis, also das 20-Fache des tatsaechlichen. Aus 99 € pro Person und Jahr (KomplettTicket) wurde auf der Karte "1.980 € pro Jahr · pro Person", aus 49 € (RollenTicket) "980 € pro Jahr · pro Person". Jetzt zeigt jede Karte den echten Kopfpreis je Monat: KomplettTicket 8,25 €, RollenTicket 4,08 €, PflichtTicket "ab 1,49 €" (Pauschale/Staffel, haengt an der Teamgroesse).

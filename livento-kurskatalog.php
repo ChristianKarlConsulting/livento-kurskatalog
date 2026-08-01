@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.43.0
+ * Version:           1.44.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -685,6 +685,181 @@ function livento_cc_fmt_date($iso) {
     }
     $ts = strtotime($iso);
     return $ts ? wp_date('j. F Y', $ts) : '';
+}
+
+/** "YYYY-MM-DD" → "dd.mm.yyyy". */
+function livento_cc_fmt_date_short($iso) {
+    if (empty($iso)) {
+        return '';
+    }
+    $ts = strtotime($iso);
+    return $ts ? wp_date('d.m.Y', $ts) : '';
+}
+
+/** ISO-Wochentag (1=Mo … 7=So) → deutsche Kurzform. */
+function livento_cc_weekday_short($iso) {
+    $map = array(1 => 'Mo', 2 => 'Di', 3 => 'Mi', 4 => 'Do', 5 => 'Fr', 6 => 'Sa', 7 => 'So');
+    $i = (int) $iso;
+    return isset($map[$i]) ? $map[$i] : '';
+}
+
+/**
+ * v3.192.0: Unterrichts-Zeitplan robust als Array holen (json-Spalte kann — wie
+ * `modules` — als String ankommen). Gibt null zurueck, wenn keine Termine da sind.
+ */
+function livento_cc_schedule_arr($o) {
+    if (!isset($o['schedule']) || empty($o['schedule'])) {
+        return null;
+    }
+    $sched = $o['schedule'];
+    if (is_string($sched)) {
+        $sched = json_decode($sched, true);
+    }
+    if (!is_array($sched) || empty($sched['sessions']) || !is_array($sched['sessions'])) {
+        return null;
+    }
+    return $sched;
+}
+
+/** Wochentage als Text: "Mo", "Mo & Mi", "Mo, Mi & Fr". */
+function livento_cc_weekdays_text($weekdays) {
+    if (empty($weekdays) || !is_array($weekdays)) {
+        return '';
+    }
+    $labels = array();
+    foreach ($weekdays as $w) {
+        $l = livento_cc_weekday_short($w);
+        if ($l !== '') {
+            $labels[] = $l;
+        }
+    }
+    $n = count($labels);
+    if ($n === 0) {
+        return '';
+    }
+    if ($n === 1) {
+        return $labels[0];
+    }
+    return implode(', ', array_slice($labels, 0, $n - 1)) . ' & ' . $labels[$n - 1];
+}
+
+/** Zeitspannen als Text: "17:00–20:15 Uhr · 08:30–11:45 Uhr". */
+function livento_cc_timeranges_text($ranges) {
+    if (empty($ranges) || !is_array($ranges)) {
+        return '';
+    }
+    $parts = array();
+    foreach ($ranges as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        $start = isset($r['start']) ? $r['start'] : '';
+        $end   = isset($r['end']) ? $r['end'] : '';
+        if ($start === '' || $start === null) {
+            continue;
+        }
+        $parts[] = ($end !== '' && $end !== null) ? ($start . '–' . $end . ' Uhr') : ('ab ' . $start . ' Uhr');
+    }
+    return implode(' · ', $parts);
+}
+
+/** Kurz-Zusammenfassung (Wochentage · Uhrzeiten) fuer die Faktenbox. */
+function livento_cc_schedule_summary($o) {
+    $sched = livento_cc_schedule_arr($o);
+    if (!$sched) {
+        return '';
+    }
+    $wd = livento_cc_weekdays_text(isset($sched['weekdays']) ? $sched['weekdays'] : array());
+    $tr = livento_cc_timeranges_text(isset($sched['time_ranges']) ? $sched['time_ranges'] : array());
+    return trim($wd . (($wd !== '' && $tr !== '') ? ' · ' : '') . $tr);
+}
+
+/**
+ * v3.192.0: Abschnitt „Unterrichtszeiten & Termine" — abgeleitete Zusammenfassung
+ * (Wochentage + Uhrzeiten) plus aufklappbare Liste aller Praesenztermine.
+ * Native <details> ohne JS. Alle Werte escaped.
+ */
+function livento_cc_render_schedule($o) {
+    $sched = livento_cc_schedule_arr($o);
+    if (!$sched) {
+        return '';
+    }
+    $sessions = $sched['sessions'];
+    $wd = livento_cc_weekdays_text(isset($sched['weekdays']) ? $sched['weekdays'] : array());
+    $tr = livento_cc_timeranges_text(isset($sched['time_ranges']) ? $sched['time_ranges'] : array());
+    $n  = count($sessions);
+
+    $out = '<div class="lvk-section lvk-schedule"><h2>Unterrichtszeiten &amp; Termine</h2>';
+    if ($wd !== '') {
+        $out .= '<p class="lvk-sch-sum"><strong>Unterrichtstage:</strong> ' . esc_html($wd) . '</p>';
+    }
+    if ($tr !== '') {
+        $out .= '<p class="lvk-sch-sum"><strong>Uhrzeiten:</strong> ' . esc_html($tr) . '</p>';
+    }
+    $out .= '<details class="lvk-sch-details"><summary>' . esc_html('Alle ' . $n . ' Termine anzeigen') . '</summary>';
+    $out .= '<ul class="lvk-sch-list">';
+    foreach ($sessions as $s) {
+        if (!is_array($s)) {
+            continue;
+        }
+        $day   = livento_cc_weekday_short(isset($s['weekday']) ? $s['weekday'] : 0);
+        $date  = livento_cc_fmt_date_short(isset($s['date']) ? $s['date'] : '');
+        $start = isset($s['start']) ? $s['start'] : '';
+        $end   = isset($s['end']) ? $s['end'] : '';
+        $time  = ($end !== '' && $end !== null) ? ($start . '–' . $end) : ('ab ' . $start);
+        $out  .= '<li><span class="lvk-sch-day">' . esc_html(trim($day . ' ' . $date)) . '</span>'
+               . '<span class="lvk-sch-time">' . esc_html($time) . '</span></li>';
+    }
+    $out .= '</ul></details></div>';
+    return $out;
+}
+
+/** schema.org Schedule[] aus dem Zeitplan (ein Schedule je Uhrzeit-Spanne, byDay aus Terminen). */
+function livento_cc_jsonld_schedule($o) {
+    $sched = livento_cc_schedule_arr($o);
+    if (!$sched) {
+        return array();
+    }
+    $day_map = array(1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 7 => 'Sunday');
+    $by_range = array();
+    foreach ($sched['sessions'] as $s) {
+        if (!is_array($s)) {
+            continue;
+        }
+        $start = isset($s['start']) ? $s['start'] : '';
+        $end   = isset($s['end']) ? $s['end'] : '';
+        if ($start === '' || $start === null) {
+            continue;
+        }
+        $key = $start . '-' . $end;
+        if (!isset($by_range[$key])) {
+            $by_range[$key] = array('start' => $start, 'end' => $end, 'days' => array());
+        }
+        $wd = (int) (isset($s['weekday']) ? $s['weekday'] : 0);
+        if (isset($day_map[$wd])) {
+            $by_range[$key]['days'][$wd] = true;
+        }
+    }
+    $out = array();
+    foreach ($by_range as $r) {
+        $days = array_keys($r['days']);
+        sort($days);
+        $by_day = array();
+        foreach ($days as $d) {
+            $by_day[] = 'https://schema.org/' . $day_map[$d];
+        }
+        $sch = array(
+            '@type'           => 'Schedule',
+            'byDay'           => $by_day,
+            'startTime'       => $r['start'],
+            'repeatFrequency' => 'P1W',
+        );
+        if ($r['end'] !== '' && $r['end'] !== null) {
+            $sch['endTime'] = $r['end'];
+        }
+        $out[] = $sch;
+    }
+    return $out;
 }
 
 function livento_cc_fmt_price($price, $vat_exempt) {
@@ -1389,6 +1564,10 @@ function livento_cc_jsonld_course($o, $url) {
     }
     if (!empty($o['end_datetime'])) {
         $instance['endDate'] = $o['end_datetime'];
+    }
+    $course_schedule = livento_cc_jsonld_schedule($o);
+    if (!empty($course_schedule)) {
+        $instance['courseSchedule'] = $course_schedule;
     }
     if (!empty($o['site_name']) || !empty($o['site_city'])) {
         $place = array('@type' => 'Place', 'name' => $o['site_name'] ?: 'Livento');
@@ -2586,6 +2765,10 @@ function livento_cc_factbox_html($o) {
     if ($start !== '') {
         $rows[] = array('calendar', 'Nächster Start', esc_html($start));
     }
+    $sched_sum = livento_cc_schedule_summary($o);
+    if ($sched_sum !== '') {
+        $rows[] = array('clock', 'Unterrichtszeiten', esc_html($sched_sum));
+    }
     if (isset($o['public_price']) && $o['public_price'] !== null && $o['public_price'] !== '') {
         $rows[] = array('price', 'Kosten', esc_html(livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']))));
     }
@@ -2712,6 +2895,9 @@ function livento_cc_render_detail($o) {
     if (!empty($o['course_contents'])) {
         $out .= '<div class="lvk-section"><h2>Inhalte</h2>' . livento_cc_richtext($o['course_contents']) . '</div>';
     }
+
+    // Unterrichtszeiten & Termine (abgeleiteter Zeitplan; nur mehrtaegige Weiterbildungen)
+    $out .= livento_cc_render_schedule($o);
 
     // Modulübersicht
     $out .= livento_cc_render_modules($o['modules'] ?? null);
@@ -3117,6 +3303,14 @@ function livento_cc_styles() {
 .lvk-faq-item{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-faq-item summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-faq-a{padding:0 0 12px}
+/* Unterrichtszeiten & Termine (v3.192.0) */
+.lvk-sch-sum{margin:4px 0;color:#444}
+.lvk-sch-sum strong{color:var(--lvk-green)}
+.lvk-sch-details{margin-top:12px}
+.lvk-sch-details>summary{cursor:pointer;font-weight:600;color:var(--lvk-green)}
+.lvk-sch-list{list-style:none;margin:12px 0 0;padding:0;max-height:340px;overflow:auto}
+.lvk-sch-list li{display:flex;justify-content:space-between;gap:16px;padding:6px 0;border-bottom:1px solid #eef2f2;font-variant-numeric:tabular-nums}
+.lvk-sch-time{white-space:nowrap;color:#46604f}
 /* CRO-Bausteine Detailseite */
 .lvk-cta-cluster{background:#f3f8ee;border:1px solid #e1ecd6;border-radius:12px;padding:16px 18px;margin:20px 0}
 .lvk-cta-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:4px 0}
