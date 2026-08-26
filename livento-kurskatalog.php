@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.44.0
+ * Version:           1.45.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,52 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.45.0: Dozentinnen und Dozenten werden sichtbar (Campus Connect Feature 181).
+ *          Neuer Shortcode [livento_dozenten] rendert alle freigegebenen Profile als
+ *          Raster: rundes Portrait, Name, Funktionsbezeichnung, Qualifikations-Stichworte
+ *          und eine Kurzvorstellung, deren Rest sich aufklappt. Dazu ein Abschnitt
+ *          "Wer dich unterrichtet" auf jeder Kursdetailseite.
+ *          Der Shortcode ist bewusst URL-frei — er funktioniert auf jeder Seite, auf die
+ *          er gesetzt wird. Es gibt KEINE Slug-Konstante, keine Rewrite-Regel und keine
+ *          Detailseiten je Dozent: sechs duenne Personenseiten waeren eine SEO-Last,
+ *          kein Gewinn. Die Verlinkung vom Kurs zur Dozentenseite haengt an der Option
+ *          "URL der Dozentenseite" (Tab Einstellungen); ist sie leer, wird ohne Link
+ *          gerendert — nie ein toter Link.
+ *          Profile OHNE Foto erscheinen trotzdem, in einer eigenen Textdarstellung mit
+ *          farbiger Kante statt als Karte mit leerem Bildbereich. Wer freigegeben ist,
+ *          entscheidet allein Campus Connect: dort muss der Dozent eingewilligt UND die
+ *          Institutsleitung freigegeben haben. Das Plugin filtert nichts nach — die View
+ *          public_instructors liefert ausschliesslich freigegebene Profile und nur sieben
+ *          Spalten (nie E-Mail, Telefon, Adresse, Bankdaten).
+ *          Neu im JSON-LD: Person-Eintraege als ItemList auf der Dozentenseite und als
+ *          instructor am hasCourseInstance der Kursseiten (loest instructor_name ab, das
+ *          nur fuer Einzeltermine gefuellt war).
+ *          livento_cc_rest_get() nimmt jetzt einen Pfad entgegen; die Tabelle war bis
+ *          hier fest verdrahtet.
+ *
+ *          SCHEMA: Bis v1.44.0 hatte KEINE Entitaet im Plugin eine @id — jede Nennung
+ *          war fuer eine Suchmaschine ein eigenes, unverbundenes Objekt. Ein Dozent
+ *          taucht aber auf der Dozentenseite UND auf jeder seiner Kursseiten auf; ohne
+ *          @id waeren das ebenso viele verschiedene Personen, und genau der kumulierte
+ *          Autoritaetsbezug ginge verloren. Neu:
+ *          - Person bekommt eine stabile @id aus der Campus-Connect-UUID, verankert auf
+ *            der Dozentenseite (<dozentenseite>#dozent-<uuid>). Bewusst die UUID und
+ *            nicht der Name: die Kennung muss eine Namensaenderung ueberleben.
+ *          - Das id-Attribut der Karte traegt dasselbe Fragment, die @id zeigt also auf
+ *            ein real vorhandenes Element statt ins Leere.
+ *          - Auf Kursseiten steht nur eine schlanke Referenz (ohne description und
+ *            knowsAbout) — denselben Langtext auf fuenf Kursseiten zu wiederholen bringt
+ *            keinen zusaetzlichen Aussagewert; die @id stellt die Verbindung her.
+ *          - Neuer Organisationsknoten mit fester @id
+ *            (https://livento-bildung.de/#organization); Kurs-provider und Dozenten-
+ *            worksFor zeigen jetzt auf denselben Knoten.
+ *          - Die Karten-Ueberschrift ist h2 auf der Dozentenseite (dort steht nur die
+ *            H1 darueber) und h3 im Kursseiten-Abschnitt unter dessen h2 — keine
+ *            uebersprungene Ebene.
+ *          Titel, Meta-Description und Canonical der Dozentenseite kommen wie bei jeder
+ *          normalen WordPress-Seite aus dem Theme bzw. Rank Math — das Plugin greift
+ *          dort bewusst nicht ein.
  *
  * v1.43.0: Testzugang ueber die Ticketseite anfragen (Campus Connect Feature 158).
  *          Neuer Abschnitt "Erst testen, dann entscheiden" auf den Ticket-Detailseiten
@@ -572,9 +618,11 @@ function livento_cc_purge_secret() {
  * Roher GET gegen die Supabase REST-API. Gibt ein dekodiertes Array oder
  * WP_Error zurueck.
  */
-function livento_cc_rest_get($query) {
+function livento_cc_rest_get($query, $path = 'public_offerings') {
     $key = livento_cc_anon_key();
-    $url = LIVENTO_CC_SUPABASE_URL . '/rest/v1/public_offerings?' . $query;
+    // v1.45.0: Pfad war bis hier fest auf public_offerings verdrahtet. Der Default
+    // haelt alle Bestandsaufrufe unveraendert; Feature 181 liest public_instructors.
+    $url = LIVENTO_CC_SUPABASE_URL . '/rest/v1/' . $path . '?' . $query;
 
     $res = wp_remote_get($url, array(
         'timeout' => 8,
@@ -654,6 +702,37 @@ function livento_cc_get_offering($slug) {
     $row = !empty($data) ? $data[0] : null;
     set_transient($key, $row === null ? 'NULL' : $row, LIVENTO_CC_TTL);
     return $row;
+}
+
+/**
+ * Alle oeffentlich freigegebenen Dozentinnen und Dozenten (gecached).
+ *
+ * Es wird NICHT nachgefiltert: Die View public_instructors gibt ausschliesslich
+ * Profile heraus, bei denen in Campus Connect beide Tore offen sind (Einwilligung
+ * des Dozenten UND redaktionelle Freigabe) und Funktionsbezeichnung sowie
+ * Kurzvorstellung vorliegen. Ein Foto ist bewusst KEINE Bedingung.
+ */
+function livento_cc_get_instructors() {
+    $key = 'livento_cc_doz_v' . livento_cc_ver();
+    $cache = get_transient($key);
+    if ($cache !== false) {
+        return $cache;
+    }
+
+    $select = implode(',', array(
+        'id', 'first_name', 'last_name', 'photo_url',
+        'public_role', 'public_bio', 'qualifications',
+    ));
+    $data = livento_cc_rest_get('select=' . $select . '&limit=200', 'public_instructors');
+    if (is_wp_error($data)) {
+        // Fehler nicht cachen — letzten guten Stand liefern (wie bei der Kursliste).
+        $stale = get_transient('livento_cc_doz_stale');
+        return $stale !== false ? $stale : array();
+    }
+
+    set_transient($key, $data, LIVENTO_CC_TTL);
+    set_transient('livento_cc_doz_stale', $data, DAY_IN_SECONDS);
+    return $data;
 }
 
 /**
@@ -1580,7 +1659,18 @@ function livento_cc_jsonld_course($o, $url) {
         }
         $instance['location'] = $place;
     }
-    if (!empty($o['instructor_name'])) {
+    // v1.45.0: Dozenten kommen aus public_offering_instructors() (Programme UND
+    // Einzeltermine). instructor_name bleibt als Rueckfallebene stehen — es war nur
+    // fuer Einzeltermine je gefuellt.
+    if (!empty($o['instructors']) && is_array($o['instructors'])) {
+        $persons = array();
+        foreach ($o['instructors'] as $i) {
+            // false = schlanke Referenz. Der vollstaendige Personenknoten steht auf
+            // der Dozentenseite; hier verbindet die @id beide Nennungen.
+            $persons[] = livento_cc_instructor_schema($i, false);
+        }
+        $instance['instructor'] = $persons;
+    } elseif (!empty($o['instructor_name'])) {
         $instance['instructor'] = array('@type' => 'Person', 'name' => $o['instructor_name']);
     }
 
@@ -1589,11 +1679,9 @@ function livento_cc_jsonld_course($o, $url) {
         '@type'       => 'Course',
         'name'        => $o['title'],
         'description' => $o['public_description'] ?: ($o['short_description'] ?: $o['title']),
-        'provider'    => array(
-            '@type' => 'EducationalOrganization',
-            'name'  => LIVENTO_CC_PROVIDER,
-            'url'   => 'https://livento-bildung.de',
-        ),
+        // v1.45.0: mit stabiler @id, damit provider hier und worksFor bei den
+        // Dozenten auf denselben Organisationsknoten zeigen.
+        'provider'    => livento_cc_org_node(true),
         'url'               => $url,
         'hasCourseInstance' => array($instance),
     );
@@ -2902,6 +2990,10 @@ function livento_cc_render_detail($o) {
     // Modulübersicht
     $out .= livento_cc_render_modules($o['modules'] ?? null);
 
+    // Wer unterrichtet (Feature 181) — nach dem Inhalt, vor den Voraussetzungen:
+    // erst "was wird gelehrt", dann "von wem".
+    $out .= livento_cc_render_offering_instructors($o);
+
     // Zugangsvoraussetzungen
     if (!empty($o['admission_requirements'])) {
         $out .= '<div class="lvk-section"><h2>Zugangsvoraussetzungen</h2>' . livento_cc_richtext($o['admission_requirements']) . '</div>';
@@ -3001,6 +3093,250 @@ function livento_cc_render_modules($modules) {
         }
         $out .= '</details>';
     }
+    $out .= '</div>';
+    return $out;
+}
+
+/* ------------------------------------------------------------
+ * 7c. Dozentinnen und Dozenten (Feature 181)
+ * ------------------------------------------------------------ */
+
+/** Ziel der Verlinkung „Alle Dozenten" — leer = es wird gar nicht verlinkt. */
+function livento_cc_dozenten_url() {
+    return trim((string) get_option('livento_cc_dozenten_url', ''));
+}
+
+/**
+ * Teilt die Kurzvorstellung in einen immer sichtbaren Anfang und einen Rest.
+ *
+ * Bewusst OHNE Textdopplung: Der Anfang steht als Absatz, der Rest im <details>.
+ * Ein „Teaser plus vollstaendiger Text" haette denselben Inhalt zweimal im HTML —
+ * schlecht fuer die Bewertung der Seite und unnoetig lang.
+ * Geschnitten wird an einem Satzende, sonst an einer Wortgrenze.
+ */
+function livento_cc_split_bio($text, $limit = 190) {
+    $text = trim((string) $text);
+    if ($text === '' || mb_strlen($text) <= $limit) {
+        return array($text, '');
+    }
+
+    // Satzende im Zielbereich suchen (ab 40 % der Grenze, damit der Anfang traegt).
+    $window = mb_substr($text, 0, $limit);
+    $cut = 0;
+    foreach (array('. ', '! ', '? ') as $mark) {
+        $pos = mb_strrpos($window, $mark);
+        if ($pos !== false && $pos > $limit * 0.4 && $pos + 1 > $cut) {
+            $cut = $pos + 1;
+        }
+    }
+    if ($cut === 0) {
+        $pos = mb_strrpos($window, ' ');
+        $cut = ($pos !== false && $pos > $limit * 0.4) ? $pos : $limit;
+    }
+
+    return array(trim(mb_substr($text, 0, $cut)), trim(mb_substr($text, $cut)));
+}
+
+/**
+ * Eine Dozentenkarte.
+ *
+ * Zwei bewusst verschiedene Layouts: Mit Foto steht das runde Portrait oben und die
+ * Karte ist mittig gesetzt. Ohne Foto wird daraus KEINE Karte mit leerem Bildbereich,
+ * sondern ein linksbuendiges Textlayout mit farbiger Kante — in einem Portraitraster
+ * ist eine Luecke sonst der offensichtliche Bruch.
+ */
+function livento_cc_render_instructor_card($i, $heading = 'h3') {
+    $name  = trim(($i['first_name'] ?? '') . ' ' . ($i['last_name'] ?? ''));
+    $role  = trim((string) ($i['public_role'] ?? ''));
+    $photo = trim((string) ($i['photo_url'] ?? ''));
+    $hx    = in_array($heading, array('h2', 'h3'), true) ? $heading : 'h3';
+    list($lead, $rest) = livento_cc_split_bio($i['public_bio'] ?? '');
+
+    // Das id-Attribut ist die sichtbare Entsprechung der Schema-@id: Das Fragment
+    // in der @id zeigt damit auf ein real vorhandenes Element und nicht ins Leere.
+    $anchor = 'dozent-' . sanitize_html_class((string) ($i['id'] ?? ''));
+
+    $out = '<article id="' . esc_attr($anchor) . '" class="lvk-doz'
+         . ($photo === '' ? ' lvk-doz--plain' : '') . '">';
+
+    if ($photo !== '') {
+        $out .= '<img class="lvk-doz-photo" src="' . esc_url($photo) . '" alt="' . esc_attr($name)
+              . '" width="112" height="112" loading="lazy" decoding="async">';
+    }
+
+    $out .= '<' . $hx . ' class="lvk-doz-name">' . esc_html($name) . '</' . $hx . '>';
+    if ($role !== '') {
+        $out .= '<p class="lvk-doz-role">' . esc_html($role) . '</p>';
+    }
+    if ($lead !== '') {
+        $out .= '<p class="lvk-doz-bio">' . esc_html($lead) . '</p>';
+    }
+    if ($rest !== '') {
+        $out .= '<details class="lvk-doz-more"><summary>Mehr lesen</summary>'
+              . '<p>' . esc_html($rest) . '</p></details>';
+    }
+
+    $quals = is_array($i['qualifications'] ?? null) ? $i['qualifications'] : array();
+    if (!empty($quals)) {
+        $out .= '<ul class="lvk-doz-tags">';
+        foreach (array_slice($quals, 0, 6) as $q) {
+            $out .= '<li>' . esc_html($q) . '</li>';
+        }
+        $out .= '</ul>';
+    }
+
+    $out .= '</article>';
+    return $out;
+}
+
+/**
+ * Der Anbieter als Schema-Knoten — mit stabiler @id.
+ *
+ * Bis v1.44.0 stand die Organisation an jeder Stelle als anonymes Objekt. Ohne @id
+ * ist jede Nennung fuer eine Suchmaschine eine eigene, unverbundene Organisation.
+ * Mit fester @id verschmelzen Kurs-provider und Dozenten-worksFor zu EINEM Knoten.
+ */
+function livento_cc_org_node($full = false) {
+    $node = array('@id' => 'https://livento-bildung.de/#organization');
+    if ($full) {
+        $node['@type'] = 'EducationalOrganization';
+        $node['name']  = LIVENTO_CC_PROVIDER;
+        $node['url']   = 'https://livento-bildung.de';
+    }
+    return $node;
+}
+
+/**
+ * Stabile Entitaets-Kennung einer Person.
+ *
+ * Bewusst die UUID aus Campus Connect und nicht der Name: Die Kennung muss eine
+ * Namensaenderung ueberleben und darf bei Namensgleichheit nicht kollidieren.
+ * Verankert wird sie auf der Dozentenseite, sofern eine hinterlegt ist — dort steht
+ * das Profil sichtbar, und das Fragment zeigt auf die tatsaechliche Karte
+ * (siehe id-Attribut in livento_cc_render_instructor_card).
+ */
+function livento_cc_person_id($i) {
+    $base = livento_cc_dozenten_url();
+    if ($base === '') {
+        $base = home_url('/');
+    }
+    return rtrim($base, '#') . '#dozent-' . sanitize_html_class((string) ($i['id'] ?? ''));
+}
+
+/**
+ * Person-Objekt fuer Schema.org aus einer Dozentenzeile.
+ *
+ * $full = false liefert eine schlanke Referenz fuer Kursseiten: Dort ist die Person
+ * nicht das Hauptthema, und die @id genuegt, damit die Nennung dem vollstaendigen
+ * Knoten auf der Dozentenseite zugeordnet wird. Name und Bild bleiben trotzdem
+ * drin, damit die Auszeichnung auch fuer sich allein aussagefaehig ist.
+ */
+function livento_cc_instructor_schema($i, $full = true) {
+    $person = array(
+        '@type' => 'Person',
+        '@id'   => livento_cc_person_id($i),
+        'name'  => trim(($i['first_name'] ?? '') . ' ' . ($i['last_name'] ?? '')),
+    );
+    if (!empty($i['public_role'])) {
+        $person['jobTitle'] = $i['public_role'];
+    }
+    if (!empty($i['photo_url'])) {
+        $person['image'] = $i['photo_url'];
+    }
+
+    $target = livento_cc_dozenten_url();
+    if ($target !== '') {
+        $person['url'] = $target;
+    }
+
+    if ($full) {
+        // Beschreibung und Fachgebiete nur dort, wo das Profil auch das Thema der
+        // Seite ist. Auf fuenf Kursseiten denselben Langtext zu wiederholen bringt
+        // keinen zusaetzlichen Aussagewert.
+        if (!empty($i['public_bio'])) {
+            $person['description'] = $i['public_bio'];
+        }
+        if (!empty($i['qualifications']) && is_array($i['qualifications'])) {
+            $person['knowsAbout'] = array_values($i['qualifications']);
+        }
+        $person['worksFor'] = livento_cc_org_node(true);
+    } else {
+        $person['worksFor'] = livento_cc_org_node();
+    }
+
+    return $person;
+}
+
+/**
+ * [livento_dozenten] — Raster aller freigegebenen Profile.
+ *
+ * Bewusst ohne eigene Ueberschrift und ohne feste URL: Der Shortcode laeuft auf
+ * jeder Seite, auf die er gesetzt wird; Titel und Einleitung liefert die Seite.
+ */
+add_shortcode('livento_dozenten', function ($atts) {
+    $list = livento_cc_get_instructors();
+
+    if (empty($list)) {
+        // Kein Platzhalter und keine Fehlermeldung: Solange niemand freigegeben ist,
+        // soll die Seite lieber leer bleiben als halbfertig wirken.
+        return '';
+    }
+
+    $out  = livento_cc_styles();
+    $out .= '<div class="lvk lvk-doz-wrap"><div class="lvk-doz-grid">';
+    foreach ($list as $i) {
+        // h2, weil auf dieser Seite nur die H1 der WordPress-Seite darueber steht —
+        // ein h3 wuerde eine Ebene ueberspringen.
+        $out .= livento_cc_render_instructor_card($i, 'h2');
+    }
+    $out .= '</div></div>';
+
+    $items = array();
+    $pos = 1;
+    foreach ($list as $i) {
+        $items[] = array(
+            '@type'    => 'ListItem',
+            'position' => $pos++,
+            'item'     => livento_cc_instructor_schema($i),
+        );
+    }
+    $out .= '<script type="application/ld+json">'
+          . wp_json_encode(array(
+                '@context'        => 'https://schema.org',
+                '@type'           => 'ItemList',
+                'itemListOrder'   => 'https://schema.org/ItemListUnordered',
+                'numberOfItems'   => count($items),
+                'itemListElement' => $items,
+            ), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+          . '</script>';
+
+    return $out;
+});
+
+/**
+ * Abschnitt „Wer dich unterrichtet" auf der Kursdetailseite.
+ *
+ * Ueberschrift bewusst geschlechtsneutral und zahlunabhaengig — „Deine Dozentin"
+ * waere geraten, „Dein Dozent / Deine Dozentin" umstaendlich.
+ */
+function livento_cc_render_offering_instructors($o) {
+    $list = isset($o['instructors']) && is_array($o['instructors']) ? $o['instructors'] : array();
+    if (empty($list)) {
+        return '';
+    }
+
+    $out  = '<div class="lvk-section lvk-doz-section"><h2>Wer dich unterrichtet</h2>';
+    $out .= '<div class="lvk-doz-grid lvk-doz-grid--inline">';
+    foreach ($list as $i) {
+        $out .= livento_cc_render_instructor_card($i);
+    }
+    $out .= '</div>';
+
+    $target = livento_cc_dozenten_url();
+    if ($target !== '') {
+        $out .= '<p class="lvk-doz-all"><a href="' . esc_url($target) . '">Alle Dozentinnen und Dozenten</a></p>';
+    }
+
     $out .= '</div>';
     return $out;
 }
@@ -3407,6 +3743,31 @@ function livento_cc_styles() {
 .lvk button.lvk-bx-next{background:var(--lvk-green)!important;color:#fff!important;border:none;border-radius:99px;padding:12px 28px;font-weight:600;font-size:.98rem;cursor:pointer}
 .lvk button.lvk-bx-next:hover{background:#006644!important}
 @media(max-width:560px){.lvk-bx-stp .lvk-bx-lbl{font-size:.7rem}}
+
+/* --- Dozentinnen und Dozenten (v1.45.0, Feature 181) --- */
+.lvk-doz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}
+.lvk-doz{background:#fff;border:1px solid #e1ecd6;border-radius:12px;padding:22px 20px;text-align:center}
+.lvk-doz-photo{width:112px;height:112px;border-radius:50%;object-fit:cover;object-position:50% 30%;display:block;margin:0 auto 14px;background:#f7faf4}
+.lvk-doz-name{color:var(--lvk-green);font-size:1.12rem;line-height:1.3;margin:0 0 2px}
+.lvk-doz-role{color:var(--lvk-lime);font-size:.88rem;line-height:1.4;margin:0 0 10px}
+.lvk-doz-bio{font-size:.92rem;line-height:1.6;margin:0;color:#3a453a}
+.lvk-doz-more{margin-top:6px}
+.lvk-doz-more>summary{cursor:pointer;color:var(--lvk-green);font-size:.88rem;font-weight:600;list-style:none;display:inline-block}
+.lvk-doz-more>summary::-webkit-details-marker{display:none}
+.lvk-doz-more>summary::after{content:" \25BE"}
+.lvk-doz-more[open]>summary::after{content:" \25B4"}
+.lvk-doz-more>p{font-size:.92rem;line-height:1.6;margin:.5em 0 0;color:#3a453a;text-align:left}
+.lvk-doz-tags{list-style:none;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:14px 0 0;padding:0}
+.lvk-doz-tags li{background:#f2f7ec;color:#3f5b2c;border-radius:99px;padding:3px 11px;font-size:.76rem;line-height:1.5}
+/* Ohne Foto bewusst ein eigenes Layout statt einer Karte mit leerem Bildbereich. */
+.lvk-doz--plain{text-align:left;border-left:4px solid var(--lvk-lime)}
+.lvk-doz--plain .lvk-doz-tags{justify-content:flex-start}
+.lvk-doz--plain .lvk-doz-more>summary{display:block}
+/* Auf der Kursdetailseite schmaler und ohne doppelten Rahmen im Abschnitt. */
+.lvk-doz-grid--inline{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.lvk-doz-grid--inline .lvk-doz{padding:18px 16px}
+.lvk-doz-all{margin:14px 0 0;font-size:.9rem}
+@media(max-width:480px){.lvk-doz-grid,.lvk-doz-grid--inline{grid-template-columns:1fr}}
 ';
     return '<style id="lvk-styles">' . $css . '</style>';
 }
@@ -3571,6 +3932,7 @@ function livento_cc_admin_page() {
         update_option('livento_cc_berater_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_berater_webhook'] ?? ''))));
         update_option('livento_cc_foerder_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_foerder_webhook'] ?? ''))));
         update_option('livento_cc_beratung_url', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_beratung_url'] ?? ''))));
+        update_option('livento_cc_dozenten_url', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_dozenten_url'] ?? ''))));
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -4082,6 +4444,10 @@ function livento_cc_admin_tab_settings() {
     echo '<h3 style="margin-top:24px">Beratung / Rückruf (Sekundär-CTA Kursdetailseite)</h3>';
     echo '<p>Optionales Ziel für den zweiten Button „Rückruf vereinbaren" oben im CTA-Bereich jeder Kursdetailseite (z. B. Kontakt-/Rückrufseite oder Kursberater). <strong>Leer = der Button wird ausgeblendet</strong> (kein toter Link).</p>';
     echo '<p><label><strong>URL:</strong><br><input type="url" name="livento_cc_beratung_url" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_beratung_url', '')) . '" placeholder="https://livento-bildung.de/kontakt/"></label></p>';
+
+    echo '<h3 style="margin-top:24px">Dozentenseite</h3>';
+    echo '<p>Die Seite mit dem Shortcode <code>[livento_dozenten]</code>. Wird nur fuer den Link "Alle Dozentinnen und Dozenten" unter dem Dozenten-Abschnitt der Kursdetailseiten gebraucht. <strong>Leer = der Link wird weggelassen</strong> (kein toter Link). Der Shortcode selbst funktioniert unabhaengig davon auf jeder Seite.</p>';
+    echo '<p><label><strong>URL:</strong><br><input type="url" name="livento_cc_dozenten_url" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_dozenten_url', '')) . '" placeholder="https://livento-bildung.de/dozenten/"></label></p>';
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';

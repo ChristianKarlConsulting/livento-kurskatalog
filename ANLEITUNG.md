@@ -18,6 +18,7 @@ Das Plugin rendert Inhalte aus **Campus Connect** (und plugin-eigene Inhalte) **
 | Kursberater (geführt) | Campus Connect + Plugin | `[livento_kurse_berater]` |
 | **Förderprogramme + Detailseiten** | **Plugin (selbst gepflegt)** | `[livento_foerderungen]` |
 | **Förderberater (geführt)** | **Plugin (selbst gepflegt)** | `[livento_foerder_berater]` |
+| Dozentinnen und Dozenten | Campus Connect (live) | `[livento_dozenten]` |
 
 Kurse/Themen kommen **automatisch live** aus Campus Connect (mit Cache). Förderprogramme pflegst du **selbst im Plugin** (sie ersetzen die früheren WP-Beiträge).
 
@@ -63,6 +64,7 @@ Lege je eine WordPress-**Seite** an und setze den jeweiligen Shortcode in den In
 | `/foerdermoeglichkeiten/` | `[livento_foerderungen]` | Förderprogramme + Detailseiten |
 | z. B. `/kursberatung/` | `[livento_kurse_berater]` | Kursberater |
 | z. B. `/foerderberatung/` | `[livento_foerder_berater]` | Förderberater |
+| z. B. `/dozenten/` | `[livento_dozenten]` | Dozentenübersicht (Slug frei wählbar) |
 | Startseite o. Ä. | `[livento_themen]`, `[livento_kurse_suche]` | Einstiege |
 
 > **Wichtig:** Der Seiten-Slug muss zur jeweiligen Basis passen. Katalog = `kurse`, Förderungen = `foerdermoeglichkeiten`. Die Detailseiten (`/kurse/<slug>/`, `/foerdermoeglichkeiten/<slug>/`) entstehen automatisch unter dieser Seite.
@@ -106,6 +108,17 @@ Beispiele:
 
 ### `[livento_foerder_berater]` — Förderberater
 `title`, `intro`, `form` (`yes`/`no`).
+
+### `[livento_dozenten]` — Dozentenübersicht
+Keine Attribute. Rendert alle in Campus Connect freigegebenen Profile als Raster: rundes Portrait, Name, Funktionsbezeichnung, Qualifikations-Stichworte und eine Kurzvorstellung, deren Rest sich aufklappt.
+
+**Der Slug ist frei wählbar** — anders als beim Katalog gibt es keine Basis-Konstante, keine Rewrite-Regel und keine Detailseiten je Dozent. Setze den Shortcode auf die Seite, die du möchtest.
+
+**Wer erscheint, entscheidet Campus Connect.** Ein Profil ist nur sichtbar, wenn die Dozentin oder der Dozent im Portal eingewilligt **und** die Institutsleitung freigegeben hat. Das Plugin filtert nichts nach — es zeigt genau das, was die View `public_instructors` herausgibt. Ist noch niemand freigegeben, gibt der Shortcode **nichts** aus (kein Platzhalter, keine Fehlermeldung).
+
+Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung mit farbiger Kante statt als Karte mit leerem Bildbereich.
+
+**Verlinkung von den Kursseiten:** Auf jeder Kursdetailseite steht automatisch der Abschnitt „Wer dich unterrichtet". Darunter erscheint der Link „Alle Dozentinnen und Dozenten" — aber nur, wenn unter *Livento Katalog → Einstellungen → Dozentenseite* die URL hinterlegt ist. Ist das Feld leer, wird ohne Link gerendert; ein toter Link entsteht nie.
 
 ---
 

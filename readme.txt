@@ -3,12 +3,23 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.44.0
+Stable tag: 1.45.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.45.0 =
+* Dozentinnen und Dozenten werden sichtbar. Neuer Shortcode [livento_dozenten] rendert alle in Campus Connect freigegebenen Profile als Raster: rundes Portrait, Name, Funktionsbezeichnung, Qualifikations-Stichworte und eine Kurzvorstellung, deren Rest sich aufklappt. Dazu ein Abschnitt "Wer dich unterrichtet" auf jeder Kursdetailseite.
+* Der Shortcode ist bewusst URL-frei - er funktioniert auf jeder Seite, auf die er gesetzt wird. Es gibt keine Slug-Konstante, keine Rewrite-Regel und keine Detailseiten je Dozent: einzelne duenne Personenseiten waeren eine SEO-Last, kein Gewinn.
+* Die Verlinkung vom Kurs zur Dozentenseite haengt an der neuen Option "Dozentenseite" (Tab Einstellungen). Ist sie leer, wird ohne Link gerendert - ein toter Link entsteht nie, auch nicht zwischen Plugin-Update und Seitenanlage.
+* Profile OHNE Foto erscheinen trotzdem, in einer eigenen Textdarstellung mit farbiger Kante statt als Karte mit leerem Bildbereich.
+* Wer erscheint, entscheidet allein Campus Connect: Der Dozent muss dort eingewilligt UND die Institutsleitung freigegeben haben. Das Plugin filtert nichts nach; die View public_instructors liefert nur freigegebene Profile und nur sieben Spalten (nie E-Mail, Telefon, Adresse, Bankdaten). Ist niemand freigegeben, gibt der Shortcode nichts aus.
+* Schema.org: erstmals stabile Entitaeten. Bis hier trug KEINE Entitaet im Plugin eine @id - jede Nennung war fuer eine Suchmaschine ein eigenes Objekt. Bei Personen ist das folgenreich: Ein Dozent erscheint auf der Dozentenseite UND auf jeder seiner Kursseiten, ohne @id also als ebenso viele verschiedene Menschen. Person und Organisation tragen jetzt feste Kennungen; das id-Attribut der Karte traegt dasselbe Fragment, die @id zeigt also auf ein real vorhandenes Element.
+* Auf Kursseiten steht bewusst nur eine schlanke Personen-Referenz ohne Langtext und Fachgebiete - denselben Bio-Text auf mehreren Kursseiten zu wiederholen bringt keinen Aussagewert; die @id verbindet die Nennung mit dem vollstaendigen Knoten.
+* Kurs-provider und Dozenten-worksFor zeigen jetzt auf denselben Organisationsknoten statt auf zwei anonyme Objekte.
+* Titel, Meta-Description und Canonical der Dozentenseite kommen wie bei jeder normalen WordPress-Seite aus Rank Math - das Plugin greift dort nicht ein, weil es anders als beim Katalog keine virtuellen URLs erzeugt.
 
 = 1.44.0 =
 * Mehrtaegige Weiterbildungen zeigen auf der Kursseite jetzt die Unterrichtszeiten und Wochentage. Bisher war nur ein Start-/Enddatum sichtbar - weder Uhrzeiten noch die Wochentage, an denen Unterricht ist. Interessenten konnten dadurch nicht einschaetzen, ob ein Kurs neben Beruf/Alltag machbar ist.
