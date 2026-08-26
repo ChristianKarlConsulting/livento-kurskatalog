@@ -114,6 +114,8 @@ Keine Attribute. Rendert alle in Campus Connect freigegebenen Profile als Raster
 
 **Der Slug ist frei wählbar** — anders als beim Katalog gibt es keine Basis-Konstante, keine Rewrite-Regel und keine Detailseiten je Dozent. Setze den Shortcode auf die Seite, die du möchtest.
 
+**Status und Freigaben siehst du im Plugin unter *Livento Katalog → Dozenten*** — dort steht, wie viele Profile freigegeben sind, wer davon ein Foto hat und welche Bedingungen ein Profil erfüllen muss.
+
 **Wer erscheint, entscheidet Campus Connect.** Ein Profil ist nur sichtbar, wenn die Dozentin oder der Dozent im Portal eingewilligt **und** die Institutsleitung freigegeben hat. Das Plugin filtert nichts nach — es zeigt genau das, was die View `public_instructors` herausgibt. Ist noch niemand freigegeben, gibt der Shortcode **nichts** aus (kein Platzhalter, keine Fehlermeldung).
 
 Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung mit farbiger Kante statt als Karte mit leerem Bildbereich.

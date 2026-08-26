@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.45.0
+ * Version:           1.45.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,22 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.45.1: Der Dozenten-Teil bekommt im Backend einen eigenen Platz. Bis hier war er
+ *          nur als Einstellungsfeld sichtbar — wer wissen wollte, WARUM jemand nicht
+ *          auf der Seite steht, fand im Plugin keinen Anhaltspunkt.
+ *          Neuer Reiter "Dozenten": Anzahl freigegebener Profile, Tabelle mit Name,
+ *          Funktionsbezeichnung, Foto-Status und Stichworten, der Shortcode zum
+ *          Kopieren, die Einrichtungsschritte und — der eigentliche Punkt — die
+ *          vollstaendige Liste der Bedingungen, unter denen ein Profil ueberhaupt
+ *          erscheint, samt Hinweis, dass die Ursache IMMER in Campus Connect liegt
+ *          und nie im Plugin. Warnung bei null Profilen, Hinweis bei weniger als drei
+ *          (eine Personenseite mit einem Eintrag wird als duenn bewertet).
+ *          Ausserdem: [livento_dozenten] steht jetzt in der Shortcode-Registry (Reiter
+ *          "Shortcodes") und die Anleitung hat einen eigenen Abschnitt 8; die
+ *          bisherigen Abschnitte 8 und 9 ruecken auf 9 und 10.
+ *          Reine Backend-Ergaenzung — an der Ausgabe auf der Website aendert sich
+ *          nichts.
  *
  * v1.45.0: Dozentinnen und Dozenten werden sichtbar (Campus Connect Feature 181).
  *          Neuer Shortcode [livento_dozenten] rendert alle freigegebenen Profile als
@@ -3888,6 +3904,13 @@ function livento_cc_shortcodes() {
             ),
         ),
         array(
+            'tag'     => 'livento_dozenten',
+            'title'   => 'Dozentinnen und Dozenten',
+            'desc'    => 'Alle in Campus Connect freigegebenen Dozentenprofile als Raster: rundes Portrait, Name, Funktionsbezeichnung, Qualifikations-Stichworte und eine Kurzvorstellung, deren Rest sich aufklappt. Der Seiten-Slug ist frei waehlbar — es gibt keine Basis-Konstante und keine Detailseiten je Dozent. Status und Freigaben siehe Tab „Dozenten".',
+            'example' => '[livento_dozenten]',
+            'atts'    => array(),
+        ),
+        array(
             'tag'     => 'livento_foerder_berater',
             'title'   => 'Förderberater',
             'desc'    => 'Geführter Berater (SGD-Stil): Status → bedingte Qualifikation → Kontaktformular → passende Förderungen. Schema editierbar im Tab „Förderprogramme", Formular in den Einstellungen.',
@@ -4120,7 +4143,7 @@ function livento_cc_admin_page() {
     }
 
     $tab  = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
-    $tabs = array('overview' => 'Übersicht', 'anleitung' => 'Anleitung', 'shortcodes' => 'Shortcodes', 'kurslisten' => 'Kurslisten', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
+    $tabs = array('overview' => 'Übersicht', 'anleitung' => 'Anleitung', 'shortcodes' => 'Shortcodes', 'kurslisten' => 'Kurslisten', 'dozenten' => 'Dozenten', 'slugs' => 'Filter & Slugs', 'berater' => 'Berater', 'foerderung' => 'Förderprogramme', 'settings' => 'Einstellungen');
 
     echo '<div class="wrap"><h1>Livento Kurskatalog</h1>';
     if ($notice) {
@@ -4137,6 +4160,8 @@ function livento_cc_admin_page() {
         livento_cc_admin_tab_shortcodes();
     } elseif ($tab === 'kurslisten') {
         livento_cc_admin_tab_kurslisten();
+    } elseif ($tab === 'dozenten') {
+        livento_cc_admin_tab_dozenten();
     } elseif ($tab === 'slugs') {
         livento_cc_admin_tab_slugs();
     } elseif ($tab === 'settings') {
@@ -4226,6 +4251,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '<li>Seite <code>foerdermoeglichkeiten</code> → <code>[livento_foerderungen]</code> (Förderungen + Detailseiten)</li>';
     echo '<li>z. B. <code>kursberatung</code> → <code>[livento_kurse_berater]</code></li>';
     echo '<li>z. B. <code>foerderberatung</code> → <code>[livento_foerder_berater]</code></li>';
+    echo '<li>z. B. <code>dozenten</code> → <code>[livento_dozenten]</code> (Slug frei wählbar, keine Detailseiten)</li>';
     echo '<li>Startseite o. Ä. → <code>[livento_themen]</code>, <code>[livento_kurse_suche]</code></li>';
     echo '</ul>';
     echo '<p class="tip"><strong>Wichtig:</strong> Der Seiten-Slug muss zur Basis passen (Katalog = <code>kurse</code>, Förderungen = <code>foerdermoeglichkeiten</code>). Detailseiten entstehen automatisch darunter.</p>';
@@ -4320,7 +4346,19 @@ function livento_cc_admin_tab_anleitung() {
     echo '</div></details>';
 
     // 8) Cache / Sitemap / Updates
-    echo '<details class="lvk-help"><summary>8 · Cache, Sitemap &amp; Updates</summary><div class="in">';
+    // 8) Dozentenseite
+    echo '<details class="lvk-help"><summary>8 · Dozentinnen und Dozenten</summary><div class="in">';
+    echo '<p>Die Profile kommen <strong>live aus Campus Connect</strong>. Im Plugin ist dafür nichts zu pflegen — Status und Freigaben siehe Tab <a href="' . $tab('dozenten') . '">Dozenten</a>.</p>';
+    echo '<ol>';
+    echo '<li>Seite anlegen (<strong>Slug frei wählbar</strong>, z. B. <code>dozenten</code>) und <code>[livento_dozenten]</code> einfügen. Es gibt bewusst keine Detailseiten je Dozent.</li>';
+    echo '<li>Die URL dieser Seite unter <a href="' . $tab('settings') . '">Einstellungen → Dozentenseite</a> eintragen — nur dafür wird sie gebraucht: für den Link „Alle Dozentinnen und Dozenten" unter dem Dozenten-Abschnitt der Kursseiten. <strong>Leer = ohne Link</strong>, nie ein toter Link.</li>';
+    echo '</ol>';
+    echo '<p>Der Abschnitt <strong>„Wer dich unterrichtet"</strong> auf den Kursdetailseiten erscheint automatisch, sobald einem Kurs ein freigegebener Dozent zugeordnet ist — ohne Seite und ohne Einstellung.</p>';
+    echo '<div class="tip"><strong>Jemand fehlt auf der Seite?</strong> Die Ursache liegt immer in Campus Connect, nie hier. Ein Profil erscheint nur, wenn der Dozent im Portal <em>selbst</em> eingewilligt hat <strong>und</strong> die Institutsleitung freigegeben hat <strong>und</strong> Funktionsbezeichnung sowie eine Kurzvorstellung von mindestens 150 Zeichen vorliegen. In Campus Connect: Dozenten → Dozent öffnen → Reiter „Website"; dort steht, was noch fehlt.</div>';
+    echo '<p>Ein Profil <strong>ohne Foto</strong> verschwindet nicht, sondern erscheint in einer eigenen Textdarstellung. Wird ein Profil nachträglich geändert, verfällt die Freigabe automatisch; ein Widerruf entfernt es sofort und löscht das Foto.</p>';
+    echo '</div></details>';
+
+    echo '<details class="lvk-help"><summary>9 · Cache, Sitemap &amp; Updates</summary><div class="in">';
     echo '<ul>';
     echo '<li><strong>Cache leeren:</strong> <a href="' . $tab('overview') . '">Übersicht</a> → „Cache jetzt leeren".</li>';
     echo '<li><strong>Auto-Purge:</strong> <a href="' . $tab('settings') . '">Einstellungen</a> → Purge-Secret setzen + in Campus Connect hinterlegen.</li>';
@@ -4329,7 +4367,7 @@ function livento_cc_admin_tab_anleitung() {
     echo '</ul></div></details>';
 
     // 9) Problembehebung
-    echo '<details class="lvk-help"><summary>9 · Problembehebung</summary><div class="in"><ul>';
+    echo '<details class="lvk-help"><summary>10 · Problembehebung</summary><div class="in"><ul>';
     echo '<li><strong>„anon-Key ❌" / keine Kurse:</strong> Key in den Einstellungen prüfen, Cache leeren.</li>';
     echo '<li><strong>Detailseite 404:</strong> <a href="' . $perma . '">Permalinks speichern</a>.</li>';
     echo '<li><strong>Förderberater-Ergebnis leer:</strong> in den Programmen „passt zu …" ankreuzen (gleiche Schlüssel wie im Schema).</li>';
@@ -4359,6 +4397,100 @@ function livento_cc_admin_tab_shortcodes() {
         }
         echo '</div>';
     }
+}
+
+/**
+ * Tab „Dozenten": Status der freigegebenen Profile + Einrichtung der Seite.
+ *
+ * Bewusst ein eigener Reiter und nicht ein Absatz unter „Shortcodes": Anders als bei
+ * Kursen entscheidet hier nicht die Redaktion, was erscheint, sondern zwei Tore in
+ * Campus Connect. Wer nicht auftaucht, sucht den Grund sonst im Plugin — und findet
+ * ihn dort nie.
+ */
+function livento_cc_admin_tab_dozenten() {
+    $list  = livento_cc_get_instructors();
+    $count = is_array($list) ? count($list) : 0;
+    $url   = livento_cc_dozenten_url();
+    $mit_foto = 0;
+    foreach ($list as $i) {
+        if (!empty($i['photo_url'])) {
+            $mit_foto++;
+        }
+    }
+
+    echo '<p style="margin-top:12px;max-width:880px">Dozentenprofile kommen <strong>live aus Campus Connect</strong>. Im Plugin gibt es dafür nichts zu pflegen — hier siehst du nur, was ankommt, und richtest die Seite ein.</p>';
+
+    // ── Status ───────────────────────────────────────────────────────────
+    echo '<div class="card" style="max-width:880px;padding:8px 16px 16px;margin:12px 0">';
+    echo '<h3 style="margin:8px 0 10px">Status</h3>';
+    echo '<table class="widefat striped" style="max-width:520px"><tbody>';
+    echo '<tr><td>Freigegebene Profile</td><td><strong>' . (int) $count . '</strong></td></tr>';
+    echo '<tr><td>davon mit Foto</td><td>' . (int) $mit_foto . '</td></tr>';
+    echo '<tr><td>Dozentenseite hinterlegt</td><td>' . ($url !== ''
+        ? '✅ <a href="' . esc_url($url) . '" target="_blank" rel="noopener">' . esc_html($url) . '</a>'
+        : '— <em>nicht gesetzt, Kursseiten verlinken nicht</em>') . '</td></tr>';
+    echo '</tbody></table>';
+
+    if ($count === 0) {
+        echo '<div class="notice notice-warning inline" style="margin:14px 0 0"><p><strong>Noch kein Profil freigegeben.</strong> Der Shortcode gibt derzeit <em>nichts</em> aus — bewusst, damit keine halbfertige Seite entsteht. Freigeben lässt sich ein Profil ausschließlich in Campus Connect (siehe unten).</p></div>';
+    } elseif ($count < 3) {
+        echo '<div class="notice notice-info inline" style="margin:14px 0 0"><p><strong>Erst ' . (int) $count . ' Profil' . ($count === 1 ? '' : 'e') . ' freigegeben.</strong> Der Abschnitt auf den Kursseiten wirkt schon jetzt; mit der eigenen Übersichtsseite würde ich warten, bis mehrere Profile stehen — eine Personenseite mit einem einzigen Eintrag wird von Suchmaschinen als dünn bewertet.</p></div>';
+    }
+    echo '</div>';
+
+    // ── Wer erscheint ────────────────────────────────────────────────────
+    if ($count > 0) {
+        echo '<div class="card" style="max-width:880px;padding:8px 16px 16px;margin:12px 0">';
+        echo '<h3 style="margin:8px 0 10px">Diese Profile sind öffentlich</h3>';
+        echo '<table class="widefat striped"><thead><tr><th>Name</th><th>Funktionsbezeichnung</th><th>Foto</th><th>Stichworte</th></tr></thead><tbody>';
+        foreach ($list as $i) {
+            $name = trim(($i['first_name'] ?? '') . ' ' . ($i['last_name'] ?? ''));
+            $q = is_array($i['qualifications'] ?? null) ? $i['qualifications'] : array();
+            echo '<tr>';
+            echo '<td><strong>' . esc_html($name) . '</strong></td>';
+            echo '<td>' . esc_html((string) ($i['public_role'] ?? '')) . '</td>';
+            echo '<td>' . (!empty($i['photo_url']) ? '✅' : '— <em>Textdarstellung</em>') . '</td>';
+            echo '<td>' . esc_html(implode(', ', array_slice($q, 0, 6))) . '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+        echo '<p class="description" style="margin-top:10px">Ein Profil ohne Foto verschwindet <strong>nicht</strong> — es erscheint in einer eigenen Textdarstellung statt als Karte mit leerem Bildbereich.</p>';
+        echo '</div>';
+    }
+
+    // ── Einrichtung ──────────────────────────────────────────────────────
+    echo '<div class="card" style="max-width:880px;padding:8px 16px 16px;margin:12px 0">';
+    echo '<h3 style="margin:8px 0 10px">Seite einrichten</h3>';
+    echo '<ol style="margin:0 0 0 18px">';
+    echo '<li>Eine WordPress-<strong>Seite</strong> anlegen. Der Slug ist <strong>frei wählbar</strong> — anders als beim Katalog gibt es keine Basis-Konstante, keine Rewrite-Regel und keine Detailseiten je Dozent.</li>';
+    echo '<li>Diesen Shortcode in den Inhalt setzen:</li>';
+    echo '</ol>';
+    echo '<input type="text" readonly class="large-text code" style="margin:8px 0" value="[livento_dozenten]" onclick="this.select()">';
+    echo '<ol start="3" style="margin:0 0 0 18px">';
+    echo '<li>Die URL dieser Seite unter <a href="' . esc_url(admin_url('admin.php?page=livento-kurskatalog&tab=settings')) . '">Einstellungen → Dozentenseite</a> eintragen. Erst dann erscheint auf den Kursdetailseiten der Link „Alle Dozentinnen und Dozenten". <strong>Leer heißt: ohne Link</strong> — ein toter Link entsteht nie.</li>';
+    echo '</ol>';
+    echo '<p class="description" style="margin-top:10px">Der Abschnitt „Wer dich unterrichtet" auf den Kursdetailseiten erscheint <strong>automatisch</strong>, sobald einem Kurs ein freigegebener Dozent zugeordnet ist. Dafür ist keine Seite und keine Einstellung nötig.</p>';
+    echo '</div>';
+
+    // ── Wer entscheidet ──────────────────────────────────────────────────
+    echo '<div class="card" style="max-width:880px;padding:8px 16px 16px;margin:12px 0">';
+    echo '<h3 style="margin:8px 0 10px">Wer erscheint — und wer das entscheidet</h3>';
+    echo '<p style="margin:0 0 8px">Das Plugin filtert <strong>nichts</strong> nach. Es zeigt genau das, was Campus Connect über die Ansicht <code>public_instructors</code> herausgibt. Ein Profil ist dort nur enthalten, wenn <strong>alle</strong> Bedingungen erfüllt sind:</p>';
+    echo '<ul style="margin:0 0 8px 18px;list-style:disc">';
+    echo '<li>Der Dozent ist aktiv,</li>';
+    echo '<li>er hat im Dozentenportal <strong>selbst eingewilligt</strong> (das kann die Verwaltung nicht ersetzen),</li>';
+    echo '<li>die Institutsleitung hat das Profil <strong>freigegeben</strong>,</li>';
+    echo '<li>Funktionsbezeichnung und eine Kurzvorstellung von mindestens 150 Zeichen liegen vor.</li>';
+    echo '</ul>';
+    echo '<p style="margin:0 0 8px">Wird ein Profil danach geändert, verfällt die Freigabe automatisch und muss erneut erteilt werden. Ein Widerruf entfernt das Profil sofort und löscht das Foto.</p>';
+    echo '<p class="description" style="margin:0"><strong>Fehlt jemand?</strong> Die Ursache liegt immer in Campus Connect, nie im Plugin: Dozenten → Dozent öffnen → Reiter „Website". Dort steht, welche der Bedingungen noch offen ist. Veröffentlicht werden ausschließlich Name, Funktionsbezeichnung, Kurzvorstellung, Qualifikationen und – sofern hinterlegt – das Foto. E-Mail, Telefon, Adresse und Bankdaten sind für die Website technisch nicht erreichbar.</p>';
+    echo '</div>';
+
+    // ── Aktualität ───────────────────────────────────────────────────────
+    echo '<div class="card" style="max-width:880px;padding:8px 16px 16px;margin:12px 0">';
+    echo '<h3 style="margin:8px 0 10px">Aktualität</h3>';
+    echo '<p style="margin:0">Die Liste ist wie der Kurskatalog zwischengespeichert. Ist der Purge-Webhook eingerichtet, schlagen Freigaben und Widerrufe <strong>sofort</strong> durch; ohne ihn dauert es bis zu drei Stunden. Der Cache lässt sich in der <a href="' . esc_url(admin_url('admin.php?page=livento-kurskatalog&tab=overview')) . '">Übersicht</a> von Hand leeren.</p>';
+    echo '</div>';
 }
 
 /** Tab „Filter & Slugs": Deep-Link-Parameter, Facet-Werte (live) + Kurs-Slugs. */

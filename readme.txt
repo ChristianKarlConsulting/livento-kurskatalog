@@ -3,12 +3,19 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.45.0
+Stable tag: 1.45.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.45.1 =
+* Eigener Reiter "Dozenten" im Plugin-Backend. Bis hier war der Dozenten-Teil nur ein Einstellungsfeld - wer wissen wollte, WARUM jemand nicht auf der Seite steht, fand im Plugin keinen Anhaltspunkt.
+* Der Reiter zeigt: Anzahl freigegebener Profile, Tabelle mit Name, Funktionsbezeichnung, Foto-Status und Stichworten, den Shortcode zum Kopieren, die Einrichtungsschritte - und die vollstaendige Liste der Bedingungen, unter denen ein Profil ueberhaupt erscheint, samt Hinweis, dass die Ursache immer in Campus Connect liegt und nie im Plugin.
+* Warnung bei null freigegebenen Profilen, Hinweis bei weniger als drei (eine Personenseite mit einem einzigen Eintrag wird von Suchmaschinen als duenn bewertet).
+* [livento_dozenten] steht jetzt in der Shortcode-Uebersicht, und die Anleitung hat einen eigenen Abschnitt 8 dazu.
+* Reine Backend-Ergaenzung - an der Ausgabe auf der Website aendert sich nichts.
 
 = 1.45.0 =
 * Dozentinnen und Dozenten werden sichtbar. Neuer Shortcode [livento_dozenten] rendert alle in Campus Connect freigegebenen Profile als Raster: rundes Portrait, Name, Funktionsbezeichnung, Qualifikations-Stichworte und eine Kurzvorstellung, deren Rest sich aufklappt. Dazu ein Abschnitt "Wer dich unterrichtet" auf jeder Kursdetailseite.
