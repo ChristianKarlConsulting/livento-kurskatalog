@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.45.1
+ * Version:           1.46.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,22 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.46.0: KI-Kennzeichnung der Kursbilder (Campus Connect v3.220.0).
+ *          Kursbilder liegen nicht in der WordPress-Mediathek, sondern im Supabase-
+ *          Bucket public-course-images. Das Plugin "Livento KI-Kennzeichnung" kann
+ *          sie deshalb nicht erfassen — zu ihnen gibt es keinen WordPress-Anhang,
+ *          an dem ein Haekchen haengen koennte. Die Kennzeichnung kommt darum aus
+ *          Campus Connect mit: neues Feld public_image_ai_generated am Angebot,
+ *          gepflegt unter "Oeffentliche Kurse", durchgereicht in public_offerings.
+ *          Ist es gesetzt, sitzt auf Karte und Detailbild eine Plakette
+ *          "KI-generiert" in der unteren rechten Ecke (Petrol #004D33, heller
+ *          Ring). Text ueber den Filter livento_cc_ki_text aenderbar.
+ *          Eigene Klassen im lvk-Namensraum statt der Klassen des anderen Plugins:
+ *          sonst haenge der Katalog an einem Stylesheet, das nur geladen wird,
+ *          solange in der Mediathek mindestens ein Bild angehakt ist.
+ *          ACHTUNG: Die Feldliste in livento_cc_get_offerings() musste erweitert
+ *          werden — die Detailseite holt select=*, die Kursliste nicht.
  *
  * v1.45.1: Der Dozenten-Teil bekommt im Backend einen eigenen Platz. Bis hier war er
  *          nur als Einstellungsfeld sichtbar — wer wissen wollte, WARUM jemand nicht
@@ -675,7 +691,7 @@ function livento_cc_get_offerings() {
 
     $select = implode(',', array(
         'id', 'offering_type', 'title', 'slug', 'short_description', 'public_description',
-        'public_image_url', 'public_price', 'is_vat_exempt', 'start_datetime', 'end_datetime',
+        'public_image_url', 'public_image_ai_generated', 'public_price', 'is_vat_exempt', 'start_datetime', 'end_datetime',
         'site_name', 'site_city', 'format', 'level', 'is_azav_relevant', 'rbp_points',
         'duration_minutes', 'course_number', 'published_at', 'max_participants', 'enrolled_count',
         'show_availability_indicator', 'wc_checkout_url', 'is_free',
@@ -2577,6 +2593,31 @@ function livento_cc_data_list($o, $field) {
     return empty($vals) ? '' : '|' . implode('|', $vals) . '|';
 }
 
+/**
+ * Die KI-Plakette zu einem Angebot, oder ein leerer String.
+ *
+ * Das Kursbild liegt nicht in der WordPress-Mediathek, sondern im Supabase-
+ * Bucket public-course-images. Das Plugin "Livento KI-Kennzeichnung" kann es
+ * deshalb nicht erfassen — es gibt dazu keinen WordPress-Anhang. Die
+ * Kennzeichnung kommt darum aus Campus Connect mit, als Feld am Angebot
+ * (public_image_ai_generated, seit v3.220.0).
+ *
+ * Bewusst eigene Klassen im lvk-Namensraum statt der Klassen des anderen
+ * Plugins: Sonst haenge dieser Katalog an einem Stylesheet, das nur geladen
+ * wird, solange in der Mediathek mindestens ein Bild angehakt ist.
+ */
+function livento_cc_ki_plakette($o) {
+    if (empty($o['public_image_ai_generated'])) {
+        return '';
+    }
+    return '<span class="lvk-ki">' . esc_html(livento_cc_ki_text()) . '</span>';
+}
+
+/** Beschriftung der Plakette. Filterbar, damit sie sich zentral umstellen laesst. */
+function livento_cc_ki_text() {
+    return (string) apply_filters('livento_cc_ki_text', 'KI-generiert');
+}
+
 function livento_cc_render_card($o) {
     $has_slug = !empty($o['slug']);
     $url = $has_slug ? livento_cc_detail_url($o['slug']) : ($o['wc_checkout_url'] ?? '');
@@ -2602,7 +2643,8 @@ function livento_cc_render_card($o) {
     $img = '';
     if (!empty($o['public_image_url'])) {
         $img = '<a href="' . esc_url($url ?: '#') . '" class="lvk-card-img">'
-            . '<img src="' . esc_url($o['public_image_url']) . '" alt="' . esc_attr($o['title']) . '" loading="lazy"></a>';
+            . '<img src="' . esc_url($o['public_image_url']) . '" alt="' . esc_attr($o['title']) . '" loading="lazy">'
+            . livento_cc_ki_plakette($o) . '</a>';
     }
 
     // data-Attribute fuer den clientseitigen Filter + Sortierung
@@ -2958,7 +3000,14 @@ function livento_cc_render_detail($o) {
     }
 
     if (!empty($o['public_image_url'])) {
-        $out .= '<img class="lvk-hero" src="' . esc_url($o['public_image_url']) . '" alt="' . esc_attr($o['title']) . '" loading="lazy">';
+        // Huelle, damit die Plakette eine Bezugsflaeche hat. inline-block statt
+        // block: so ist die Huelle genau so breit wie das Bild, auch wenn das
+        // Bild schmaler ist als die Spalte — sonst schwebte die Plakette neben
+        // dem Bild statt in seiner Ecke.
+        $out .= '<span class="lvk-ki-wrap">'
+            . '<img class="lvk-hero" src="' . esc_url($o['public_image_url']) . '" alt="' . esc_attr($o['title']) . '" loading="lazy">'
+            . livento_cc_ki_plakette($o)
+            . '</span>';
     }
 
     if (!empty($o['short_description'])) {
@@ -3614,6 +3663,15 @@ function livento_cc_styles() {
 .lvk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;margin:8px 0}
 .lvk-card{border:1px solid #e6e6e6;border-left:4px solid var(--lvk-accent);border-radius:0 8px 8px 0;background:#fff;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 2px 4px rgba(0,0,0,.05)}
 .lvk-card-img img{width:100%;height:160px;object-fit:cover;display:block}
+/* KI-Kennzeichnung (v1.46.0). Plakette unten rechts im Bild, Petrol mit
+   hellem Ring — ohne den Ring verschwindet Petrol auf gruenstichigen Motiven,
+   und Pflegebilder sind das oft. */
+.lvk-card-img{position:relative;display:block}
+.lvk-ki-wrap{position:relative;display:inline-block;max-width:100%;line-height:0;margin:16px 0}
+.lvk-ki-wrap .lvk-hero{margin:0}
+.lvk-ki{position:absolute;right:.85em;bottom:.85em;z-index:2;box-sizing:border-box;display:inline-block;padding:.4em .9em;border-radius:999px;background:rgba(0,77,51,.95);border:1px solid rgba(255,255,255,.22);color:#fff;font-size:12px;font-weight:600;line-height:1.4;letter-spacing:.01em;white-space:nowrap;box-shadow:0 1px 5px rgba(0,0,0,.28);pointer-events:none;text-decoration:none}
+.lvk-card-img .lvk-ki{font-size:11px;right:.7em;bottom:.7em}
+@media print{.lvk-ki{background:transparent;border:1px solid #004D33;color:#004D33;box-shadow:none}}
 .lvk-card-body{padding:16px;display:flex;flex-direction:column;gap:8px;flex:1}
 .lvk-card-title{font-size:1.1rem;margin:0;color:var(--lvk-green)}
 .lvk-card-title a{text-decoration:none}

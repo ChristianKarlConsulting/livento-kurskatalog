@@ -3,12 +3,20 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.45.1
+Stable tag: 1.46.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.46.0 =
+* KI-Kennzeichnung der Kursbilder. Ist ein Kursbild in Campus Connect als KI-generiert gekennzeichnet, sitzt auf Karte und Detailbild eine Plakette "KI-generiert" in der unteren rechten Ecke (Petrol #004D33 mit hellem Ring).
+* Der Anlass: Kursbilder liegen NICHT in der WordPress-Mediathek, sondern im Supabase-Bucket public-course-images. Das Plugin "Livento KI-Kennzeichnung" kann sie deshalb nicht erfassen - zu ihnen gibt es keinen WordPress-Anhang, an dem ein Haekchen haengen koennte. Ein Haekchen in der Mediathek bleibt auf Kursbilder folgenlos.
+* Gepflegt wird die Kennzeichnung darum in Campus Connect (ab v3.220.0): Oeffentliche Kurse -> Kurs bearbeiten -> Basis, Haekchen unter dem Bild. Das Plugin liest sie ueber das neue Feld public_image_ai_generated aus public_offerings.
+* VORAUSSETZUNG: Campus Connect ab v3.220.0. Fehlt das Feld, bleibt die Plakette einfach aus - das Plugin bricht nicht.
+* Eigene CSS-Klassen im lvk-Namensraum statt der Klassen des Mediathek-Plugins. Sonst haenge der Katalog an einem Stylesheet, das nur geladen wird, solange in der Mediathek mindestens ein Bild angehakt ist.
+* Der Text der Plakette laesst sich ueber den Filter livento_cc_ki_text aendern.
 
 = 1.45.1 =
 * Eigener Reiter "Dozenten" im Plugin-Backend. Bis hier war der Dozenten-Teil nur ein Einstellungsfeld - wer wissen wollte, WARUM jemand nicht auf der Seite steht, fand im Plugin keinen Anhaltspunkt.
