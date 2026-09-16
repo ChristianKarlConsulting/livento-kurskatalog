@@ -3,12 +3,18 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.46.0
+Stable tag: 1.47.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.47.0 =
+* Die Faktenbox "Auf einen Blick" zeigt jetzt die Art der Pruefung - als Zeile "Pruefung" direkt ueber dem Abschluss. Gepflegt wird sie in Campus Connect je Kurs als freier Text, z. B. "Institutsinterne schriftliche Abschlusspruefung" oder "Abschlusstest (Multiple Choice)".
+* Ist zu einem Kurs nichts gepflegt, erscheint die Zeile gar nicht. Es wird nie automatisch "keine Pruefung" behauptet - eine fehlende Angabe ist keine Aussage ueber den Kurs.
+* Der feste Vorspann "Qualifiziertes Zertifikat ..." vor der Abschlussbezeichnung ist ENTFALLEN. Er war eine Qualitaetsaussage des Plugins selbst und bei einem pruefungsfreien Workshop zu viel versprochen. Angezeigt wird jetzt der in Campus Connect gepflegte Wortlaut.
+* Einzelne Kurstermine koennen erstmals eine Abschlussbezeichnung fuehren; bis Campus Connect v3.228.0 lieferte die Datenquelle dort grundsaetzlich nichts.
 
 = 1.46.0 =
 * KI-Kennzeichnung der Kursbilder. Ist ein Kursbild in Campus Connect als KI-generiert gekennzeichnet, sitzt auf Karte und Detailbild eine Plakette "KI-generiert" in der unteren rechten Ecke (Petrol #004D33 mit hellem Ring).

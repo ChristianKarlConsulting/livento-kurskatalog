@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.46.0
+ * Version:           1.47.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,21 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.47.0: Faktenbox zeigt die Art der Pruefung (Campus Connect v3.228.0).
+ *          Neue Zeile "Pruefung" aus dem Feld exam_title, direkt ueber "Abschluss".
+ *          Ist das Feld nicht gepflegt, erscheint die Zeile gar nicht — es wird nie
+ *          automatisch "keine Pruefung" behauptet. Die Angabe ist rein redaktionell
+ *          und hat in Campus Connect bewusst NICHTS mit has_exam/exam_types zu tun;
+ *          an denen haengen dort Notenerfassung und Zeugnisausstellung.
+ *          Zwei weitere Aenderungen derselben Version:
+ *          - Der feste Vorspann „Qualifiziertes Zertifikat ‚…'" vor der Abschluss-
+ *            bezeichnung ist ENTFALLEN. Er war eine Qualitaetsaussage des Plugins
+ *            selbst und bei einem pruefungsfreien Workshop zu viel versprochen.
+ *            Angezeigt wird jetzt der in Campus Connect gepflegte Wortlaut.
+ *          - Einzeltermine (scheduled_courses) koennen erstmals eine Abschluss-
+ *            bezeichnung fuehren; die View lieferte dort bis v3.228.0 fest NULL.
+ *          Am Datenabruf war nichts zu tun: die Detailseite liest select=*.
  *
  * v1.46.0: KI-Kennzeichnung der Kursbilder (Campus Connect v3.220.0).
  *          Kursbilder liegen nicht in der WordPress-Mediathek, sondern im Supabase-
@@ -2803,6 +2818,7 @@ function livento_cc_fb_icon($key) {
         'clock'    => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
         'hours'    => '<path d="M6 2h12M6 22h12M8 2v3c0 2 4 3.5 4 7s-4 5-4 7v1M16 2v3c0 2-4 3.5-4 7"/>',
         'cert'     => '<circle cx="12" cy="8" r="6"/><path d="M8.5 13.5 7 22l5-3 5 3-1.5-8.5"/>',
+        'exam'     => '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 3h6v3H9zM9 13l2 2 4-4"/>',
         'calendar' => '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
         'price'    => '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h6.8a2 2 0 0 1 1.4.6l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     );
@@ -2900,8 +2916,19 @@ function livento_cc_factbox_html($o) {
     if ($umfang !== '') {
         $rows[] = array('hours', 'Umfang', esc_html($umfang));
     }
+    // v1.47.0: Redaktionelle Pruefungsangabe aus Campus Connect (exam_title).
+    // Leer = die Zeile erscheint gar nicht. Es wird NIE automatisch "keine
+    // Pruefung" behauptet: ungepflegt heisst keine Aussage, nicht Abwesenheit.
+    if (!empty($o['exam_title'])) {
+        $rows[] = array('exam', 'Prüfung', esc_html($o['exam_title']));
+    }
     if (!empty($o['certificate_title'])) {
-        $abschluss = 'Qualifiziertes Zertifikat „' . $o['certificate_title'] . '"';
+        // v1.47.0: Der feste Vorspann "Qualifiziertes Zertifikat ‚…'" ist
+        // entfallen. Er war eine Qualitaetsaussage, die das Plugin selbst
+        // traf — bei einem pruefungsfreien Workshop zu viel versprochen, und
+        // im Pflegefeld steht ausdruecklich, keine Anerkennungs-Aussagen zu
+        // machen. Angezeigt wird jetzt der gepflegte Wortlaut.
+        $abschluss = $o['certificate_title'];
         if (!empty($o['rbp_points'])) {
             $abschluss .= ' · ' . (int) $o['rbp_points'] . ' RbP-Punkte';
         }
