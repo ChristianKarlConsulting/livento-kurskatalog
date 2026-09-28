@@ -3,12 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.48.0
+Stable tag: 1.49.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.49.0 =
+* CampusTicket-Seite: neuer Abschnitt "Lernpfade" (Anker #lernpfade) zwischen Preis und "So laeuft's ab". Er erklaert, wie Arbeitgeber Pflichtkurse per Lernpfad mit Frist zuweisen.
+* Erscheint nur bei der Tariffamilie mit dem Schluessel "ticket". Die alten Ticket-Seiten bleiben unveraendert.
 
 = 1.48.0 =
 * CampusTicket: Nachkauf von Lizenzen. Arbeitgeber kaufen in Campus Connect zusaetzliche Lizenzen, anteilig bis zum Ende ihres Vertrags. Campus Connect berechnet den Preis und uebergibt ihn als signierten Beleg (?cc_topup=...).

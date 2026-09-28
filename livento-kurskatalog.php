@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.48.0
+ * Version:           1.49.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,11 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.49.0: CampusTicket-Seite: Abschnitt „Lernpfade" (Anker #lernpfade) zwischen Preis und
+ *          „So läuft's ab". Nur fuer die Familie mit key 'ticket' — die alten Ticket-Seiten
+ *          bleiben unveraendert. Reiner Text, keine Daten aus Campus Connect: Die Pfade selbst
+ *          sind nur in der App sichtbar (Entscheidung v4.0.0).
  *
  * v1.48.0: CampusTicket-Nachkauf von Lizenzen (Campus Connect v4.0.0).
  *          Campus Connect berechnet den Preis anteilig bis Vertragsende und schickt
@@ -6923,6 +6928,41 @@ add_shortcode('livento_tarif', function ($atts) {
         </section>
         <?php endforeach; ?>
 
+        <?php // v1.49.0: Lernpfade erklaeren — nur auf der CampusTicket-Seite. Die Pfade selbst
+              // bleiben in der App (keine Liste hier), die Seite erklaert nur das Prinzip. ?>
+        <?php if ($family['key'] === 'ticket') : ?>
+        <section class="lv-lernpfade" id="lernpfade">
+            <h2>Lernpfade: Pflichtkurse mit einem Klick zuweisen</h2>
+            <p class="lv-lernpfade__intro">Mit dem CampusTicket hat jede Person mit Lizenz Zugang zu allen Online-Kursen. Welche Kurse wirklich Pflicht sind, legst du über Lernpfade fest. Ein Lernpfad ist eine fertige Kurssammlung in sinnvoller Reihenfolge.</p>
+            <div class="lv-lernpfade__grid">
+                <div class="lv-lernpfade__card">
+                    <strong>Fertige Pfade von uns</strong>
+                    <span>Zum Beispiel die jährlichen Pflichtunterweisungen für dein Setting oder die Kurse für eine Rolle wie Praxisanleitung oder Betreuung. Wir halten sie aktuell. Kommt ein Kurs dazu, landet er automatisch bei allen, denen der Pfad zugewiesen ist.</span>
+                </div>
+                <div class="lv-lernpfade__card">
+                    <strong>Passend zur Funktion</strong>
+                    <span>Du trägst bei jeder Person ihre Funktion ein, zum Beispiel Pflegefachkraft oder Betreuungskraft. Ein Assistent schlägt dir die passenden Pfade vor. Du bestätigst sie für die ganze Gruppe und passt einzelne Personen bei Bedarf an.</span>
+                </div>
+                <div class="lv-lernpfade__card">
+                    <strong>Mit Frist und Erinnerung</strong>
+                    <span>Du legst fest, bis wann ein Pfad erledigt sein soll. Deine Mitarbeitenden bekommen eine Erinnerung vor der Frist. Du siehst in der Team-Ampel, wer fertig ist und wo etwas offen ist. Jährliche Unterweisungen werden automatisch wieder fällig.</span>
+                </div>
+                <div class="lv-lernpfade__card">
+                    <strong>Kein Kurs doppelt</strong>
+                    <span>Steckt ein Kurs in zwei Pfaden, muss ihn trotzdem niemand zweimal machen. Es zählt die früheste Frist. Nimmst du einen Pfad wieder weg, bleiben die Kurse, die ein anderer Pfad noch braucht.</span>
+                </div>
+                <div class="lv-lernpfade__card">
+                    <strong>Eigene Pfade</strong>
+                    <span>Du stellst dir eigene Lernpfade aus dem ganzen Katalog zusammen, etwa für die Einarbeitung neuer Kolleginnen und Kollegen. Sie sind nur für dein Team sichtbar.</span>
+                </div>
+                <div class="lv-lernpfade__card">
+                    <strong>Freiwillig weiterlernen</strong>
+                    <span>Alles, was nicht zugewiesen ist, können deine Mitarbeitenden jederzeit selbst starten. Du siehst davon nur die abgeschlossenen Kurse, keine Abbrüche und keine Testversuche.</span>
+                </div>
+            </div>
+        </section>
+        <?php endif; ?>
+
         <?php // v1.36.0: „So laeuft's ab". Die Schritte stehen bisher nur in den
               // product_plans.description-Texten (die das Plugin nicht rendert) und in
               // der Willkommensmail — also erst NACH dem Kauf. Vor dem Kauf ist genau
@@ -7691,6 +7731,15 @@ function livento_cc_tariff_styles() {
     .lv-tiers__table tbody tr:last-child th,.lv-tiers__table tbody tr:last-child td{border-bottom:0}
     .lv-tiers__note{margin:.5rem 0 0;font-size:.82rem;color:#5c6a70}
     @media(max-width:480px){.lv-tiers__table tbody th{white-space:normal}}
+    /* v1.49.0: Lernpfade (nur CampusTicket) */
+    .lv-lernpfade{max-width:48rem;margin-top:2rem;scroll-margin-top:6rem}
+    .lv-lernpfade h2{margin:0 0 .5rem}
+    .lv-lernpfade__intro{margin:0 0 1rem;color:#5c6a70}
+    .lv-lernpfade__grid{display:grid;gap:.75rem;grid-template-columns:repeat(2,minmax(0,1fr))}
+    @media(max-width:640px){.lv-lernpfade__grid{grid-template-columns:1fr}}
+    .lv-lernpfade__card{padding:.9rem 1rem;border:1px solid #e3e8ea;border-radius:12px;background:#fff;border-left:4px solid #AAC42B}
+    .lv-lernpfade__card strong{display:block;margin-bottom:.2rem;color:#004D33}
+    .lv-lernpfade__card span{font-size:.92rem;color:#5c6a70}
     .lv-tarif-ablauf{max-width:48rem;margin-top:2rem}
     .lv-tarif-ablauf h2{margin:0 0 .75rem}
     .lv-steps{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;gap:.75rem}
