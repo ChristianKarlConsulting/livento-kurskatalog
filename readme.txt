@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.49.1
+Stable tag: 1.50.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.50.0 =
+* 301-Weiterleitungen: Die alten Ticket-Seiten (/e-learning/pflicht-ticket/, /komplett-ticket/, /rollen-ticket/, die Kurzformen ohne /e-learning/ und die alten Namen PflichtStart/PflegeKomplett/RollenPlus) leiten dauerhaft auf /e-learning/campus-ticket/. Query-Parameter bleiben erhalten.
 
 = 1.49.1 =
 * Fix: Der Abschnitt "Lernpfade" erschien auf der CampusTicket-Seite nicht, weil die Tariffamilie auf Prod den Schluessel "campusticket" hat (Dev: "ticket"). Beide Schluessel werden jetzt erkannt.

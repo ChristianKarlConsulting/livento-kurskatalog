@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.49.1
+ * Version:           1.50.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,9 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.50.0: 301-Weiterleitungen der alten Ticket-Seiten (Pflicht-/Komplett-/RollenTicket und
+ *          die alten Namen PflichtStart/PflegeKomplett/RollenPlus) auf /e-learning/campus-ticket/.
  *
  * v1.49.1: Fix — der Lernpfade-Abschnitt erschien nicht: Auf Prod heisst die Familie
  *          'campusticket', auf Dev 'ticket'. Beide Schluessel werden jetzt erkannt.
@@ -4984,6 +4987,36 @@ add_action('template_redirect', function () {
     wp_redirect($return_url, 302, 'Livento Campus Connect');
     exit;
 }, 20);
+
+/* ============================================================
+ * 11c. Alte Ticket-Seiten -> CampusTicket (v1.50.0, Campus Connect v4.0.0)
+ *
+ * Pflicht-, Komplett- und RollenTicket sind im CampusTicket aufgegangen. Ihre Adressen
+ * (samt der verbrannten Vorgaengernamen) leiten dauerhaft auf die CampusTicket-Seite.
+ * Laeuft mit Prioritaet 0, also VOR redirect_canonical und der 404-Suche von WordPress —
+ * sonst entstuende eine Kette ueber die noch vorhandene Seite /e-learning/pflicht-ticket/.
+ * Query-Parameter (utm_*, gclid) bleiben erhalten.
+ * ============================================================ */
+function livento_cc_old_ticket_paths() {
+    return array(
+        'e-learning/pflicht-ticket', 'e-learning/komplett-ticket', 'e-learning/rollen-ticket',
+        'e-learning/pflichtstart', 'e-learning/pflegekomplett', 'e-learning/rollenplus',
+        'pflicht-ticket', 'komplett-ticket', 'rollen-ticket',
+    );
+}
+
+add_action('template_redirect', function () {
+    if (is_admin() || empty($_SERVER['REQUEST_URI'])) return;
+    $path = trim((string) wp_parse_url(wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_PATH), '/');
+    if (!in_array(strtolower($path), livento_cc_old_ticket_paths(), true)) return;
+
+    $target = home_url('/e-learning/campus-ticket/');
+    $query  = (string) wp_parse_url(wp_unslash($_SERVER['REQUEST_URI']), PHP_URL_QUERY);
+    if ($query !== '') $target .= '?' . $query;
+
+    wp_redirect($target, 301, 'Livento Kurskatalog');
+    exit;
+}, 0);
 
 /* ============================================================
  * 11b. CampusTicket: Lizenz-Nachkauf (v1.48.0, Campus Connect v4.0.0)
