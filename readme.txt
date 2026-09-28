@@ -3,12 +3,18 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.47.0
+Stable tag: 1.48.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.48.0 =
+* CampusTicket: Nachkauf von Lizenzen. Arbeitgeber kaufen in Campus Connect zusaetzliche Lizenzen, anteilig bis zum Ende ihres Vertrags. Campus Connect berechnet den Preis und uebergibt ihn als signierten Beleg (?cc_topup=...).
+* Das Plugin prueft die Signatur (HMAC-SHA256), setzt daraus den Warenkorbpreis, fixiert die Menge auf 1 und legt den Beleg als Positions-Meta _cc_topup an der Bestellung ab. Der Webhook prueft den Beleg ein zweites Mal gegen den bezahlten Betrag.
+* Das Nachkauf-Produkt kommt NUR mit gueltigem Beleg in den Warenkorb - es steht auf 0 EUR, ohne diese Sperre gaebe es eine Gratisbestellung.
+* Einstellungen: Kurskatalog -> Einstellungen -> "CampusTicket: Lizenz-Nachkauf" (Produkt-ID und Beleg-Secret, identisch mit TICKET_TOPUP_SECRET in Supabase). Beide Felder leer = Nachkauf aus; das Plugin verhaelt sich dann wie 1.47.0.
 
 = 1.47.0 =
 * Die Faktenbox "Auf einen Blick" zeigt jetzt die Art der Pruefung - als Zeile "Pruefung" direkt ueber dem Abschluss. Gepflegt wird sie in Campus Connect je Kurs als freier Text, z. B. "Institutsinterne schriftliche Abschlusspruefung" oder "Abschlusstest (Multiple Choice)".

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.47.0
+ * Version:           1.48.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,17 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.48.0: CampusTicket-Nachkauf von Lizenzen (Campus Connect v4.0.0).
+ *          Campus Connect berechnet den Preis anteilig bis Vertragsende und schickt
+ *          einen signierten Beleg (?cc_topup=...) mit. Das Plugin prueft die
+ *          Signatur (HMAC-SHA256, Secret unter „Einstellungen"), setzt daraus den
+ *          Warenkorbpreis und legt den Beleg als Positions-Meta _cc_topup ab. Der
+ *          Webhook prueft den Beleg ein zweites Mal gegen den bezahlten Betrag und
+ *          stockt erst dann das Lizenzpaket auf.
+ *          Das Nachkauf-Produkt (Produkt-ID unter „Einstellungen") laesst sich NUR
+ *          mit gueltigem Beleg in den Warenkorb legen — es steht auf 0 EUR, ohne
+ *          diese Sperre gaebe es eine Gratisbestellung.
  *
  * v1.47.0: Faktenbox zeigt die Art der Pruefung (Campus Connect v3.228.0).
  *          Neue Zeile "Pruefung" aus dem Feld exam_title, direkt ueber "Abschluss".
@@ -659,6 +670,18 @@ function livento_cc_anon_key() {
 function livento_cc_purge_secret() {
     $opt = (string) get_option('livento_cc_purge_secret', '');
     return $opt !== '' ? $opt : (string) LIVENTO_CC_PURGE_SECRET;
+}
+
+/** v1.48.0: Secret fuer Nachkauf-Belege — identisch mit TICKET_TOPUP_SECRET in Supabase. */
+function livento_cc_topup_secret() {
+    $opt = (string) get_option('livento_cc_topup_secret', '');
+    if ($opt !== '') return $opt;
+    return defined('LIVENTO_CC_TOPUP_SECRET') ? (string) LIVENTO_CC_TOPUP_SECRET : '';
+}
+
+/** v1.48.0: WooCommerce-Produkt „Lizenzen nachkaufen" (0 = nicht eingerichtet). */
+function livento_cc_topup_product_id() {
+    return absint(get_option('livento_cc_topup_product_id', 0));
 }
 
 /**
@@ -4033,6 +4056,8 @@ function livento_cc_admin_page() {
     if (isset($_POST['livento_cc_save_settings']) && check_admin_referer('livento_cc_save_settings')) {
         update_option('livento_cc_anon_key', sanitize_text_field(wp_unslash($_POST['livento_cc_anon_key'] ?? '')));
         update_option('livento_cc_purge_secret', sanitize_text_field(wp_unslash($_POST['livento_cc_purge_secret'] ?? '')));
+        update_option('livento_cc_topup_secret', sanitize_text_field(wp_unslash($_POST['livento_cc_topup_secret'] ?? '')));
+        update_option('livento_cc_topup_product_id', absint($_POST['livento_cc_topup_product_id'] ?? 0));
         // Berater-Formular: roher Embed-Code (Admin-only, manage_options) — kein sanitize_text_field,
         // sonst wuerden iframe/script entfernt.
         update_option('livento_cc_berater_form', wp_unslash($_POST['livento_cc_berater_form'] ?? ''));
@@ -4281,6 +4306,9 @@ function livento_cc_admin_tab_overview() {
         'Purge-Webhook'         => (livento_cc_purge_secret() !== '')
             ? '✅ aktiv: <code>POST ' . esc_html(home_url('/wp-json/livento/v1/purge')) . '</code>'
             : '— deaktiviert (Secret unter „Einstellungen" setzen)',
+        'Lizenz-Nachkauf'       => (livento_cc_topup_secret() !== '' && livento_cc_topup_product_id() > 0)
+            ? '✅ aktiv (Produkt #' . esc_html((string) livento_cc_topup_product_id()) . ')'
+            : '— deaktiviert (Produkt-ID und Secret unter „Einstellungen" setzen)',
     );
 
     echo '<table class="widefat striped" style="max-width:820px;margin-top:16px"><tbody>';
@@ -4646,6 +4674,11 @@ function livento_cc_admin_tab_settings() {
     echo '<p><label><strong>Secret:</strong><br><input type="text" name="livento_cc_purge_secret" class="regular-text code" value="' . esc_attr($secret) . '" autocomplete="off" placeholder="langer Zufallsstring" style="width:420px"></label></p>';
     echo '<p class="description">Webhook-URL (in Campus Connect hinterlegen): <code>POST ' . esc_html($webhook) . '</code><br>mit Header <code>X-Livento-Purge-Secret: &lt;Secret&gt;</code></p>';
 
+    echo '<h3 style="margin-top:24px">CampusTicket: Lizenz-Nachkauf</h3>';
+    echo '<p>Arbeitgeber kaufen in Campus Connect Lizenzen nach; der Preis wird dort anteilig berechnet und als signierter Beleg übergeben. Beide Felder leer = Nachkauf aus.</p>';
+    echo '<p><label><strong>Produkt-ID „Lizenzen nachkaufen":</strong><br><input type="number" min="0" name="livento_cc_topup_product_id" class="small-text" value="' . esc_attr((string) livento_cc_topup_product_id()) . '"></label></p>';
+    echo '<p><label><strong>Beleg-Secret:</strong><br><input type="text" name="livento_cc_topup_secret" class="regular-text code" value="' . esc_attr((string) get_option('livento_cc_topup_secret', '')) . '" autocomplete="off" placeholder="identisch mit TICKET_TOPUP_SECRET in Supabase" style="width:420px"></label></p>';
+
     echo '<h3 style="margin-top:24px">Kursberater: Kontaktformular</h3>';
     echo '<p><strong>Empfohlen — GoHighLevel-Webhook (nur EIN Button):</strong> Das Plugin zeigt ein schlankes Formular (Vorname, Nachname, E-Mail) und sendet die Daten beim Klick auf „Weiter" direkt an euren GHL-Workflow. So muss der Interessent nur einen Button klicken. In GHL: <em>Automation → Workflows → Trigger „Inbound Webhook" → URL kopieren</em> und hier einfügen.</p>';
     echo '<p><label><strong>GHL Inbound-Webhook-URL:</strong><br><input type="url" name="livento_cc_berater_webhook" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_berater_webhook', '')) . '" placeholder="https://services.leadconnectorhq.com/hooks/…"></label></p>';
@@ -4943,6 +4976,93 @@ add_action('template_redirect', function () {
     wp_redirect($return_url, 302, 'Livento Campus Connect');
     exit;
 }, 20);
+
+/* ============================================================
+ * 11b. CampusTicket: Lizenz-Nachkauf (v1.48.0, Campus Connect v4.0.0)
+ *
+ * Beleg-Format (siehe supabase/functions/_shared/topup-token.ts):
+ *   base64url(JSON {v:1, p:Paket-ID, s:Plaetze, a:Betrag brutto, e:Ablauf}) . base64url(HMAC)
+ * ============================================================ */
+
+function livento_cc_b64url_decode($value) {
+    $value = strtr((string) $value, '-_', '+/');
+    $pad = strlen($value) % 4;
+    if ($pad) $value .= str_repeat('=', 4 - $pad);
+    return base64_decode($value, true);
+}
+
+/** Prueft Signatur und Ablauf. Gibt array('p','s','a','token') oder null zurueck. */
+function livento_cc_topup_verify($token) {
+    $secret = livento_cc_topup_secret();
+    if ($secret === '' || !is_string($token) || $token === '') return null;
+    $parts = explode('.', $token);
+    if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') return null;
+    $given = livento_cc_b64url_decode($parts[1]);
+    if ($given === false || !hash_equals(hash_hmac('sha256', $parts[0], $secret, true), $given)) return null;
+    $json = livento_cc_b64url_decode($parts[0]);
+    $claims = ($json === false) ? null : json_decode($json, true);
+    if (!is_array($claims) || (int) ($claims['v'] ?? 0) !== 1) return null;
+    if (empty($claims['p']) || !is_string($claims['p'])) return null;
+    if (!is_int($claims['s'] ?? null) || $claims['s'] < 1) return null;
+    if (!is_numeric($claims['a'] ?? null) || (float) $claims['a'] < 0) return null;
+    if ((int) ($claims['e'] ?? 0) < time()) return null;
+    return array('p' => $claims['p'], 's' => (int) $claims['s'], 'a' => round((float) $claims['a'], 2), 'token' => $token);
+}
+
+/** Das Nachkauf-Produkt kommt NUR mit gueltigem Beleg in den Warenkorb (steht auf 0 EUR). */
+add_filter('woocommerce_add_to_cart_validation', function ($passed, $product_id) {
+    $topup_product = livento_cc_topup_product_id();
+    if ($topup_product === 0 || (int) $product_id !== $topup_product) return $passed;
+    $token = isset($_GET['cc_topup']) ? sanitize_text_field(wp_unslash($_GET['cc_topup'])) : '';
+    if (!livento_cc_topup_verify($token)) {
+        wc_add_notice('Der Nachkauf-Link ist ungültig oder abgelaufen. Bitte starten Sie den Nachkauf erneut in Campus Connect.', 'error');
+        return false;
+    }
+    return $passed;
+}, 10, 2);
+
+add_filter('woocommerce_add_cart_item_data', function ($cart_item_data, $product_id, $variation_id) {
+    if ((int) $product_id !== livento_cc_topup_product_id() || !isset($_GET['cc_topup'])) return $cart_item_data;
+    $claims = livento_cc_topup_verify(sanitize_text_field(wp_unslash($_GET['cc_topup'])));
+    if ($claims) {
+        $cart_item_data['_livento_cc_topup'] = $claims;
+        $cart_item_data['unique_key'] = md5($claims['token']); // jeder Nachkauf eine eigene Position
+    }
+    return $cart_item_data;
+}, 10, 3);
+
+add_filter('woocommerce_add_to_cart_quantity', function ($quantity, $product_id) {
+    return ((int) $product_id === livento_cc_topup_product_id()) ? 1 : $quantity;
+}, 10, 2);
+
+/** Preis ausschliesslich aus dem Beleg. */
+add_action('woocommerce_before_calculate_totals', function ($cart) {
+    if (is_admin() && !defined('DOING_AJAX')) return;
+    foreach ($cart->get_cart() as $cart_item) {
+        if (!empty($cart_item['_livento_cc_topup']['a'])) {
+            $cart_item['data']->set_price((float) $cart_item['_livento_cc_topup']['a']);
+        }
+    }
+}, 20, 1);
+
+/** Menge im Warenkorb fest auf 1. */
+add_filter('woocommerce_cart_item_quantity', function ($product_quantity, $cart_item_key, $cart_item) {
+    return !empty($cart_item['_livento_cc_topup']) ? '1' : $product_quantity;
+}, 10, 3);
+
+add_filter('woocommerce_get_item_data', function ($item_data, $cart_item) {
+    if (!empty($cart_item['_livento_cc_topup']['s'])) {
+        $item_data[] = array('name' => 'Zusätzliche Lizenzen', 'value' => (string) $cart_item['_livento_cc_topup']['s']);
+    }
+    return $item_data;
+}, 10, 2);
+
+/** Beleg an die Bestellposition: der Webhook liest _cc_topup aus meta_data. */
+add_action('woocommerce_checkout_create_order_line_item', function ($item, $cart_item_key, $values) {
+    if (empty($values['_livento_cc_topup']['token'])) return;
+    $item->add_meta_data('_cc_topup', $values['_livento_cc_topup']['token'], true);
+    $item->add_meta_data('Zusätzliche Lizenzen', (string) $values['_livento_cc_topup']['s'], true);
+}, 10, 3);
 
 /* ============================================================
  * 12. Auto-Update via GitHub (Plugin Update Checker)
