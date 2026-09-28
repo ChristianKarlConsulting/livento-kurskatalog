@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.49.0
+ * Version:           1.49.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,9 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.49.1: Fix — der Lernpfade-Abschnitt erschien nicht: Auf Prod heisst die Familie
+ *          'campusticket', auf Dev 'ticket'. Beide Schluessel werden jetzt erkannt.
  *
  * v1.49.0: CampusTicket-Seite: Abschnitt „Lernpfade" (Anker #lernpfade) zwischen Preis und
  *          „So läuft's ab". Nur fuer die Familie mit key 'ticket' — die alten Ticket-Seiten
@@ -6930,7 +6933,7 @@ add_shortcode('livento_tarif', function ($atts) {
 
         <?php // v1.49.0: Lernpfade erklaeren — nur auf der CampusTicket-Seite. Die Pfade selbst
               // bleiben in der App (keine Liste hier), die Seite erklaert nur das Prinzip. ?>
-        <?php if ($family['key'] === 'ticket') : ?>
+        <?php if (in_array($family['key'], array('ticket', 'campusticket'), true)) : ?>
         <section class="lv-lernpfade" id="lernpfade">
             <h2>Lernpfade: Pflichtkurse mit einem Klick zuweisen</h2>
             <p class="lv-lernpfade__intro">Mit dem CampusTicket hat jede Person mit Lizenz Zugang zu allen Online-Kursen. Welche Kurse wirklich Pflicht sind, legst du über Lernpfade fest. Ein Lernpfad ist eine fertige Kurssammlung in sinnvoller Reihenfolge.</p>

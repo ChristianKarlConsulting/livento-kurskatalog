@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.49.0
+Stable tag: 1.49.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.49.1 =
+* Fix: Der Abschnitt "Lernpfade" erschien auf der CampusTicket-Seite nicht, weil die Tariffamilie auf Prod den Schluessel "campusticket" hat (Dev: "ticket"). Beide Schluessel werden jetzt erkannt.
 
 = 1.49.0 =
 * CampusTicket-Seite: neuer Abschnitt "Lernpfade" (Anker #lernpfade) zwischen Preis und "So laeuft's ab". Er erklaert, wie Arbeitgeber Pflichtkurse per Lernpfad mit Frist zuweisen.
