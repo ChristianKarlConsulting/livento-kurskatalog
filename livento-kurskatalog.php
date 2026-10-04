@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.50.0
+ * Version:           1.51.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,10 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.51.0: Der Purge leert jetzt auch den Seitencache von WP-Optimize. Bis hier entwertete
+ *          er nur die eigenen Transients — WP-Optimize lieferte die fertige Kursseite aber
+ *          weiter aus dem Seitencache, z. B. ohne einen gerade freigegebenen Dozenten.
  *
  * v1.50.0: 301-Weiterleitungen der alten Ticket-Seiten (Pflicht-/Komplett-/RollenTicket und
  *          die alten Namen PflichtStart/PflegeKomplett/RollenPlus) auf /e-learning/campus-ticket/.
@@ -825,6 +829,12 @@ function livento_cc_flush_cache() {
     $old = livento_cc_ver();
     update_option('livento_cc_cachever', $old + 1);
     delete_transient('livento_cc_list_v' . $old); // alten Listen-Key sofort freigeben
+
+    // v1.51.0: WP-Optimize haelt die fertig gerenderten Kursseiten im Seitencache —
+    // ohne diesen Aufruf kaeme die Aenderung erst nach dessen Ablauf an.
+    if (function_exists('wpo_cache_flush')) {
+        wpo_cache_flush();
+    }
 }
 
 /* ============================================================
