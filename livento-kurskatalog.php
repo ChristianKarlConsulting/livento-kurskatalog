@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.51.0
+ * Version:           1.52.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,13 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.52.0: Anfragekurse (Campus Connect v4.12.0). Kurse ohne Termin kommen als
+ *          offering_type 'on_request' aus public_offerings: Karte mit Badge „Termin auf
+ *          Anfrage" und „Jetzt anfragen", ganz am Ende der Sortierung „Naechster Start".
+ *          Detailseite mit Anfrageformular (REST-Proxy /wp-json/livento/v1/kursanfrage →
+ *          submit-course-inquiry). Tritt ein Anfragekurs hinter einem verknuepften Termin
+ *          zurueck, liest die Detailseite public_inquiry_courses und zeigt „Naechster Termin".
  *
  * v1.51.0: Der Purge leert jetzt auch den Seitencache von WP-Optimize. Bis hier entwertete
  *          er nur die eigenen Transients — WP-Optimize lieferte die fertige Kursseite aber
@@ -587,6 +594,7 @@ function livento_cc_type_labels() {
         'program'          => 'Weiterbildung',
         'scheduled_course' => 'Einzeltermin',
         'self_learning'    => 'Selbstlernkurs',
+        'on_request'       => 'Termin auf Anfrage',
     );
 }
 
@@ -785,8 +793,26 @@ function livento_cc_get_offering($slug) {
         return null; // nicht cachen
     }
     $row = !empty($data) ? $data[0] : null;
+
+    // v1.52.0: Ein Anfragekurs, der gerade hinter einem verknuepften Termin
+    // zuruecktritt, fehlt in public_offerings. Seine Seite bleibt erreichbar
+    // (Ads, Google) und zeigt „Naechster Termin" — Quelle ist dann
+    // public_inquiry_courses (gleiche Spalten plus next_program).
+    if ($row === null) {
+        $alt = livento_cc_rest_get($query, 'public_inquiry_courses');
+        if (is_wp_error($alt)) {
+            return null; // nicht cachen
+        }
+        $row = !empty($alt) ? $alt[0] : null;
+    }
+
     set_transient($key, $row === null ? 'NULL' : $row, LIVENTO_CC_TTL);
     return $row;
+}
+
+/** v1.52.0: Anfragekurs (Kurs ohne Termin, Anfrage statt Buchung)? */
+function livento_cc_is_on_request($o) {
+    return isset($o['offering_type']) && $o['offering_type'] === 'on_request';
 }
 
 /**
@@ -1714,7 +1740,9 @@ function livento_cc_jsonld_course($o, $url) {
     $offer = array(
         '@type'         => 'Offer',
         'url'           => $o['wc_checkout_url'] ?: $url,
-        'availability'  => $sold_out ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock',
+        // v1.52.0: Anfragekurs hat keinen buchbaren Termin — vormerken statt „auf Lager".
+        'availability'  => livento_cc_is_on_request($o) ? 'https://schema.org/PreOrder'
+            : ($sold_out ? 'https://schema.org/SoldOut' : 'https://schema.org/InStock'),
         'priceCurrency' => 'EUR',
     );
     if ($o['public_price'] !== null && $o['public_price'] !== '') {
@@ -2512,7 +2540,9 @@ function livento_cc_sort_offerings($offerings, $sort) {
             break;
         case 'next_start':
         default:
-            usort($offerings, function ($a, $b) { return strcmp((string) ($a['start_datetime'] ?? '9999'), (string) ($b['start_datetime'] ?? '9999')); });
+            // v1.52.0: Anfragekurse ('zzzz') stehen hinter allem ohne Datum ('9999').
+            $key = function ($o) { return (string) ($o['start_datetime'] ?? (livento_cc_is_on_request($o) ? 'zzzz' : '9999')); };
+            usort($offerings, function ($a, $b) use ($key) { return strcmp($key($a), $key($b)); });
             break;
     }
     return $offerings;
@@ -2736,8 +2766,11 @@ function livento_cc_render_card($o) {
     $out  = '<article class="lvk-card"' . $data . '>';
     $out .= $img;
     $out .= '<div class="lvk-card-body">';
-    if (!empty($o['format']) || !empty($o['is_azav_relevant'])) {
+    if (!empty($o['format']) || !empty($o['is_azav_relevant']) || livento_cc_is_on_request($o)) {
         $out .= '<div class="lvk-badges">';
+        if (livento_cc_is_on_request($o)) {
+            $out .= '<span class="lvk-badge lvk-badge-anfrage">Termin auf Anfrage</span>';
+        }
         if (!empty($o['format'])) {
             $out .= '<span class="lvk-badge">' . esc_html(livento_cc_format_label($o['format'])) . '</span>';
         }
@@ -2754,7 +2787,7 @@ function livento_cc_render_card($o) {
         $out .= '<p class="lvk-card-meta">' . esc_html(implode(' · ', $meta)) . '</p>';
     }
     if ($url) {
-        $label = $has_slug ? 'Details ansehen' : 'Jetzt buchen';
+        $label = $has_slug ? (livento_cc_is_on_request($o) ? 'Jetzt anfragen' : 'Details ansehen') : 'Jetzt buchen';
         $out .= '<a class="lvk-card-cta" href="' . esc_url($url) . '">' . esc_html($label) . '</a>';
     }
     $out .= '</div></article>';
@@ -2934,7 +2967,7 @@ function livento_cc_factbox_start($o) {
     if (!empty($o['start_datetime'])) {
         return livento_cc_fmt_date($o['start_datetime']);
     }
-    if ($type === 'program') {
+    if ($type === 'program' || $type === 'on_request') {
         return 'auf Anfrage';
     }
     return '';
@@ -3025,6 +3058,9 @@ function livento_cc_factbox_html($o) {
     $out .= '<div class="lvk-fb-actions">';
     if (!empty($o['wc_checkout_url'])) {
         $out .= '<a class="lvk-cta lvk-fb-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt anmelden</a>';
+    } elseif (livento_cc_is_on_request($o)) {
+        // v1.52.0: Anfragekurs — kein Checkout, das Formular steht weiter unten.
+        $out .= '<a class="lvk-cta lvk-fb-cta" href="#kursanfrage">Termin anfragen</a>';
     }
     $out .= '<a class="lvk-cta-secondary lvk-fb-cta2" href="' . esc_url($beratung) . '">Unsicher? Kostenlose Beratung</a>';
     $out .= '</div>';
@@ -3101,6 +3137,9 @@ function livento_cc_render_detail($o) {
     $out .= livento_cc_factbox_html($o);
     $out .= '<div class="lvk-detail-main">';
 
+    // v1.52.0: Anfragekurs mit verknuepftem kuenftigem Termin — auf den Termin verweisen.
+    $out .= livento_cc_next_program_html($o);
+
     if (!empty($o['target_audience'])) {
         $out .= '<div class="lvk-section"><h2>Zielgruppe</h2>' . livento_cc_richtext($o['target_audience']) . '</div>';
     }
@@ -3133,6 +3172,11 @@ function livento_cc_render_detail($o) {
     // Zugangsvoraussetzungen
     if (!empty($o['admission_requirements'])) {
         $out .= '<div class="lvk-section"><h2>Zugangsvoraussetzungen</h2>' . livento_cc_richtext($o['admission_requirements']) . '</div>';
+    }
+
+    // v1.52.0: Anfrageformular fuer Kurse ohne Termin.
+    if (livento_cc_is_on_request($o)) {
+        $out .= livento_cc_inquiry_section($o);
     }
 
     // Häufige Fragen (FAQ) — sichtbarer Block; FAQPage-JSON-LD kommt aus wp_head.
@@ -3171,10 +3215,290 @@ function livento_cc_render_detail($o) {
         }
         $out .= '<a class="lvk-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Platz sichern</a>';
         $out .= '</div>';
+    } elseif (livento_cc_is_on_request($o)) {
+        $out .= '<div class="lvk-sticky">'
+              . '<div class="lvk-sticky-price">Termin auf Anfrage</div>'
+              . '<a class="lvk-cta" href="#kursanfrage">Anfragen</a>'
+              . '</div>';
     }
 
     $out .= '</div>';
     return $out;
+}
+
+/**
+ * v1.52.0: Box „Naechster Termin" auf der Seite eines Anfragekurses. Nur wenn
+ * public_inquiry_courses einen verknuepften kuenftigen Lehrgang meldet — dann
+ * steht der Anfragekurs gerade nicht im Katalog, seine URL bleibt aber gueltig.
+ */
+function livento_cc_next_program_html($o) {
+    if (!livento_cc_is_on_request($o) || empty($o['next_program']) || !is_array($o['next_program'])) {
+        return '';
+    }
+    $np = $o['next_program'];
+    $link = '';
+    if (!empty($np['slug'])) {
+        $link = livento_cc_detail_url($np['slug']);
+    } elseif (!empty($np['checkout_url'])) {
+        $link = $np['checkout_url'];
+    }
+    $out  = '<div class="lvk-next-program">';
+    $out .= '<p class="lvk-next-program-head">Nächster Termin: ' . esc_html(livento_cc_fmt_date($np['start'] ?? '')) . '</p>';
+    if ($link !== '') {
+        $out .= '<a class="lvk-cta" href="' . esc_url($link) . '">Zum Termin – jetzt Platz sichern</a>';
+    }
+    $out .= '<p class="lvk-next-program-sub">Der Termin passt nicht? Frag unten einfach einen anderen an.</p>';
+    return $out . '</div>';
+}
+
+/**
+ * v1.52.0: Anfrageformular eines Anfragekurses. Geht an den WP-REST-Proxy
+ * /wp-json/livento/v1/kursanfrage, der serverseitig an die Campus-Connect-Function
+ * submit-course-inquiry weiterreicht (Muster Testanfrage, v1.43.0).
+ */
+function livento_cc_inquiry_section($o) {
+    $datenschutz = livento_cc_privacy_url();
+    ob_start(); ?>
+    <section class="lvk-section lv-inq" id="kursanfrage">
+        <h2>Termin anfragen</h2>
+        <p class="lv-inq__lead">Für diesen Kurs steht gerade kein fester Termin. Sag uns, wann es dir passt – wir melden uns bei dir.</p>
+        <form class="lv-inq-form" novalidate
+              data-endpoint="<?php echo esc_url(rest_url('livento/v1/kursanfrage')); ?>"
+              data-slug="<?php echo esc_attr((string) $o['slug']); ?>"
+              data-title="<?php echo esc_attr((string) $o['title']); ?>">
+            <div class="lv-inq-switch" role="radiogroup" aria-label="Anfrage für">
+                <label><input type="radio" name="requester_type" value="person" checked> Für mich</label>
+                <label><input type="radio" name="requester_type" value="organization"> Für meine Einrichtung</label>
+            </div>
+            <div class="lv-inq-grid">
+                <label class="lv-inq-field lv-inq-org" hidden>
+                    <span>Einrichtung *</span>
+                    <input type="text" name="organization" autocomplete="organization">
+                </label>
+                <label class="lv-inq-field lv-inq-org" hidden>
+                    <span>Teilnehmende (ca.)</span>
+                    <input type="number" name="participant_count" min="1" step="1">
+                </label>
+                <label class="lv-inq-field">
+                    <span>Vorname *</span>
+                    <input type="text" name="first_name" autocomplete="given-name" required>
+                </label>
+                <label class="lv-inq-field">
+                    <span>Nachname *</span>
+                    <input type="text" name="last_name" autocomplete="family-name" required>
+                </label>
+                <label class="lv-inq-field">
+                    <span>E-Mail *</span>
+                    <input type="email" name="email" autocomplete="email" required>
+                </label>
+                <label class="lv-inq-field">
+                    <span>Telefon (optional)</span>
+                    <input type="tel" name="phone" autocomplete="tel">
+                </label>
+                <label class="lv-inq-field lv-inq-field--wide">
+                    <span>Wunschzeitraum (optional)</span>
+                    <input type="text" name="desired_period" placeholder="z. B. Frühjahr 2027">
+                </label>
+                <label class="lv-inq-field lv-inq-field--wide">
+                    <span>Nachricht (optional)</span>
+                    <textarea name="message" rows="3"></textarea>
+                </label>
+            </div>
+
+            <?php // Honeypot — fuer Menschen unsichtbar. ?>
+            <div class="lvk-hp" aria-hidden="true">
+                <input type="text" name="hp_field" tabindex="-1" autocomplete="off">
+            </div>
+
+            <label class="lv-inq-consent">
+                <input type="checkbox" name="funding_wanted" value="1">
+                <span>Ich interessiere mich für eine Förderung.</span>
+            </label>
+            <label class="lv-inq-consent">
+                <input type="checkbox" name="privacy_ack" value="1" required>
+                <span>Ich habe die <a href="<?php echo esc_url($datenschutz); ?>" target="_blank" rel="noopener">Datenschutzhinweise</a> zur Kenntnis genommen. *</span>
+            </label>
+
+            <p class="lv-inq-err" hidden></p>
+            <p class="lv-inq-ok" hidden>Danke, deine Anfrage ist da. Wir melden uns, sobald es einen passenden Termin gibt – oder vorher, wenn wir Fragen haben.</p>
+            <button type="submit" class="lvk-cta">Jetzt anfragen</button>
+            <p class="lv-inq__small">* Pflichtfelder. Die Anfrage ist unverbindlich.</p>
+        </form>
+    </section>
+    <?php
+    return ob_get_clean() . livento_cc_inquiry_js();
+}
+
+/**
+ * v1.52.0: Absenden des Anfrageformulars. Erfolg erst nach bestaetigtem Eingang —
+ * sonst zaehlte die Conversion auch fuer Anfragen, die nie angekommen sind.
+ */
+function livento_cc_inquiry_js() {
+    static $done = false;
+    if ($done) { return ''; }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  var form=document.querySelector('.lv-inq-form');
+  if(!form) return;
+  var err=form.querySelector('.lv-inq-err');
+  var ok=form.querySelector('.lv-inq-ok');
+  var btn=form.querySelector('button[type=submit]');
+  var busy=false;
+  var orgFields=form.querySelectorAll('.lv-inq-org');
+
+  function type(){ var r=form.querySelector('[name=requester_type]:checked'); return r?r.value:'person'; }
+  Array.prototype.forEach.call(form.querySelectorAll('[name=requester_type]'), function(r){
+    r.addEventListener('change', function(){
+      Array.prototype.forEach.call(orgFields, function(f){ f.hidden = type()!=='organization'; });
+    });
+  });
+
+  function fail(msg){ if(err){ err.textContent=msg; err.hidden=false; } }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    if(busy) return;
+    if(err) err.hidden=true;
+
+    var g=function(n){ var el=form.querySelector('[name="'+n+'"]'); return el?String(el.value||'').trim():''; };
+    var checked=function(n){ var el=form.querySelector('[name="'+n+'"]'); return !!(el&&el.checked); };
+    var isOrg=type()==='organization';
+
+    if(!g('first_name')||!g('last_name')) return fail('Bitte Vor- und Nachnamen angeben.');
+    if(!/.+@.+\..+/.test(g('email'))) return fail('Bitte eine gültige E-Mail-Adresse angeben.');
+    if(isOrg && !g('organization')) return fail('Bitte den Namen der Einrichtung angeben.');
+    if(!checked('privacy_ack')) return fail('Bitte die Kenntnisnahme der Datenschutzhinweise bestätigen.');
+
+    var payload={
+      slug:form.getAttribute('data-slug'), requester_type:type(),
+      first_name:g('first_name'), last_name:g('last_name'), email:g('email'), phone:g('phone'),
+      organization:isOrg?g('organization'):null,
+      participant_count:isOrg&&g('participant_count')?Number(g('participant_count')):null,
+      desired_period:g('desired_period'), message:g('message'),
+      funding_wanted:checked('funding_wanted'),
+      source_url:location.href, hp_field:g('hp_field'),
+      privacy_ack:true,
+      privacy_ack_text:'Ich habe die Datenschutzhinweise zur Kenntnis genommen.'
+    };
+
+    busy=true; if(btn){ btn.disabled=true; btn.textContent='Wird gesendet …'; }
+    fetch(form.getAttribute('data-endpoint'),{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    }).then(function(r){
+      return r.json().catch(function(){ return {ok:r.ok}; });
+    }).then(function(j){
+      if(!j||j.ok!==true){ throw new Error((j&&j.message)||'Die Anfrage konnte nicht gesendet werden.'); }
+      try{ window.dataLayer=window.dataLayer||[];
+        window.dataLayer.push({event:'generate_lead',lead_type:'kursanfrage',lead_source:'kursseite',course_title:form.getAttribute('data-title')}); }catch(_e){}
+      Array.prototype.forEach.call(form.querySelectorAll('input,textarea,button,.lv-inq-switch,.lv-inq-grid,.lv-inq-consent,.lv-inq__small'), function(el){ el.hidden=true; });
+      if(ok) ok.hidden=false;
+    }).catch(function(ex){
+      busy=false; if(btn){ btn.disabled=false; btn.textContent='Jetzt anfragen'; }
+      fail(ex && ex.message ? ex.message : 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.');
+    });
+  });
+})();
+</script>
+JS;
+}
+
+/**
+ * v1.52.0: REST-Proxy fuer die Kursanfrage — wie /trial: kein CORS, anon-Schluessel
+ * bleibt serverseitig, Sperren hier, weil Campus Connect hinter dem Proxy nur die
+ * IP des Hosters sieht.
+ */
+add_action('rest_api_init', function () {
+    register_rest_route('livento/v1', '/kursanfrage', array(
+        'methods'             => 'POST',
+        'callback'            => 'livento_cc_rest_course_inquiry',
+        'permission_callback' => '__return_true',
+    ));
+});
+function livento_cc_rest_course_inquiry($req) {
+    $p = $req->get_json_params();
+    if (!is_array($p)) { $p = array(); }
+
+    if (!empty($p['hp_field'])) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+
+    $email = isset($p['email']) ? sanitize_email($p['email']) : '';
+    if (!is_email($email)) {
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Bitte eine gültige E-Mail-Adresse angeben.'), 200);
+    }
+    if (empty($p['privacy_ack'])) {
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Bitte die Kenntnisnahme der Datenschutzhinweise bestätigen.'), 200);
+    }
+    $slug = isset($p['slug']) ? sanitize_title($p['slug']) : '';
+    if ($slug === '') {
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht zugeordnet werden.'), 200);
+    }
+
+    // Sperre: 5 Anfragen je IP und Stunde, eine je E-Mail und Kurs und Tag — als
+    // stiller Erfolg, eine Fehlermeldung verriete einem Bot nur, dass er erkannt wurde.
+    $ip       = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+    $ip_key   = 'lvk_inq_ip_' . md5($ip);
+    $mail_key = 'lvk_inq_mail_' . md5(strtolower($email) . '|' . $slug);
+    if (get_transient($mail_key)) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+    $hits = (int) get_transient($ip_key);
+    if ($hits >= 5) {
+        return new WP_REST_Response(array('ok' => true), 200);
+    }
+    set_transient($ip_key, $hits + 1, HOUR_IN_SECONDS);
+    set_transient($mail_key, 1, DAY_IN_SECONDS);
+
+    $key = livento_cc_anon_key();
+    if ($key === '') {
+        error_log('[livento] Kursanfrage: kein Supabase-Schluessel hinterlegt.');
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte melde dich telefonisch.'), 200);
+    }
+
+    $is_org  = isset($p['requester_type']) && $p['requester_type'] === 'organization';
+    $payload = array(
+        'slug'              => $slug,
+        'requester_type'    => $is_org ? 'organization' : 'person',
+        'first_name'        => isset($p['first_name']) ? sanitize_text_field($p['first_name']) : '',
+        'last_name'         => isset($p['last_name']) ? sanitize_text_field($p['last_name']) : '',
+        'email'             => $email,
+        'phone'             => isset($p['phone']) ? sanitize_text_field($p['phone']) : '',
+        'organization'      => $is_org && isset($p['organization']) ? sanitize_text_field($p['organization']) : null,
+        'participant_count' => $is_org && !empty($p['participant_count']) ? (int) $p['participant_count'] : null,
+        'desired_period'    => isset($p['desired_period']) ? sanitize_text_field($p['desired_period']) : '',
+        'funding_wanted'    => !empty($p['funding_wanted']),
+        'message'           => isset($p['message']) ? sanitize_textarea_field($p['message']) : '',
+        'source_url'        => isset($p['source_url']) ? esc_url_raw($p['source_url']) : '',
+        'privacy_ack'       => true,
+        'privacy_ack_text'  => isset($p['privacy_ack_text']) ? sanitize_text_field($p['privacy_ack_text']) : '',
+    );
+
+    $res = wp_remote_post(LIVENTO_CC_SUPABASE_URL . '/functions/v1/submit-course-inquiry', array(
+        'timeout' => 15,
+        'headers' => array(
+            'Content-Type'        => 'application/json',
+            'apikey'              => $key,
+            'Authorization'       => 'Bearer ' . $key,
+            'x-livento-client-ip' => $ip,
+        ),
+        'body'    => wp_json_encode($payload),
+    ));
+
+    if (is_wp_error($res)) {
+        error_log('[livento] Kursanfrage fehlgeschlagen: ' . $res->get_error_message());
+        delete_transient($mail_key);
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.'), 200);
+    }
+    $code = (int) wp_remote_retrieve_response_code($res);
+    if ($code < 200 || $code >= 300) {
+        error_log('[livento] Kursanfrage: Campus Connect antwortete HTTP ' . $code . ' — ' . substr((string) wp_remote_retrieve_body($res), 0, 300));
+        delete_transient($mail_key);
+        return new WP_REST_Response(array('ok' => false, 'message' => 'Die Anfrage konnte nicht gesendet werden. Bitte später erneut versuchen.'), 200);
+    }
+
+    return new WP_REST_Response(array('ok' => true), 200);
 }
 
 function livento_cc_render_modules($modules) {
@@ -3540,7 +3864,7 @@ function livento_cc_filter_js() {
         case 'most_booked': return num(b,'booked')-num(a,'booked');
         case 'price_asc':   { var pa=num(a,'price'),pb=num(b,'price'); pa=isNaN(pa)?Infinity:pa; pb=isNaN(pb)?Infinity:pb; return pa-pb; }
         case 'price_desc':  { var qa=num(a,'price'),qb=num(b,'price'); qa=isNaN(qa)?-Infinity:qa; qb=isNaN(qb)?-Infinity:qb; return qb-qa; }
-        default:            { var sa=str(a,'start')||'9999', sb=str(b,'start')||'9999'; return sa.localeCompare(sb); }
+        default:            { var ka=function(c){ return str(c,'start')||(str(c,'type')==='on_request'?'zzzz':'9999'); }; return ka(a).localeCompare(ka(b)); }
       }
     }).forEach(function(c){ if(grid) grid.appendChild(c); });
   }
@@ -3871,6 +4195,28 @@ function livento_cc_styles() {
 .lvk button.lvk-bx-row:focus:not(:focus-visible){box-shadow:none!important}
 .lvk button.lvk-bx-row.on,.lvk button.lvk-bx-row.on:hover,.lvk button.lvk-bx-row.on:focus,.lvk button.lvk-bx-row.on:active{background:#f3f8ee!important;color:#1b3a2b!important;border-color:var(--lvk-green)!important;box-shadow:inset 0 0 0 1px var(--lvk-green)!important}
 .lvk-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
+/* v1.52.0: Anfragekurse — Badge, Box „Naechster Termin", Anfrageformular */
+.lvk .lvk-badge-anfrage{background:#fff7e6;color:#8a5a00;border-color:#f0d9a8}
+.lvk-next-program{margin:0 0 1.5rem;padding:1rem 1.25rem;border-radius:12px;background:#f2f7ee;border:1px solid #d9e8cc}
+.lvk-next-program-head{margin:0 0 .6rem;font-weight:700;color:#004D33}
+.lvk-next-program-sub{margin:.6rem 0 0;font-size:.9rem;color:#5c6a70}
+.lv-inq{scroll-margin-top:90px}
+.lv-inq__lead{margin:0 0 1rem;color:#5c6a70}
+.lv-inq-switch{display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;margin:0 0 1rem;font-size:.95rem}
+.lv-inq-switch label{display:flex;align-items:center;gap:.4rem;cursor:pointer}
+.lv-inq-grid{display:grid;gap:.85rem;grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:640px){.lv-inq-grid{grid-template-columns:1fr}}
+.lv-inq-field{display:flex;flex-direction:column;gap:.3rem;font-size:.88rem;color:#5c6a70}
+.lv-inq-form [hidden]{display:none!important}
+.lv-inq-field--wide{grid-column:1/-1}
+.lv-inq-field input,.lv-inq-field textarea{padding:.6rem .7rem;border:1px solid #d5dcdf;border-radius:9px;font-size:.97rem;color:#20343c;background:#fff;font-family:inherit}
+.lv-inq-field input:focus,.lv-inq-field textarea:focus{outline:2px solid #004D33;outline-offset:1px}
+.lv-inq-consent{display:flex;gap:.6rem;align-items:flex-start;margin-top:.9rem;font-size:.9rem;color:#5c6a70}
+.lv-inq-consent input{margin-top:.25rem}
+.lv-inq-err{margin:.8rem 0 0;color:#b3261e;font-size:.9rem}
+.lv-inq-ok{margin:.8rem 0 0;padding:.9rem 1rem;border-radius:10px;background:#f2f7ee;color:#004D33;font-weight:600}
+.lv-inq-form .lvk-cta{margin-top:1.1rem;border:0;cursor:pointer}
+.lv-inq__small{margin:.6rem 0 0;font-size:.82rem;color:#7a868b}
 .lvk-bx-form{margin:6px 0}
 .lvk-lead-form{display:flex;flex-direction:column;gap:12px;max-width:520px;margin:6px 0}
 .lvk-lead-row input{width:100%;padding:13px 16px;border:1px solid #cdd9c2;border-radius:10px;font-size:1rem;background:#fff;box-sizing:border-box;color:#2b3a2b}
