@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.52.0
+ * Version:           1.52.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,10 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.52.1: Anfrageformular in CI-Gruen — der Absende-Button ist ein <button>, die
+ *          CI-Regeln galten nur fuer a.lvk-cta, das Theme faerbte ihn blau. Haekchen
+ *          und Auswahlpunkte ebenfalls gruen (accent-color).
  *
  * v1.52.0: Anfragekurse (Campus Connect v4.12.0). Kurse ohne Termin kommen als
  *          offering_type 'on_request' aus public_offerings: Karte mit Badge „Termin auf
@@ -4215,7 +4219,12 @@ function livento_cc_styles() {
 .lv-inq-consent input{margin-top:.25rem}
 .lv-inq-err{margin:.8rem 0 0;color:#b3261e;font-size:.9rem}
 .lv-inq-ok{margin:.8rem 0 0;padding:.9rem 1rem;border-radius:10px;background:#f2f7ee;color:#004D33;font-weight:600}
-.lv-inq-form .lvk-cta{margin-top:1.1rem;border:0;cursor:pointer}
+/* v1.52.1: <button> statt <a> — die CI-Regeln oben greifen nur fuer a.lvk-cta, sonst
+   faerbt das Theme den Absende-Button blau. Gleiche Werte wie .lvk a.lvk-cta. */
+.lvk .lv-inq-form button.lvk-cta{display:inline-block;margin-top:1.1rem;padding:14px 32px;font-size:1.05rem;font-weight:600;font-family:inherit;line-height:1.3;text-align:center;background:var(--lvk-green)!important;color:#fff!important;border:0!important;border-radius:6px;box-shadow:none!important;cursor:pointer}
+.lvk .lv-inq-form button.lvk-cta:hover,.lvk .lv-inq-form button.lvk-cta:focus{background:#006644!important;color:#fff!important}
+.lvk .lv-inq-form button.lvk-cta:disabled{opacity:.7;cursor:wait}
+.lv-inq-form input[type=checkbox],.lv-inq-form input[type=radio]{accent-color:#004D33}
 .lv-inq__small{margin:.6rem 0 0;font-size:.82rem;color:#7a868b}
 .lvk-bx-form{margin:6px 0}
 .lvk-lead-form{display:flex;flex-direction:column;gap:12px;max-width:520px;margin:6px 0}

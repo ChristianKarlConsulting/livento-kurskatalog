@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.52.0
+Stable tag: 1.52.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.52.1 =
+* Anfrageformular in CI-Gruen: Der Button "Jetzt anfragen" erschien in der Theme-Farbe Blau, weil die CI-Regeln nur fuer Links galten. Haekchen und Auswahlpunkte sind ebenfalls gruen.
 
 = 1.52.0 =
 * Anfragekurse (Campus Connect v4.12.0): Kurse ohne Termin erscheinen im Katalog mit Badge "Termin auf Anfrage" und "Jetzt anfragen", immer am Ende der Sortierung "Naechster Start". Die Kursseite hat ein Anfrageformular (Fuer mich / Fuer meine Einrichtung), das ueber den REST-Proxy /wp-json/livento/v1/kursanfrage an Campus Connect geht (Rate-Limit je IP und je E-Mail und Kurs). Tritt ein Anfragekurs hinter einem verknuepften Termin zurueck, bleibt seine Seite erreichbar und zeigt "Naechster Termin". JSON-LD meldet fuer Anfragekurse PreOrder statt InStock.
