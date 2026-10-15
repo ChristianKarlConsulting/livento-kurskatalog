@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.52.1
+ * Version:           1.53.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,10 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.53.0: Hinweis unter dem Terminplan (Campus Connect v4.17.0, modulare Einstiege):
+ *          public_offerings.schedule_note, z. B. „Zwischen den Modulen koennen
+ *          unterrichtsfreie Wochen liegen.“ Wird nur gezeigt, wenn gesetzt.
  *
  * v1.52.1: Anfrageformular in CI-Gruen — der Absende-Button ist ein <button>, die
  *          CI-Regeln galten nur fuer a.lvk-cta, das Theme faerbte ihn blau. Haekchen
@@ -995,6 +999,10 @@ function livento_cc_render_schedule($o) {
     }
     if ($tr !== '') {
         $out .= '<p class="lvk-sch-sum"><strong>Uhrzeiten:</strong> ' . esc_html($tr) . '</p>';
+    }
+    // v1.53.0: Hinweis auf unterrichtsfreie Wochen zwischen Modulen (modulare Einstiege)
+    if (!empty($o['schedule_note']) && is_string($o['schedule_note'])) {
+        $out .= '<p class="lvk-sch-sum">' . esc_html($o['schedule_note']) . '</p>';
     }
     $out .= '<details class="lvk-sch-details"><summary>' . esc_html('Alle ' . $n . ' Termine anzeigen') . '</summary>';
     $out .= '<ul class="lvk-sch-list">';
