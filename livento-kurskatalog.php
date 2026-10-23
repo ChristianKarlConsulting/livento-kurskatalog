@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.54.0
+ * Version:           1.55.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,9 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.55.0: Massnahmenummer zusaetzlich in der Faktenbox „Auf einen Blick“ (unter
+ *          „Kosten“, mit Hinweis auf den Bildungsgutschein).
  *
  * v1.54.0: Massnahmenummer auf der Detailseite (Campus Connect v4.22.0):
  *          public_offerings.azav_massnahmenummer, nur bei AZAV-Durchgaengen mit
@@ -2914,6 +2917,7 @@ function livento_cc_fb_icon($key) {
         'cert'     => '<circle cx="12" cy="8" r="6"/><path d="M8.5 13.5 7 22l5-3 5 3-1.5-8.5"/>',
         'exam'     => '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 3h6v3H9zM9 13l2 2 4-4"/>',
         'calendar' => '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>',
+        'voucher'  => '<path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 000 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 000-4z"/><path d="M12 6v12" stroke-dasharray="2 2"/>',
         'price'    => '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.6-1.4V5a2 2 0 0 1 2-2h6.8a2 2 0 0 1 1.4.6l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     );
     $p = isset($paths[$key]) ? $paths[$key] : $paths['clock'];
@@ -3038,6 +3042,11 @@ function livento_cc_factbox_html($o) {
     }
     if (isset($o['public_price']) && $o['public_price'] !== null && $o['public_price'] !== '') {
         $rows[] = array('price', 'Kosten', esc_html(livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']))));
+    }
+    // v1.55.0: AZAV-Massnahmenummer (nur bei AZAV-Durchgaengen mit gepflegter Nummer).
+    if (!empty($o['azav_massnahmenummer'])) {
+        $rows[] = array('voucher', 'Maßnahme-Nr.', esc_html($o['azav_massnahmenummer'])
+            . '<span class="lvk-fb-sub">für deinen Bildungsgutschein (Agentur für Arbeit / Jobcenter)</span>');
     }
 
     $out  = '<aside class="lvk-factbox" aria-label="Auf einen Blick">';
@@ -4170,6 +4179,7 @@ function livento_cc_styles() {
 .lvk-fb-rc{display:flex;flex-direction:column;min-width:0;padding-top:2px}
 .lvk-fb-label{font-size:.78rem;font-weight:600;letter-spacing:.02em;color:#6b7b73;margin:0}
 .lvk-fb-val{margin:1px 0 0;font-size:1rem;font-weight:600;color:var(--fb-green);line-height:1.35}
+.lvk-fb-sub{display:block;margin-top:2px;font-size:.8rem;font-weight:500;color:#6b7b73;line-height:1.35}
 .lvk-factbox .lvk-scarcity{margin:0 0 14px}
 .lvk-fb-foerder{background:var(--fb-soft);border-radius:12px;padding:12px 14px;margin:0 0 14px}
 .lvk-fb-foerder-txt{margin:0 0 6px;font-size:.88rem;color:var(--fb-ink);line-height:1.4}
