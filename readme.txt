@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.53.0
+Stable tag: 1.54.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.54.0 =
+* Massnahmenummer (Campus Connect v4.22.0): Auf der Kursdetailseite steht unter der Kurs-Nr. "Massnahme-Nr. ... - fuer deinen Bildungsgutschein bei der Agentur fuer Arbeit oder dem Jobcenter". Quelle ist public_offerings.azav_massnahmenummer, gefuellt nur bei AZAV-Durchgaengen mit gepflegter Nummer. Die Katalogkarten bleiben unveraendert.
 
 = 1.53.0 =
 * Modulare Einstiege (Campus Connect v4.17.0): Unter dem Terminplan erscheint der Hinweis aus public_offerings.schedule_note, z. B. "Zwischen den Modulen koennen unterrichtsfreie Wochen liegen." Nur wenn gesetzt; Einstiege in modulare Lehrgaenge kommen als eigene Kurse und brauchen sonst keine Plugin-Aenderung.

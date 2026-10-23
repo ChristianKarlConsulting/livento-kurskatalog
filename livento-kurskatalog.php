@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.53.0
+ * Version:           1.54.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,11 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.54.0: Massnahmenummer auf der Detailseite (Campus Connect v4.22.0):
+ *          public_offerings.azav_massnahmenummer, nur bei AZAV-Durchgaengen mit
+ *          gepflegter Nummer. Zeile unter der Kurs-Nr. mit Hinweis auf den
+ *          Bildungsgutschein (Agentur fuer Arbeit / Jobcenter).
  *
  * v1.53.0: Hinweis unter dem Terminplan (Campus Connect v4.17.0, modulare Einstiege):
  *          public_offerings.schedule_note, z. B. „Zwischen den Modulen koennen
@@ -3094,6 +3099,10 @@ function livento_cc_render_detail($o) {
 
     if (!empty($o['course_number'])) {
         $out .= '<p class="lvk-coursenr"><strong>Kurs-Nr.</strong> ' . esc_html($o['course_number']) . '</p>';
+    }
+    if (!empty($o['azav_massnahmenummer'])) {
+        $out .= '<p class="lvk-coursenr"><strong>Maßnahme-Nr.</strong> ' . esc_html($o['azav_massnahmenummer'])
+              . ' – für deinen Bildungsgutschein bei der Agentur für Arbeit oder dem Jobcenter</p>';
     }
 
     // Badges
