@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.55.0
+ * Version:           1.56.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,16 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.56.0: Bildungsgutschein fuer AZAV-zugelassene Kurse sichtbar — auch ohne Massnahmenummer.
+ *          Einzige Quelle ist is_azav_relevant; die Nummer folgt je Durchgang mit dem ersten Gutschein.
+ *          Karte/Detail: Badge „Bildungsgutschein moeglich“ (statt „AZAV“), Filter-Schalter heisst
+ *          „Bildungsgutschein“ (?azav=1 bleibt). Detailseite: Abschnitt „Foerderung mit
+ *          Bildungsgutschein“ (#bildungsgutschein), Faktenbox mit klarer Aussage und Massnahme-Nr.
+ *          bzw. „folgt mit dem ersten Bildungsgutschein“. Hub-Seite /foerdermoeglichkeiten/<bildungs-
+ *          gutschein>/ listet alle AZAV-Kurse serverseitig. Neues Feld „Text fuer Kursseiten“ am
+ *          Foerderprogramm. Kurslisten: Kriterium bzw. Attribut bildungsgutschein="1". AZAV-Kurse
+ *          tragen im Filter immer den Foerder-Tag azav_bildungsgutschein.
  *
  * v1.55.0: Massnahmenummer zusaetzlich in der Faktenbox „Auf einen Blick“ (unter
  *          „Kosten“, mit Hinweis auf den Bildungsgutschein).
@@ -763,7 +773,7 @@ function livento_cc_get_offerings() {
     $list_key = 'livento_cc_list_v' . livento_cc_ver();
     $cache = get_transient($list_key);
     if ($cache !== false) {
-        return $cache;
+        return livento_cc_with_bg_funding($cache);
     }
 
     $select = implode(',', array(
@@ -783,12 +793,12 @@ function livento_cc_get_offerings() {
     if (is_wp_error($data)) {
         // Fehler NICHT cachen — letzten guten Stand (Stale-While-Error) liefern.
         $stale = get_transient('livento_cc_list_stale');
-        return $stale !== false ? $stale : array();
+        return $stale !== false ? livento_cc_with_bg_funding($stale) : array();
     }
 
     set_transient($list_key, $data, LIVENTO_CC_TTL);
     set_transient('livento_cc_list_stale', $data, DAY_IN_SECONDS); // Notfall-Fallback
-    return $data;
+    return livento_cc_with_bg_funding($data);
 }
 
 /** Einen Kurs per Slug (gecached). Gibt array|null zurueck. */
@@ -800,7 +810,7 @@ function livento_cc_get_offering($slug) {
     $key = 'livento_cc_one_' . livento_cc_ver() . '_' . md5($slug);
     $cache = get_transient($key);
     if ($cache !== false) {
-        return $cache === 'NULL' ? null : $cache;
+        return $cache === 'NULL' ? null : livento_cc_with_bg_funding(array($cache))[0];
     }
 
     $query = 'select=*&slug=eq.' . rawurlencode($slug) . '&limit=1';
@@ -823,12 +833,44 @@ function livento_cc_get_offering($slug) {
     }
 
     set_transient($key, $row === null ? 'NULL' : $row, LIVENTO_CC_TTL);
-    return $row;
+    return $row === null ? null : livento_cc_with_bg_funding(array($row))[0];
 }
 
 /** v1.52.0: Anfragekurs (Kurs ohne Termin, Anfrage statt Buchung)? */
 function livento_cc_is_on_request($o) {
     return isset($o['offering_type']) && $o['offering_type'] === 'on_request';
+}
+
+/**
+ * v1.56.0: Ist der Kurs mit Bildungsgutschein foerderfaehig?
+ * Einzige Quelle ist das AZAV-Flag (= durch die fachkundige Stelle zugelassene
+ * Massnahme). Die Massnahmenummer ist optional: Sie wird je Durchgang erst mit
+ * dem ersten Bildungsgutschein vergeben. Ein Foerder-Tag „azav_bildungsgutschein"
+ * OHNE AZAV-Flag loest bewusst keine Bildungsgutschein-Aussage aus.
+ */
+function livento_cc_is_bildungsgutschein($o) {
+    return !empty($o['is_azav_relevant']);
+}
+
+/**
+ * v1.56.0: AZAV-Kurse tragen im Feld funding immer den Tag azav_bildungsgutschein,
+ * damit der Filter ?funding=azav_bildungsgutschein sie nie verliert.
+ */
+function livento_cc_with_bg_funding($rows) {
+    if (!is_array($rows)) {
+        return $rows;
+    }
+    foreach ($rows as &$o) {
+        if (is_array($o) && livento_cc_is_bildungsgutschein($o)) {
+            $f = (isset($o['funding']) && is_array($o['funding'])) ? $o['funding'] : array();
+            if (!in_array('azav_bildungsgutschein', $f, true)) {
+                $f[] = 'azav_bildungsgutschein';
+            }
+            $o['funding'] = $f;
+        }
+    }
+    unset($o);
+    return $rows;
 }
 
 /**
@@ -2294,6 +2336,11 @@ function livento_cc_kursliste_filter($offerings, $cfg) {
     $offerings = livento_cc_filter_by_field($offerings, 'topics',      $cfg['topics']      ?? '');
     $offerings = livento_cc_filter_by_field($offerings, 'recognition', $cfg['recognition'] ?? '');
 
+    // v1.56.0: Nur Kurse, die mit Bildungsgutschein foerderfaehig sind.
+    if (!empty($cfg['bildungsgutschein']) && (string) $cfg['bildungsgutschein'] !== 'no') {
+        $offerings = array_values(array_filter($offerings, 'livento_cc_is_bildungsgutschein'));
+    }
+
     // Format = Skalarfeld (eigener Vergleich).
     $fmt = trim((string) ($cfg['format'] ?? ''));
     if ($fmt !== '') {
@@ -2331,6 +2378,9 @@ function livento_cc_kursliste_deeplink($cfg) {
     $q = trim((string) ($cfg['q'] ?? ''));
     if ($q !== '') {
         $params['q'] = $q;
+    }
+    if (!empty($cfg['bildungsgutschein']) && (string) $cfg['bildungsgutschein'] !== 'no') {
+        $params['azav'] = '1';
     }
     $base = livento_cc_list_url();
     return empty($params) ? $base : $base . '?' . http_build_query($params);
@@ -2427,6 +2477,7 @@ add_shortcode('livento_kursliste', function ($atts) {
         'format'      => '',
         'recognition' => '',
         'q'           => '',
+        'bildungsgutschein' => '',
         'limit'       => '',
         'sort'        => '',
         'heading'     => '',
@@ -2454,6 +2505,9 @@ add_shortcode('livento_kursliste', function ($atts) {
         if ($a[$k] !== '') {
             $cfg[$k] = $a[$k];
         }
+    }
+    if ($a['bildungsgutschein'] !== '') {
+        $cfg['bildungsgutschein'] = in_array(strtolower(trim($a['bildungsgutschein'])), array('1', 'yes', 'ja', 'true'), true) ? 'yes' : 'no';
     }
     if ($a['limit'] !== '')   { $cfg['limit']   = (int) $a['limit']; }
     if ($a['sort'] !== '')    { $cfg['sort']    = sanitize_key($a['sort']); }
@@ -2658,7 +2712,7 @@ function livento_cc_render_sidebar($offerings) {
     $h  = '<div class="lvk-sidebar-head"><span class="lvk-sidebar-title">Filter</span>';
     $h .= '<button type="button" class="lvk-reset" hidden>Zurücksetzen</button></div>';
     $h .= '<div class="lvk-toggles">'
-        . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="azav">AZAV</button>'
+        . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="azav">Bildungsgutschein</button>'
         . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="vatexempt">USt-frei</button>'
         . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="free">Kostenfrei</button>'
         . '</div>';
@@ -2794,8 +2848,8 @@ function livento_cc_render_card($o) {
         if (!empty($o['format'])) {
             $out .= '<span class="lvk-badge">' . esc_html(livento_cc_format_label($o['format'])) . '</span>';
         }
-        if (!empty($o['is_azav_relevant'])) {
-            $out .= '<span class="lvk-badge lvk-badge-azav">AZAV</span>';
+        if (livento_cc_is_bildungsgutschein($o)) {
+            $out .= '<span class="lvk-badge lvk-badge-bg">' . livento_cc_bg_icon() . 'Bildungsgutschein möglich</span>';
         }
         $out .= '</div>';
     }
@@ -2854,6 +2908,78 @@ function livento_cc_cta_buttons($o, $variant = 'top') {
     }
     $out .= '</div>';
     return $out;
+}
+
+/** v1.56.0: Kleines Gutschein-Icon fuer Badge und Abschnitt (erbt die Textfarbe). */
+function livento_cc_bg_icon() {
+    return '<svg class="lvk-bg-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 000 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 000-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/></svg>';
+}
+
+/** v1.56.0: Das Foerderprogramm mit dem Tag azav_bildungsgutschein (= Hub-Seite), oder null. */
+function livento_cc_bg_program() {
+    foreach (livento_cc_foerderungen() as $f) {
+        if (isset($f['funding_key']) && $f['funding_key'] === 'azav_bildungsgutschein') {
+            return $f;
+        }
+    }
+    return null;
+}
+
+/** v1.56.0: URL der Hub-Seite zum Bildungsgutschein (Fallback: Foerder-Uebersicht). */
+function livento_cc_bg_hub_url() {
+    $f = livento_cc_bg_program();
+    return ($f && !empty($f['slug'])) ? livento_cc_foerder_url($f['slug']) : livento_cc_foerder_list_url();
+}
+
+/** v1.56.0: Standardtext fuer den Abschnitt auf Kursseiten (Markdown-Light). */
+function livento_cc_bg_kurs_text_default() {
+    return "Diese Weiterbildung ist eine **AZAV-zugelassene Maßnahme**. Mit einem Bildungsgutschein der Agentur für Arbeit oder des Jobcenters können bis zu 100 % der Lehrgangskosten übernommen werden.\n\n"
+         . "**So kommst du zu deinem Bildungsgutschein:**\n\n"
+         . "- **1. Beratung:** Vereinbare einen Termin bei deiner Agentur für Arbeit oder deinem Jobcenter.\n"
+         . "- **2. Gutschein beantragen:** Sprich die Weiterbildung bei deiner Vermittlungsfachkraft an und beantrage den Bildungsgutschein.\n"
+         . "- **3. Anmelden:** Melde dich mit deinem Gutschein bei uns an – wir begleiten dich bei allen weiteren Schritten.";
+}
+
+/** v1.56.0: Text fuer Kursseiten — gepflegt am Foerderprogramm, sonst Standard. */
+function livento_cc_bg_kurs_text() {
+    $f = livento_cc_bg_program();
+    $t = ($f && isset($f['kurs_text'])) ? trim((string) $f['kurs_text']) : '';
+    return $t !== '' ? $t : livento_cc_bg_kurs_text_default();
+}
+
+/** v1.56.0: Massnahmenummer oder Hinweis, dass sie mit dem ersten Gutschein vergeben wird. */
+function livento_cc_bg_nr_text($o) {
+    return !empty($o['azav_massnahmenummer'])
+        ? (string) $o['azav_massnahmenummer']
+        : 'folgt mit dem ersten Bildungsgutschein';
+}
+
+/** v1.56.0: Abschnitt „Foerderung mit Bildungsgutschein" auf der Kursdetailseite. */
+function livento_cc_bg_section_html($o) {
+    if (!livento_cc_is_bildungsgutschein($o)) {
+        return '';
+    }
+    $out  = '<div class="lvk-section lvk-bg" id="bildungsgutschein">';
+    $out .= '<h2>' . livento_cc_bg_icon() . 'Förderung mit Bildungsgutschein</h2>';
+    $out .= '<div class="lvk-bg-text">' . livento_cc_richtext(livento_cc_bg_kurs_text()) . '</div>';
+    $out .= '<div class="lvk-bg-nr">';
+    if (!empty($o['azav_massnahmenummer'])) {
+        $out .= '<strong>Maßnahme-Nr.</strong> <span class="lvk-bg-nr-val">' . esc_html($o['azav_massnahmenummer']) . '</span>'
+              . '<span class="lvk-bg-nr-sub">Gib sie bei deiner Vermittlungsfachkraft an.</span>';
+    } else {
+        $out .= '<strong>Maßnahme-Nr.</strong> '
+              . '<span class="lvk-bg-nr-sub">Die Maßnahmenummer für diesen Durchgang wird mit dem ersten Bildungsgutschein vergeben – sprich uns an, wir begleiten dich dabei.</span>';
+    }
+    $out .= '</div>';
+    $beratung = livento_cc_beratung_url();
+    if ($beratung === '') {
+        $beratung = home_url('/kontakt/');
+    }
+    $out .= '<p class="lvk-bg-links">'
+          . '<a class="lvk-bg-link" href="' . esc_url(livento_cc_bg_hub_url()) . '">Alles zum Bildungsgutschein →</a>'
+          . '<a class="lvk-cta-secondary" href="' . esc_url($beratung) . '">Kostenlose Beratung</a>'
+          . '</p>';
+    return $out . '</div>';
 }
 
 /** Foerder-Chip am Preis. Leerer String, wenn nicht foerderrelevant. */
@@ -3043,9 +3169,10 @@ function livento_cc_factbox_html($o) {
     if (isset($o['public_price']) && $o['public_price'] !== null && $o['public_price'] !== '') {
         $rows[] = array('price', 'Kosten', esc_html(livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']))));
     }
-    // v1.55.0: AZAV-Massnahmenummer (nur bei AZAV-Durchgaengen mit gepflegter Nummer).
-    if (!empty($o['azav_massnahmenummer'])) {
-        $rows[] = array('voucher', 'Maßnahme-Nr.', esc_html($o['azav_massnahmenummer'])
+    // v1.55.0/v1.56.0: Massnahmenummer bei jedem AZAV-Kurs — ohne gepflegte Nummer
+    // mit dem Hinweis, dass sie mit dem ersten Bildungsgutschein vergeben wird.
+    if (livento_cc_is_bildungsgutschein($o)) {
+        $rows[] = array('voucher', 'Maßnahme-Nr.', esc_html(livento_cc_bg_nr_text($o))
             . '<span class="lvk-fb-sub">für deinen Bildungsgutschein (Agentur für Arbeit / Jobcenter)</span>');
     }
 
@@ -3069,7 +3196,13 @@ function livento_cc_factbox_html($o) {
     }
 
     // Aktion 1: Foerder-Hinweis + Pruef-Link (nur wenn foerderbar).
-    if (livento_cc_is_foerderbar($o)) {
+    // v1.56.0: AZAV-Kurse bekommen die klare Aussage statt „ggf. foerderfaehig".
+    if (livento_cc_is_bildungsgutschein($o)) {
+        $out .= '<div class="lvk-fb-foerder">'
+              . '<p class="lvk-fb-foerder-txt"><strong>Förderfähig mit Bildungsgutschein</strong> (Agentur für Arbeit / Jobcenter).</p>'
+              . '<a class="lvk-fb-foerderlink" href="#bildungsgutschein">So geht’s →</a>'
+              . '</div>';
+    } elseif (livento_cc_is_foerderbar($o)) {
         $out .= '<div class="lvk-fb-foerder">'
               . '<p class="lvk-fb-foerder-txt">Dieser Kurs ist ggf. förderfähig – z. B. über Bildungsgutschein oder Bildungsurlaub.</p>'
               . '<a class="lvk-fb-foerderlink" href="' . esc_url(livento_cc_foerder_list_url()) . '">Förderung in 2 Minuten prüfen →</a>'
@@ -3119,8 +3252,8 @@ function livento_cc_render_detail($o) {
     if ($format_label) {
         $badges[] = esc_html($format_label);
     }
-    if (!empty($o['is_azav_relevant'])) {
-        $badges[] = 'AZAV';
+    if (livento_cc_is_bildungsgutschein($o)) {
+        $badges[] = 'Bildungsgutschein möglich';
     }
     if (!empty($o['is_vat_exempt'])) {
         $badges[] = 'USt-frei';
@@ -3203,6 +3336,9 @@ function livento_cc_render_detail($o) {
     if (!empty($o['admission_requirements'])) {
         $out .= '<div class="lvk-section"><h2>Zugangsvoraussetzungen</h2>' . livento_cc_richtext($o['admission_requirements']) . '</div>';
     }
+
+    // v1.56.0: Foerderung mit Bildungsgutschein (nur AZAV-Kurse).
+    $out .= livento_cc_bg_section_html($o);
 
     // v1.52.0: Anfrageformular fuer Kurse ohne Termin.
     if (livento_cc_is_on_request($o)) {
@@ -4228,6 +4364,22 @@ function livento_cc_styles() {
 .lvk-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
 /* v1.52.0: Anfragekurse — Badge, Box „Naechster Termin", Anfrageformular */
 .lvk .lvk-badge-anfrage{background:#fff7e6;color:#8a5a00;border-color:#f0d9a8}
+/* v1.56.0: Bildungsgutschein — Badge, Abschnitt auf der Kursseite, Kursliste der Hub-Seite */
+.lvk .lvk-badge-bg{background:var(--lvk-green);color:#fff;display:inline-flex;align-items:center;gap:5px}
+.lvk-bg-ic{flex:none;vertical-align:-2px;margin-right:6px}
+.lvk-badge-bg .lvk-bg-ic{margin-right:0}
+.lvk-bg{background:#f2f7ee;border:1px solid #d9e8cc;border-radius:12px;padding:4px 20px 18px}
+.lvk-bg h2{display:flex;align-items:center}
+.lvk-bg-text ul{list-style:none;padding-left:0}
+.lvk-bg-text li{margin:0 0 6px}
+.lvk-bg-nr{background:#fff;border:1px dashed var(--lvk-accent);border-radius:8px;padding:10px 14px;margin:14px 0}
+.lvk-bg-nr-val{font-family:ui-monospace,Consolas,monospace;font-weight:700;color:var(--lvk-green)}
+.lvk-bg-nr-sub{display:block;font-size:.9rem;color:#475569;margin-top:2px}
+.lvk-bg-links{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:4px 0 0}
+.lvk a.lvk-bg-link{font-weight:700;color:var(--lvk-green)!important}
+.lvf-bg-courses{margin:32px 0 8px}
+.lvf-bg-courses h2{margin:0 0 6px}
+.lvf-bg-courses .lvk-kl-sub{margin:0 0 16px}
 .lvk-next-program{margin:0 0 1.5rem;padding:1rem 1.25rem;border-radius:12px;background:#f2f7ee;border:1px solid #d9e8cc}
 .lvk-next-program-head{margin:0 0 .6rem;font-weight:700;color:#004D33}
 .lvk-next-program-sub{margin:.6rem 0 0;font-size:.9rem;color:#5c6a70}
@@ -4357,6 +4509,7 @@ function livento_cc_shortcodes() {
                 'audience'    => 'Zielgruppen-Slug(s), Komma-getrennt (z. B. betreuungskraefte_43b_53b).',
                 'topics'      => 'Themen-Slug(s), Komma-getrennt.',
                 'format'      => 'Format-Slug(s), Komma-getrennt (z. B. online_live,selbstlern).',
+                'bildungsgutschein' => '1 = nur Kurse, die mit Bildungsgutschein förderfähig sind (AZAV-zugelassen).',
                 'recognition' => 'Anerkennungs-Slug(s), Komma-getrennt (z. B. gesetzlich_anerkannt).',
                 'q'           => 'Titel-Stichwort (z. B. Pflichtfortbildung) – nur Kurse mit diesem Text im Titel.',
                 'limit'       => 'Max. Anzahl Karten (Default 6).',
@@ -4542,6 +4695,8 @@ function livento_cc_admin_page() {
                     'link'        => isset($row['link']) ? esc_url_raw(trim($row['link'])) : '',
                     'short'       => isset($row['short']) ? sanitize_text_field($row['short']) : '',
                     'body'        => isset($row['body']) ? sanitize_textarea_field($row['body']) : '',
+                    // v1.56.0: Abschnitt auf Kursseiten (nur beim Programm mit Tag azav_bildungsgutschein genutzt).
+                    'kurs_text'   => isset($row['kurs_text']) ? sanitize_textarea_field($row['kurs_text']) : '',
                 );
             }
             update_option('livento_cc_foerderungen', $clean);
@@ -4644,6 +4799,7 @@ function livento_cc_admin_page() {
                 'format'      => $norm_csv($row['format'] ?? ''),
                 'recognition' => $norm_csv($row['recognition'] ?? ''),
                 'q'           => isset($row['q']) ? sanitize_text_field($row['q']) : '',
+                'bildungsgutschein' => (isset($row['bildungsgutschein']) && $row['bildungsgutschein'] === 'yes') ? 'yes' : 'no',
                 'limit'       => max(0, (int) ($row['limit'] ?? 6)),
                 'sort'        => isset($row['sort']) ? sanitize_key($row['sort']) : 'next_start',
                 'columns'     => max(0, min(4, (int) ($row['columns'] ?? 0))),
@@ -5018,7 +5174,7 @@ function livento_cc_admin_tab_slugs() {
     echo '<h3>Suche &amp; Schalter</h3>';
     echo '<table class="widefat striped" style="max-width:820px"><thead><tr><th>Parameter</th><th>Wert(e)</th><th>Wirkung</th></tr></thead><tbody>';
     echo '<tr><td><code>q</code></td><td>Freitext</td><td>Volltextsuche (Titel + Beschreibung)</td></tr>';
-    echo '<tr><td><code>azav</code></td><td><code>1</code></td><td>Nur AZAV-relevante Kurse</td></tr>';
+    echo '<tr><td><code>azav</code></td><td><code>1</code></td><td>Nur Kurse, die mit Bildungsgutschein förderfähig sind (AZAV-zugelassen; Schalter „Bildungsgutschein“)</td></tr>';
     echo '<tr><td><code>vatexempt</code></td><td><code>1</code></td><td>Nur USt-freie Kurse</td></tr>';
     echo '<tr><td><code>free</code></td><td><code>1</code></td><td>Nur kostenfreie Kurse</td></tr>';
     echo '</tbody></table>';
@@ -5292,6 +5448,8 @@ function livento_cc_admin_kursliste_row($idx, $l, $aud_counts, $rec_counts, $fmt
     $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Format</strong>' . $group('format', livento_cc_format_labels(), $fmt_counts, $sel_fmt) . '</p>';
     $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Anerkennung</strong>' . $group('recognition', livento_cc_recognition_labels(), $rec_counts, $sel_rec) . '</p>';
     $h .= '<label style="display:block;margin-top:10px;max-width:560px">Titel-Stichwort <span class="description">(optional – nur Kurse, deren Titel diesen Text enthält)</span><br><input type="text" name="' . $n('q') . '" value="' . esc_attr($q) . '" class="regular-text" placeholder="z. B. Pflichtfortbildung"></label>';
+    $bg_on = (isset($l['bildungsgutschein']) && $l['bildungsgutschein'] === 'yes');
+    $h .= '<label style="display:block;margin-top:10px"><input type="checkbox" name="' . $n('bildungsgutschein') . '" value="yes"' . ($bg_on ? ' checked' : '') . '> <strong>Nur förderfähig mit Bildungsgutschein</strong> <span class="description">(AZAV-zugelassene Kurse)</span></label>';
 
     // Darstellung
     $h .= '<p style="margin:14px 0 2px;font-weight:600">Darstellung</p>';
@@ -5764,6 +5922,32 @@ function livento_cc_foerder_card_html($f, $regions, $icons) {
     return $h;
 }
 
+/** v1.56.0: Kursliste der Hub-Seite Bildungsgutschein (alle AZAV-Kurse, naechster Start zuerst). */
+function livento_cc_bg_courses_html() {
+    $offerings = array_values(array_filter(livento_cc_get_offerings(), 'livento_cc_is_bildungsgutschein'));
+    $out  = livento_cc_styles() . livento_cc_kursliste_styles();
+    $out .= '<div class="lvk lvk-kursliste lvf-bg-courses">';
+    $out .= '<h2 class="lvk-kl-title">Weiterbildungen mit Bildungsgutschein</h2>';
+    if (empty($offerings)) {
+        $beratung = livento_cc_beratung_url();
+        if ($beratung === '') {
+            $beratung = home_url('/kontakt/');
+        }
+        $out .= '<p class="lvk-kl-sub">Aktuell sind keine Termine veröffentlicht. Sprich uns an – wir informieren dich über die nächsten Durchgänge.</p>';
+        $out .= '<p><a class="lvk-kl-btn" href="' . esc_url($beratung) . '">Kostenlose Beratung →</a></p>';
+        return $out . '</div>';
+    }
+    $out .= '<p class="lvk-kl-sub">Diese Weiterbildungen sind AZAV-zugelassen und können über einen Bildungsgutschein gefördert werden.</p>';
+    $offerings = livento_cc_sort_offerings(livento_cc_augment($offerings), 'next_start');
+    $out .= '<div class="lvk-grid lvk-kl-grid">';
+    foreach ($offerings as $o) {
+        $out .= livento_cc_render_card($o);
+    }
+    $out .= '</div>';
+    $out .= '<div class="lvk-kl-cta"><a class="lvk-kl-btn" href="' . esc_url(livento_cc_list_url() . '?azav=1') . '">Im Kurskatalog filtern →</a></div>';
+    return $out . '</div>';
+}
+
 function livento_cc_render_foerder_detail($f) {
     $regions = livento_cc_foerder_regions();
     $auds    = livento_cc_foerder_audiences();
@@ -5784,12 +5968,17 @@ function livento_cc_render_foerder_detail($f) {
     if (!empty($f['body'])) {
         $out .= '<div class="lvf-bodytext">' . livento_cc_richtext($f['body']) . '</div>';
     }
-    if (!empty($f['funding_key'])) {
+    $is_bg = (($f['funding_key'] ?? '') === 'azav_bildungsgutschein');
+    if (!empty($f['funding_key']) && !$is_bg) {
         $kurl = livento_cc_list_url() . '?funding=' . rawurlencode($f['funding_key']);
         $out .= '<p><a class="lvf-btn" href="' . esc_url($kurl) . '">Passende Kurse ansehen →</a></p>';
     }
     if (!empty($f['link'])) {
         $out .= '<p><a class="lvf-btn lvf-btn-ghost" href="' . esc_url($f['link']) . '" target="_blank" rel="noopener nofollow">Offizielle Informationen ↗</a></p>';
+    }
+    // v1.56.0: Hub-Seite Bildungsgutschein — alle AZAV-Kurse serverseitig (crawlbar).
+    if ($is_bg) {
+        $out .= livento_cc_bg_courses_html();
     }
     // Kein eigener Footer — WordPress-Theme liefert ihn seitenweit (v1.19.0).
     $out .= '</div>';
@@ -6040,6 +6229,10 @@ function livento_cc_admin_foerder_card($idx, $f, $regions, $auds, $icons, $fundi
     $h .= '<p style="margin:0 0 8px"><input type="text" name="' . $n . '[short]" value="' . esc_attr($short) . '" placeholder="Kurzbeschreibung" class="large-text"></p>';
     $h .= '<p style="margin:0 0 8px"><input type="url" name="' . $n . '[link]" value="' . esc_attr($link) . '" placeholder="Offizieller Link (optional)" class="large-text code"></p>';
     $h .= '<p style="margin:0 0 8px"><textarea name="' . $n . '[body]" rows="4" class="large-text code" placeholder="Ausführliche Beschreibung (Markdown: **fett**, - Liste, [Text](URL))">' . esc_textarea($body) . '</textarea></p>';
+    // v1.56.0: Text fuer den Abschnitt „Foerderung mit Bildungsgutschein" auf AZAV-Kursseiten.
+    $ktext = isset($f['kurs_text']) ? $f['kurs_text'] : '';
+    $h .= '<details style="margin:0 0 8px"' . ($fk === 'azav_bildungsgutschein' ? ' open' : '') . '><summary style="cursor:pointer"><strong>Text für Kursseiten</strong> <span class="description">(nur wirksam beim Programm mit Kurse-Förder-Tag „AZAV-Bildungsgutschein“: erscheint als Abschnitt auf jeder AZAV-Kursseite; leer = Standardtext; die Maßnahme-Nr. ergänzt das Plugin selbst)</span></summary>';
+    $h .= '<textarea name="' . $n . '[kurs_text]" rows="7" class="large-text code" style="margin-top:6px" placeholder="' . esc_attr(livento_cc_bg_kurs_text_default()) . '">' . esc_textarea($ktext) . '</textarea></details>';
     if (!empty($quals)) {
         $h .= '<details style="margin:0 0 8px"><summary style="cursor:pointer"><strong>Förderberater: passt zu …</strong> <span class="description">(welche Situationen → zeigt dieses Programm im Ergebnis)</span></summary><div style="columns:2;margin-top:8px">';
         foreach ($quals as $qkey => $qlabel) {

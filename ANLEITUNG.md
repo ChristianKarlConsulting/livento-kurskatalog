@@ -130,6 +130,14 @@ Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung m
 - **Deep-Links:** Filter lassen sich per URL vorbelegen, z. B. `…/kurse/?format=online_live`, `…/kurse/?funding=azav_bildungsgutschein`, `…/kurse/?topics=demenz`. Mehrere Werte mit Komma, mehrere Parameter mit `&`.
 - Alle verfügbaren Parameter + Live-Werte stehen unter **Livento Katalog → Filter & Slugs**.
 
+**Bildungsgutschein (ab v1.56.0):** Jeder Kurs, der in Campus Connect als AZAV-relevant markiert ist, gilt als förderfähig mit Bildungsgutschein — **auch ohne Maßnahmenummer**. Die Nummer wird je Durchgang erst mit dem ersten Bildungsgutschein vergeben; bis dahin steht „folgt mit dem ersten Bildungsgutschein“.
+
+- Kurskarte und Detailseite zeigen das Badge „Bildungsgutschein möglich“, der Filter-Schalter heißt „Bildungsgutschein“ (`?azav=1`).
+- Die Detailseite hat einen eigenen Abschnitt „Förderung mit Bildungsgutschein“ (Anker `#bildungsgutschein`) mit Text, Maßnahme-Nr. und Links. Den Text pflegst du unter **Förderprogramme → Bildungsgutschein → Text für Kursseiten** (leer = Standardtext).
+- Die Förderprogramm-Seite „Bildungsgutschein“ listet automatisch alle diese Kurse.
+- Kurslisten: Kriterium „Nur förderfähig mit Bildungsgutschein“ bzw. Attribut `bildungsgutschein="1"`.
+- Ein Förder-Tag „AZAV-Bildungsgutschein“ **ohne** AZAV-Markierung in Campus Connect löst keine dieser Aussagen aus.
+
 **Neue Kurse** erscheinen automatisch: Sobald ein Kurs in Campus Connect öffentlich ist, taucht er nach Ablauf des Caches (oder nach „Cache leeren" / Webhook) im Katalog auf.
 
 ---
