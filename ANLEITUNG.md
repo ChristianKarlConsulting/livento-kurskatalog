@@ -42,7 +42,7 @@ Das Plugin meldet neue Versionen selbst (GitHub-Releases). Du aktualisierst es w
 ### a) anon-Key eintragen
 Damit das Plugin Kurse aus Campus Connect lesen darf:
 1. **Livento Katalog → Einstellungen**.
-2. Im Feld **anon-Key** den Supabase-Anon-Key einfügen → **Speichern**.
+2. Im Feld **anon-Key** den öffentlichen Supabase-Schlüssel einfügen → **Speichern**. Ab Plugin v1.57.0 ist das der **Publishable Key** (`sb_publishable_…`, Supabase → Project Settings → API Keys); der bisherige anon-Key (`eyJ…`) funktioniert, bis Supabase die Legacy-Schlüssel abschaltet. **Nie** den Secret Key (`sb_secret_…`) eintragen — das Plugin weist ihn ab.
 3. Kontrolle: **Livento Katalog → Übersicht** zeigt „anon-Key konfiguriert ✅" und eine Kurszahl > 0.
 
 ### b) Permalinks einmal speichern

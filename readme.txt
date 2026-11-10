@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.56.0
+Stable tag: 1.57.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.57.0 =
+* Neue Supabase-Schlüssel: Das Feld „Supabase anon-Key“ nimmt jetzt auch den Publishable Key (sb_publishable_…) an. Der bisherige anon-Key (eyJ…) gilt weiter, bis Supabase ihn abschaltet. Secret Keys (sb_secret_…) werden abgewiesen.
 
 = 1.56.0 =
 * Bildungsgutschein fuer AZAV-zugelassene Kurse sichtbar - auch ohne Massnahmenummer (die Nummer folgt je Durchgang mit dem ersten Gutschein). Einzige Quelle ist is_azav_relevant. Badge "Bildungsgutschein moeglich" statt "AZAV" auf Karte und Detailseite, Filter-Schalter "Bildungsgutschein" (?azav=1 bleibt). Detailseite: Abschnitt "Foerderung mit Bildungsgutschein" (#bildungsgutschein), Faktenbox mit klarer Aussage und Massnahme-Nr. bzw. "folgt mit dem ersten Bildungsgutschein". Hub-Seite des Foerderprogramms Bildungsgutschein listet alle AZAV-Kurse. Neues Feld "Text fuer Kursseiten" am Foerderprogramm. Kurslisten: Kriterium bzw. Attribut bildungsgutschein="1". AZAV-Kurse tragen im Filter immer den Foerder-Tag azav_bildungsgutschein.

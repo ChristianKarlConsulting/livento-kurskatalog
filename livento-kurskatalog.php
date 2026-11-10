@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.56.0
+ * Version:           1.57.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,12 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.57.0: Neue Supabase-Schluessel (Campus Connect v4.36.0). Das Feld „Supabase anon-Key“ nimmt
+ *          jetzt auch den Publishable Key (sb_publishable_…) an; bisher verlangte die Pruefung einen
+ *          Punkt im Schluessel (JWT-Format) und verwarf ihn. Der Legacy-Anon-JWT (eyJ…) gilt weiter,
+ *          bis Supabase ihn abschaltet. Secret Keys (sb_secret_…) werden ausdruecklich abgewiesen —
+ *          sie gehoeren nie in WordPress.
  *
  * v1.56.0: Bildungsgutschein fuer AZAV-zugelassene Kurse sichtbar — auch ohne Massnahmenummer.
  *          Einzige Quelle ist is_azav_relevant; die Nummer folgt je Durchgang mit dem ersten Gutschein.
@@ -701,9 +707,19 @@ function livento_cc_augment($offerings) {
  * 3. Datenabruf (PostgREST + Transient-Cache)
  * ============================================================ */
 
-/** Gueltigkeitscheck am JWT-Format (lang + enthaelt Punkte). */
+/**
+ * Gueltigkeitscheck des oeffentlichen Schluessels.
+ * v1.57.0: Publishable Key (sb_publishable_…) oder Legacy-Anon-JWT (lang + enthaelt Punkte).
+ * Secret Keys (sb_secret_…) gelten nie als gueltig — sie gehoeren nicht in WordPress.
+ */
 function livento_cc_key_is_valid($k) {
-    return is_string($k) && strlen($k) > 40 && strpos($k, '.') !== false;
+    if (!is_string($k) || strpos($k, 'sb_secret_') === 0) {
+        return false;
+    }
+    if (strpos($k, 'sb_publishable_') === 0) {
+        return strlen($k) > strlen('sb_publishable_') + 10;
+    }
+    return strlen($k) > 40 && strpos($k, '.') !== false;
 }
 
 /** Anon-Key: Admin-Einstellung (ueberlebt Updates) → Konstante (wp-config/Fallback). */
@@ -5219,11 +5235,11 @@ function livento_cc_admin_tab_settings() {
     wp_nonce_field('livento_cc_save_settings');
 
     echo '<h3>Supabase anon-Key</h3>';
-    echo '<p>Öffentlicher anon-Key (kein <code>service_role</code>). Hier gespeichert, übersteht er Plugin-Updates.</p>';
+    echo '<p>Öffentlicher Schlüssel: Publishable Key (<code>sb_publishable_…</code>) oder bisheriger anon-Key (<code>eyJ…</code>). Nie den Secret Key (<code>sb_secret_…</code>) oder <code>service_role</code>. Hier gespeichert, übersteht er Plugin-Updates.</p>';
     if ($key_mask) {
         echo '<p>Aktuell hinterlegt: <code>' . esc_html($key_mask) . '</code></p>';
     }
-    echo '<input type="password" name="livento_cc_anon_key" class="large-text code" value="' . esc_attr($key) . '" autocomplete="off" placeholder="eyJ…">';
+    echo '<input type="password" name="livento_cc_anon_key" class="large-text code" value="' . esc_attr($key) . '" autocomplete="off" placeholder="sb_publishable_… oder eyJ…">';
     if (defined('LIVENTO_CC_ANON_KEY') && livento_cc_key_is_valid(LIVENTO_CC_ANON_KEY) && !livento_cc_key_is_valid($key)) {
         echo '<p class="description">Hinweis: In der Plugin-Datei/wp-config ist bereits ein Key gesetzt; dieses Feld hat Vorrang, sobald gespeichert.</p>';
     }
