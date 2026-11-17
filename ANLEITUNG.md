@@ -126,7 +126,9 @@ Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung m
 
 ## 6. Kurskatalog & Filter
 
-- **Filterleiste** (links): Typ, Format, Level, Zielgruppe, Förderung, Thema u. a. — voll datengetrieben aus den Kursen.
+- **Gliederung nach Angebotsart (ab v1.58.0):** Über der Liste steht ein Umschalter — Alle · Weiterbildungen mit Abschluss · Fort- und Pflichtfortbildungen · Workshops und Kompaktkurse · Selbstlernkurse. „Alle“ zeigt eigene Abschnitte mit Überschrift. Die Angebotsart pflegt die Verwaltung in Campus Connect (Öffentliche Angebote → Filter & SEO); ohne Pflege schlägt das Plugin sie aus dem Umfang vor (bis 8 UE Workshop, 9–79 UE Fortbildung, ab 80 UE Weiterbildung mit Abschluss). Deep-Link: `…/kurse/?art=weiterbildung_abschluss` (auch `fortbildung`, `workshop`, `selbstlernkurs`).
+- **Eine Karte je Kurs (ab v1.58.0):** Mehrere Termine desselben Kurses stehen auf einer Karte unter „Weitere Termine“; jeder Termin behält seine Detailseite. Die Karte zeigt Angebotsart, Umfang mit Laufzeit, Abschluss und Zeitmodell.
+- **Filterleiste** (links): Format, Zielgruppe, Thema, Umfang (Gesamtumfang in UE), Zeitmodell (tagsüber/abends/Wochenende), Start-Monat, Förderung, Anerkennung, Ort, dazu die Schalter Pflichtfortbildung (`?pflicht=1`), Bildungsgutschein, USt-frei, Kostenfrei — voll datengetrieben aus den Kursen. Typ, CarePath-Level, Methodik und Verfügbarkeit stehen seit v1.58.0 nicht mehr in der Leiste, wirken als URL-Parameter aber weiter.
 - **Deep-Links:** Filter lassen sich per URL vorbelegen, z. B. `…/kurse/?format=online_live`, `…/kurse/?funding=azav_bildungsgutschein`, `…/kurse/?topics=demenz`. Mehrere Werte mit Komma, mehrere Parameter mit `&`.
 - Alle verfügbaren Parameter + Live-Werte stehen unter **Livento Katalog → Filter & Slugs**.
 
@@ -135,7 +137,7 @@ Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung m
 - Kurskarte und Detailseite zeigen das Badge „Bildungsgutschein möglich“, der Filter-Schalter heißt „Bildungsgutschein“ (`?azav=1`).
 - Die Detailseite hat einen eigenen Abschnitt „Förderung mit Bildungsgutschein“ (Anker `#bildungsgutschein`) mit Text, Maßnahme-Nr. und Links. Den Text pflegst du unter **Förderprogramme → Bildungsgutschein → Text für Kursseiten** (leer = Standardtext).
 - Die Förderprogramm-Seite „Bildungsgutschein“ listet automatisch alle diese Kurse.
-- Kurslisten: Kriterium „Nur förderfähig mit Bildungsgutschein“ bzw. Attribut `bildungsgutschein="1"`.
+- Kurslisten: Kriterium „Nur förderfähig mit Bildungsgutschein“ bzw. Attribut `bildungsgutschein="1"`. Ab v1.58.0 außerdem „Angebotsart“ (`art="fortbildung"`) und „Nur Pflichtfortbildungen“ (`pflicht="1"`) — das ersetzt das Titel-Stichwort „Pflichtfortbildung“.
 - Ein Förder-Tag „AZAV-Bildungsgutschein“ **ohne** AZAV-Markierung in Campus Connect löst keine dieser Aussagen aus.
 
 **Neue Kurse** erscheinen automatisch: Sobald ein Kurs in Campus Connect öffentlich ist, taucht er nach Ablauf des Caches (oder nach „Cache leeren" / Webhook) im Katalog auf.

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.57.0
+ * Version:           1.58.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,22 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.58.0: Katalog nach Angebotsart gegliedert (Campus Connect v4.47.0, #282–#285). Anlass: Feedback,
+ *          dass Live-Online-Kurse und weitere Programme ohne Trennung nach Abschluss oder Dauer in
+ *          einer Uebersicht standen.
+ *          - Umschalter ueber dem Katalog: Alle · Weiterbildungen mit Abschluss · Fort- und
+ *            Pflichtfortbildungen · Workshops und Kompaktkurse · Selbstlernkurse (?art=…).
+ *            „Alle“ zeigt eigene Abschnitte mit Ueberschrift (auch ohne JS — gut fuers SEO).
+ *          - Eine Karte je Kurs: gleiche Titel/Art = eine Karte mit „Weitere Termine“ (jeder
+ *            Termin behaelt seine Detailseite). Filter greifen je Termin, die Karte zeigt die Union.
+ *          - Karte: Angebotsart, Umfang + Laufzeit, Abschluss, Zeitmodell, Abzeichen Pflichtfortbildung.
+ *          - Filter: Umfang nach Gesamtstunden (statt Sitzungsdauer), Zeitmodell, Schalter
+ *            Pflichtfortbildung. Typ, CarePath-Level, Methodik und Verfuegbarkeit nicht mehr in
+ *            der Seitenleiste (URL-Parameter wirken weiter).
+ *          - Kurslisten: Kriterien „Angebotsart“ und „Nur Pflichtfortbildungen“ (statt Titel-Stichwort).
+ *          Kennt die Datenbank die neuen Spalten noch nicht (vor v4.47.0), faellt der Abruf auf die
+ *          alte Spaltenliste zurueck und die Angebotsart wird aus dem Umfang vorgeschlagen.
  *
  * v1.57.0: Neue Supabase-Schluessel (Campus Connect v4.36.0). Das Feld „Supabase anon-Key“ nimmt
  *          jetzt auch den Publishable Key (sb_publishable_…) an; bisher verlangte die Pruefung einen
@@ -623,7 +639,8 @@ function livento_cc_recognition_labels() {
 
 function livento_cc_type_labels() {
     return array(
-        'program'          => 'Weiterbildung',
+        // v1.58.0: nicht mehr „Weiterbildung“ — sonst Verwechslung mit der Angebotsart
+        'program'          => 'Kurs mit festen Terminen',
         'scheduled_course' => 'Einzeltermin',
         'self_learning'    => 'Selbstlernkurs',
         'on_request'       => 'Termin auf Anfrage',
@@ -648,13 +665,224 @@ function livento_cc_methodology_labels() {
     );
 }
 
+/**
+ * v1.58.0: Umfang-Stufen nach GESAMTumfang in UE (gespiegelt aus src/lib/offeringKind.ts).
+ * Vorher Sitzungsdauer (Unter 2 Std. … Mehrtaegig) — die letzte Stufe warf eine
+ * 16-UE-Pflichtfortbildung mit einem 460-Stunden-Lehrgang zusammen.
+ */
 function livento_cc_duration_labels() {
     return array(
-        'kurz_unter_2h' => 'Unter 2 Stunden',
-        'halbtag'       => 'Halbtägig',
-        'ganztag'       => 'Ganztägig',
-        'mehrtaegig'    => 'Mehrtägig',
+        'bis_8_ue'     => 'Bis 8 UE',
+        'bis_40_ue'    => '9 bis 40 UE',
+        'bis_160_ue'   => '41 bis 160 UE',
+        'ueber_160_ue' => 'Über 160 UE',
     );
+}
+
+/** v1.58.0: Angebotsart (Campus Connect v4.47.0, feste Liste). Plural fuer Umschalter/Abschnitte. */
+function livento_cc_kind_labels() {
+    return array(
+        'weiterbildung_abschluss' => 'Weiterbildungen mit Abschluss',
+        'fortbildung'             => 'Fort- und Pflichtfortbildungen',
+        'workshop'                => 'Workshops und Kompaktkurse',
+        'selbstlernkurs'          => 'Selbstlernkurse',
+    );
+}
+
+/** Singular fuer den Kartenkopf. */
+function livento_cc_kind_singular() {
+    return array(
+        'weiterbildung_abschluss' => 'Weiterbildung mit Abschluss',
+        'fortbildung'             => 'Fortbildung',
+        'workshop'                => 'Workshop / Kompaktkurs',
+        'selbstlernkurs'          => 'Selbstlernkurs',
+    );
+}
+
+/** Untertitel der Abschnitte — bewusst ohne Stundenangabe (die Art darf von Hand abweichen). */
+function livento_cc_kind_hints() {
+    return array(
+        'weiterbildung_abschluss' => 'Umfangreiche Qualifizierungen mit Abschluss',
+        'fortbildung'             => 'Fortbildungen und jährliche Pflichtfortbildungen',
+        'workshop'                => 'Kompakte Formate von wenigen Stunden',
+        'selbstlernkurs'          => 'Online lernen im eigenen Tempo',
+    );
+}
+
+/** v1.58.0: Zeitmodell (Campus Connect leitet es aus den Unterrichtseinheiten ab). */
+function livento_cc_time_model_labels() {
+    return array(
+        'tagsueber'  => 'Tagsüber',
+        'abends'     => 'Abends',
+        'wochenende' => 'Am Wochenende',
+    );
+}
+
+/** Wie fn_normalize_hours_unit in Campus Connect: 'unterrichtsstunden' (45 min) oder 'stunden' (60 min). */
+function livento_cc_normalize_hours_unit($u) {
+    $u = strtolower(trim((string) $u));
+    if ($u === '') {
+        return '';
+    }
+    if (in_array($u, array('unterrichtsstunden', 'unterrichtsstunde', 'unterrichtseinheiten', 'unterrichtseinheit', 'ue'), true)) {
+        return 'unterrichtsstunden';
+    }
+    if (in_array($u, array('stunden', 'stunde', 'zeitstunden', 'zeitstunde', 'std', 'std.', 'h'), true)) {
+        return 'stunden';
+    }
+    return '';
+}
+
+/** Gesamtumfang in UE; sonst Dauer aus Beginn/Ende (Einzeltermine). null = unbekannt. */
+function livento_cc_teaching_units($o) {
+    $h = isset($o['total_hours']) ? (float) $o['total_hours'] : 0.0;
+    if ($h > 0) {
+        $ue = livento_cc_normalize_hours_unit($o['hours_unit'] ?? '') === 'stunden' ? $h * 4 / 3 : $h;
+        return round($ue, 2);
+    }
+    $m = isset($o['duration_minutes']) ? (int) $o['duration_minutes'] : 0;
+    return $m > 0 ? round($m / 45, 2) : null;
+}
+
+/** Vorschlag wie fn_suggest_offering_kind: bis 8 UE Workshop, 9–79 Fortbildung, ab 80 Weiterbildung. */
+function livento_cc_suggest_kind($ue, $self_learning) {
+    if ($self_learning) {
+        return 'selbstlernkurs';
+    }
+    if ($ue === null || $ue <= 0) {
+        return '';
+    }
+    if ($ue >= 80) {
+        return 'weiterbildung_abschluss';
+    }
+    return $ue > 8 ? 'fortbildung' : 'workshop';
+}
+
+/**
+ * Angebotsart fuer die Anzeige. Liefert Campus Connect die Spalte (auch leer), gilt sie;
+ * fehlt sie ganz (Datenbank vor v4.47.0), wird aus dem Umfang vorgeschlagen.
+ */
+function livento_cc_effective_kind($o) {
+    if (array_key_exists('offering_kind', $o)) {
+        $k = (string) $o['offering_kind'];
+        return isset(livento_cc_kind_labels()[$k]) ? $k : '';
+    }
+    $self = (($o['offering_type'] ?? '') === 'self_learning') || (($o['format'] ?? '') === 'selbstlern');
+    return livento_cc_suggest_kind(livento_cc_teaching_units($o), $self);
+}
+
+function livento_cc_fmt_number($n) {
+    $n = round((float) $n, 1);
+    return (floor($n) == $n) ? number_format($n, 0, ',', '.') : number_format($n, 1, ',', '.');
+}
+
+/** „460 Std.“ / „24 UE“; Einzeltermine aus der Dauer in Stunden. '' = unbekannt. */
+function livento_cc_umfang_label($o) {
+    $h = isset($o['total_hours']) ? (float) $o['total_hours'] : 0.0;
+    if ($h > 0) {
+        return livento_cc_fmt_number($h) . (livento_cc_normalize_hours_unit($o['hours_unit'] ?? '') === 'stunden' ? ' Std.' : ' UE');
+    }
+    $m = isset($o['duration_minutes']) ? (int) $o['duration_minutes'] : 0;
+    return $m > 0 ? livento_cc_fmt_number($m / 60) . ' Std.' : '';
+}
+
+/** Laufzeit langer Angebote: ab 14 Tagen Wochen, ab 60 Tagen Monate. '' sonst. */
+function livento_cc_laufzeit_label($o) {
+    if (($o['offering_type'] ?? '') === 'scheduled_course' || empty($o['start_datetime']) || empty($o['end_datetime'])) {
+        return '';
+    }
+    $s = strtotime(substr((string) $o['start_datetime'], 0, 10));
+    $e = strtotime(substr((string) $o['end_datetime'], 0, 10));
+    if (!$s || !$e || $e <= $s) {
+        return '';
+    }
+    $days = (int) round(($e - $s) / 86400) + 1;
+    if ($days < 14) {
+        return '';
+    }
+    if ($days < 60) {
+        return 'ca. ' . (int) round($days / 7) . ' Wochen';
+    }
+    return 'ca. ' . (int) round($days / 30.44) . ' Monate';
+}
+
+/** Abschluss in einem Satz aus Pruefung, Zertifikatstitel und Anerkennung. '' = keine Aussage. */
+function livento_cc_abschluss_label($o) {
+    $exam = trim((string) ($o['exam_title'] ?? ''));
+    $rec  = (isset($o['recognition']) && is_array($o['recognition'])) ? $o['recognition'] : array();
+    if ($exam !== '') {
+        return stripos($exam, 'test') !== false ? 'Zertifikat mit Abschlusstest' : 'Zertifikat mit Abschlussprüfung';
+    }
+    if (trim((string) ($o['certificate_title'] ?? '')) !== '' || in_array('fp_zertifikat', $rec, true) || in_array('azav_zertifikat', $rec, true)) {
+        return 'Zertifikat';
+    }
+    return in_array('tn_bescheinigung', $rec, true) ? 'Teilnahmebescheinigung' : '';
+}
+
+/** Umfang-Stufe aus UE (gespiegelt aus bucketUmfang). */
+function livento_cc_bucket_umfang($ue) {
+    if ($ue === null || $ue <= 0) {
+        return '';
+    }
+    if ($ue <= 8) {
+        return 'bis_8_ue';
+    }
+    if ($ue <= 40) {
+        return 'bis_40_ue';
+    }
+    return $ue <= 160 ? 'bis_160_ue' : 'ueber_160_ue';
+}
+
+/**
+ * v1.58.0: Eine Karte je Kurs. Gleicher Titel, gleiche Art (Termin / Selbstlernkurs /
+ * Anfrage) und gleiche Angebotsart = eine Gruppe. Reihenfolge folgt dem ersten Termin
+ * jeder Gruppe in der (bereits sortierten) Liste; die Karte traegt der frueheste Termin.
+ * Jeder Termin behaelt seine eigene Detailseite (SEO), die Karte verlinkt sie.
+ */
+function livento_cc_group_key($o) {
+    $t = $o['offering_type'] ?? '';
+    $art = $t === 'self_learning' ? 'sl' : ($t === 'on_request' ? 'rq' : 'tm');
+    $title = trim((string) ($o['title'] ?? ''));
+    $title = function_exists('mb_strtolower') ? mb_strtolower($title, 'UTF-8') : strtolower($title);
+    $title = preg_replace('/\s+/u', ' ', $title);
+    return ($o['_kind'] ?? '') . '|' . $art . '|' . $title;
+}
+
+function livento_cc_group_offerings($offerings) {
+    $groups = array();
+    foreach ($offerings as $o) {
+        $k = livento_cc_group_key($o);
+        if (!isset($groups[$k])) {
+            $groups[$k] = array();
+        }
+        $groups[$k][] = $o;
+    }
+    $out = array();
+    foreach ($groups as $members) {
+        usort($members, function ($a, $b) {
+            $sa = !empty($a['start_datetime']) ? (string) $a['start_datetime'] : '9999';
+            $sb = !empty($b['start_datetime']) ? (string) $b['start_datetime'] : '9999';
+            return strcmp($sa, $sb);
+        });
+        $out[] = array('lead' => $members[0], 'members' => $members);
+    }
+    return $out;
+}
+
+/** v1.58.0: Zahl der Kurse (Gruppen) je Angebotsart — fuer den Admin-Tab „Kurslisten“. */
+function livento_cc_art_counts() {
+    static $counts = null;
+    if ($counts !== null) {
+        return $counts;
+    }
+    $counts = array();
+    foreach (livento_cc_group_offerings(livento_cc_augment(livento_cc_get_offerings())) as $g) {
+        $k = (string) ($g['lead']['_kind'] ?? '');
+        if ($k !== '') {
+            $counts[$k] = isset($counts[$k]) ? $counts[$k] + 1 : 1;
+        }
+    }
+    return $counts;
 }
 
 function livento_cc_availability_labels() {
@@ -664,16 +892,6 @@ function livento_cc_availability_labels() {
         'ausgebucht'     => 'Ausgebucht',
         'warteliste'     => 'Warteliste',
     );
-}
-
-/** Dauer-Bucket aus Minuten (gespiegelt aus courseFilterLabels.ts). */
-function livento_cc_bucket_duration($minutes) {
-    $m = (int) $minutes;
-    if ($m <= 0)   return '';
-    if ($m < 120)  return 'kurz_unter_2h';
-    if ($m <= 240) return 'halbtag';
-    if ($m <= 480) return 'ganztag';
-    return 'mehrtaegig';
 }
 
 /** Verfügbarkeit aus enrolled/max (gespiegelt aus courseFilterLabels.ts). */
@@ -692,10 +910,17 @@ function livento_cc_derive_availability($enrolled, $max) {
     return 'verfuegbar';
 }
 
-/** Reichert jedes Angebot um abgeleitete Filter-Werte an (_duration/_startmonth/_availability). */
+/** Reichert jedes Angebot um abgeleitete Filter-Werte an (_ue/_kind/_duration/_zeitmodell/_startmonth/_availability). */
 function livento_cc_augment($offerings) {
     foreach ($offerings as &$o) {
-        $o['_duration']     = livento_cc_bucket_duration($o['duration_minutes'] ?? null);
+        // v1.58.0: Umfang in UE, Angebotsart, Umfang-Stufe, Zeitmodell
+        $ue                 = livento_cc_teaching_units($o);
+        $o['_ue']           = $ue;
+        $o['_kind']         = livento_cc_effective_kind($o);
+        $o['_duration']     = livento_cc_bucket_umfang($ue);
+        $o['_zeitmodell']   = (isset($o['time_models']) && is_array($o['time_models']))
+            ? array_values(array_filter(array_map('strval', $o['time_models'])))
+            : array();
         $o['_startmonth']   = !empty($o['start_datetime']) ? substr($o['start_datetime'], 0, 7) : '';
         $o['_availability'] = livento_cc_derive_availability($o['enrolled_count'] ?? 0, $o['max_participants'] ?? null);
     }
@@ -792,7 +1017,7 @@ function livento_cc_get_offerings() {
         return livento_cc_with_bg_funding($cache);
     }
 
-    $select = implode(',', array(
+    $base = array(
         'id', 'offering_type', 'title', 'slug', 'short_description', 'public_description',
         'public_image_url', 'public_image_ai_generated', 'public_price', 'is_vat_exempt', 'start_datetime', 'end_datetime',
         'site_name', 'site_city', 'format', 'level', 'is_azav_relevant', 'rbp_points',
@@ -802,10 +1027,19 @@ function livento_cc_get_offerings() {
         'audience', 'funding', 'recognition', 'methodology', 'topics',
         // Sortierung:
         'booking_count', 'rating_avg', 'rating_count', 'is_featured', 'featured_order',
-    ));
-    $query = 'select=' . $select . '&order=start_datetime.asc.nullslast&limit=500';
+        // v1.58.0: Karte (Umfang, Abschluss) — gibt es seit Campus Connect v3.228.0
+        'total_hours', 'hours_unit', 'certificate_title', 'exam_title',
+    );
+    // v1.58.0: Gliederung (Campus Connect v4.47.0). Kennt die Datenbank die Spalten noch
+    // nicht, antwortet PostgREST mit 400 → einmal ohne sie abfragen (Angebotsart dann
+    // aus dem Umfang vorgeschlagen). So laufen Plugin- und App-Release unabhaengig.
+    $neu   = array('offering_kind', 'is_mandatory_training', 'time_models');
+    $order = '&order=start_datetime.asc.nullslast&limit=500';
 
-    $data = livento_cc_rest_get($query);
+    $data = livento_cc_rest_get('select=' . implode(',', array_merge($base, $neu)) . $order);
+    if (is_wp_error($data) && $data->get_error_message() === 'PostgREST HTTP 400') {
+        $data = livento_cc_rest_get('select=' . implode(',', $base) . $order);
+    }
     if (is_wp_error($data)) {
         // Fehler NICHT cachen — letzten guten Stand (Stale-While-Error) liefern.
         $stale = get_transient('livento_cc_list_stale');
@@ -2368,8 +2602,21 @@ function livento_cc_kursliste_filter($offerings, $cfg) {
         }
     }
 
+    // v1.58.0: Angebotsart + Pflichtfortbildung (Campus Connect v4.47.0)
+    $art = sanitize_key((string) ($cfg['art'] ?? ''));
+    if ($art !== '') {
+        $offerings = array_values(array_filter($offerings, function ($o) use ($art) {
+            return livento_cc_effective_kind($o) === $art;
+        }));
+    }
+    if (!empty($cfg['pflicht']) && (string) $cfg['pflicht'] !== 'no') {
+        $offerings = array_values(array_filter($offerings, function ($o) {
+            return !empty($o['is_mandatory_training']);
+        }));
+    }
+
     // Titel-Stichwort (Teilstring, case-insensitive) — fuer Kategorien ohne eigenes
-    // Facet wie „Pflichtfortbildung".
+    // Facet. Seit v1.58.0 gibt es fuer Pflichtfortbildungen das Kriterium „pflicht“.
     $q = trim((string) ($cfg['q'] ?? ''));
     if ($q !== '') {
         $needle = function_exists('mb_strtolower') ? mb_strtolower($q, 'UTF-8') : strtolower($q);
@@ -2397,6 +2644,13 @@ function livento_cc_kursliste_deeplink($cfg) {
     }
     if (!empty($cfg['bildungsgutschein']) && (string) $cfg['bildungsgutschein'] !== 'no') {
         $params['azav'] = '1';
+    }
+    $art = sanitize_key((string) ($cfg['art'] ?? ''));
+    if ($art !== '') {
+        $params['art'] = $art;
+    }
+    if (!empty($cfg['pflicht']) && (string) $cfg['pflicht'] !== 'no') {
+        $params['pflicht'] = '1';
     }
     $base = livento_cc_list_url();
     return empty($params) ? $base : $base . '?' . http_build_query($params);
@@ -2431,12 +2685,14 @@ function livento_cc_render_kursliste($cfg) {
     $offerings = livento_cc_augment($offerings);
     $offerings = livento_cc_sort_offerings($offerings, $cfg['sort'] ?? 'next_start');
 
+    // v1.58.0: mehrere Termine desselben Kurses = eine Karte; Limit zaehlt Kurse
+    $groups = livento_cc_group_offerings($offerings);
     $limit = max(0, (int) ($cfg['limit'] ?? 0));
     if ($limit > 0) {
-        $offerings = array_slice($offerings, 0, $limit);
+        $groups = array_slice($groups, 0, $limit);
     }
 
-    if (empty($offerings)) {
+    if (empty($groups)) {
         // Im Frontend keine leere Sektion ausgeben; im Backend Hinweis fuer den Redakteur.
         return current_user_can('manage_options')
             ? '<div class="lvk"><p>Kursliste „' . esc_html((string) ($cfg['name'] ?? ($cfg['id'] ?? ''))) . '": aktuell keine passenden Kurse (Kriterien zu eng?).</p></div>'
@@ -2468,8 +2724,8 @@ function livento_cc_render_kursliste($cfg) {
         $out .= '</div>';
     }
     $out .= '<div class="lvk-grid lvk-kl-grid"' . $grid_style . '>';
-    foreach ($offerings as $o) {
-        $out .= livento_cc_render_card($o);
+    foreach ($groups as $g) {
+        $out .= livento_cc_render_card($g['lead'], $g['members']);
     }
     $out .= '</div>';
     if ($show_cta) {
@@ -2494,6 +2750,8 @@ add_shortcode('livento_kursliste', function ($atts) {
         'recognition' => '',
         'q'           => '',
         'bildungsgutschein' => '',
+        'art'         => '',
+        'pflicht'     => '',
         'limit'       => '',
         'sort'        => '',
         'heading'     => '',
@@ -2524,6 +2782,10 @@ add_shortcode('livento_kursliste', function ($atts) {
     }
     if ($a['bildungsgutschein'] !== '') {
         $cfg['bildungsgutschein'] = in_array(strtolower(trim($a['bildungsgutschein'])), array('1', 'yes', 'ja', 'true'), true) ? 'yes' : 'no';
+    }
+    if ($a['art'] !== '')     { $cfg['art']     = sanitize_key($a['art']); }
+    if ($a['pflicht'] !== '') {
+        $cfg['pflicht'] = in_array(strtolower(trim($a['pflicht'])), array('1', 'yes', 'ja', 'true'), true) ? 'yes' : 'no';
     }
     if ($a['limit'] !== '')   { $cfg['limit']   = (int) $a['limit']; }
     if ($a['sort'] !== '')    { $cfg['sort']    = sanitize_key($a['sort']); }
@@ -2559,34 +2821,78 @@ function livento_cc_render_list($offerings, $sort = 'next_start', $limit = 0, $s
     if (empty($offerings)) {
         return '<div class="lvk"><p>Aktuell sind keine öffentlichen Angebote verfügbar.</p></div>';
     }
-    $offerings = livento_cc_augment($offerings);           // _duration/_startmonth/_availability
+    $offerings = livento_cc_augment($offerings);           // _ue/_kind/_duration/_zeitmodell/_startmonth/_availability
     $offerings = livento_cc_sort_offerings($offerings, $sort);
-    if ($limit > 0) {
-        $offerings = array_slice($offerings, 0, $limit);
-    }
 
+    // JSON-LD weiter je Termin: jeder hat seine eigene Detailseite.
     $jsonld = '<script type="application/ld+json">' . wp_json_encode(livento_cc_jsonld_list($offerings)) . '</script>';
+
+    // v1.58.0: mehrere Termine desselben Kurses = eine Karte
+    $groups = livento_cc_group_offerings($offerings);
 
     // Kuratierter Block ohne Filter-UI (z. B. [livento_kurse limit="6"]): nur Karten, kein JS.
     if (!$show_filters) {
+        if ($limit > 0) {
+            $groups = array_slice($groups, 0, $limit);
+        }
         $out = '<div class="lvk lvk-list">' . $jsonld . '<div class="lvk-grid">';
-        foreach ($offerings as $o) {
-            $out .= livento_cc_render_card($o);
+        foreach ($groups as $g) {
+            $out .= livento_cc_render_card($g['lead'], $g['members']);
         }
         return $out . '</div></div>';
     }
+    if ($limit > 0) {
+        $groups = array_slice($groups, 0, $limit);
+    }
+
+    // v1.58.0: Abschnitte je Angebotsart; ohne Art zuletzt („Weitere Angebote“).
+    $labels   = livento_cc_kind_labels();
+    $hints    = livento_cc_kind_hints();
+    $sections = array();
+    foreach (array_keys($labels) as $k) {
+        $sections[$k] = array();
+    }
+    $sections[''] = array();
+    foreach ($groups as $g) {
+        $k = (string) ($g['lead']['_kind'] ?? '');
+        $sections[isset($sections[$k]) ? $k : ''][] = $g;
+    }
+
+    // Umschalter (Zahlen = Kurse; JS aktualisiert sie bei Filteraenderungen)
+    $sw  = '<div class="lvk-art" role="group" aria-label="Angebotsart">';
+    $sw .= '<button type="button" class="lvk-art-btn is-active" data-art="" aria-pressed="true">Alle <span class="lvk-art-count">' . count($groups) . '</span></button>';
+    foreach ($labels as $k => $lbl) {
+        $sw .= '<button type="button" class="lvk-art-btn" data-art="' . esc_attr($k) . '" aria-pressed="false">' . esc_html($lbl)
+            . ' <span class="lvk-art-count">' . count($sections[$k]) . '</span></button>';
+    }
+    $sw .= '</div>';
 
     // Voller Katalog mit Filter-Sidebar + Toolbar + JS.
     $out  = '<div class="lvk lvk-list" id="lvk-catalog">' . $jsonld;
     $out .= '<div class="lvk-layout">';
     $out .= '<aside class="lvk-sidebar">' . livento_cc_render_sidebar($offerings) . '</aside>';
     $out .= '<div class="lvk-main">';
+    $out .= $sw;
     $out .= livento_cc_render_toolbar($sort);
-    $out .= '<div class="lvk-grid" id="lvk-grid">';
-    foreach ($offerings as $o) {
-        $out .= livento_cc_render_card($o);
+    // Bewusst <div> statt <section>: manche Themes faerben generische semantische Tags ein.
+    $out .= '<div class="lvk-kat" id="lvk-grid">';
+    foreach ($sections as $k => $list) {
+        if (empty($list)) {
+            continue;
+        }
+        $out .= '<div class="lvk-kat-section" data-section="' . esc_attr($k) . '">';
+        $out .= '<div class="lvk-kat-head"><h2 class="lvk-kat-title">' . esc_html($k !== '' ? $labels[$k] : 'Weitere Angebote')
+            . ' <span class="lvk-kat-count">' . count($list) . '</span></h2>';
+        if ($k !== '') {
+            $out .= '<p class="lvk-kat-hint">' . esc_html($hints[$k]) . '</p>';
+        }
+        $out .= '</div><div class="lvk-grid">';
+        foreach ($list as $g) {
+            $out .= livento_cc_render_card($g['lead'], $g['members']);
+        }
+        $out .= '</div></div>';
     }
-    $out .= '</div>'; // .lvk-grid
+    $out .= '</div>'; // .lvk-kat
     $out .= '</div>'; // .lvk-main
     $out .= '</div>'; // .lvk-layout
     $out .= livento_cc_filter_js();
@@ -2663,19 +2969,23 @@ function livento_cc_collect_facet($offerings, $field, $is_array) {
  *  Admin-Slug-Uebersicht. (`dim` = data-Attribut/URL-Parameter, `field` = Quelle im Angebot,
  *  `arr` = Mehrfachwert-Feld, `lab` = Label-Map, 'month' oder null fuer humanisierte Slugs.) */
 function livento_cc_filter_groups() {
+    // v1.58.0: Reihenfolge = Wichtigkeit; die ersten drei Gruppen sind aufgeklappt.
+    // 'hidden' = nicht mehr in der Seitenleiste, per URL-Parameter aber weiter wirksam
+    // (alte Kampagnen-Links). Typ/Angebotsart uebernimmt der Umschalter ueber der Liste.
     return array(
-        array('dim' => 'type',        'field' => 'offering_type', 'arr' => false, 'title' => 'Typ',            'lab' => livento_cc_type_labels()),
         array('dim' => 'format',      'field' => 'format',        'arr' => false, 'title' => 'Format',         'lab' => livento_cc_format_labels()),
-        array('dim' => 'level',       'field' => 'level',         'arr' => false, 'title' => 'CarePath-Level', 'lab' => livento_cc_level_labels()),
         array('dim' => 'audience',    'field' => 'audience',      'arr' => true,  'title' => 'Zielgruppe',     'lab' => livento_cc_audience_labels()),
+        array('dim' => 'topics',      'field' => 'topics',        'arr' => true,  'title' => 'Thema',          'lab' => null),
+        array('dim' => 'duration',    'field' => '_duration',     'arr' => false, 'title' => 'Umfang',         'lab' => livento_cc_duration_labels()),
+        array('dim' => 'zeitmodell',  'field' => '_zeitmodell',   'arr' => true,  'title' => 'Zeitmodell',     'lab' => livento_cc_time_model_labels()),
+        array('dim' => 'startmonth',  'field' => '_startmonth',   'arr' => false, 'title' => 'Start-Monat',    'lab' => 'month'),
         array('dim' => 'funding',     'field' => 'funding',       'arr' => true,  'title' => 'Förderung',      'lab' => livento_cc_funding_labels()),
         array('dim' => 'recognition', 'field' => 'recognition',   'arr' => true,  'title' => 'Anerkennung',    'lab' => livento_cc_recognition_labels()),
-        array('dim' => 'methodology', 'field' => 'methodology',   'arr' => true,  'title' => 'Methodik',       'lab' => livento_cc_methodology_labels()),
-        array('dim' => 'topics',      'field' => 'topics',        'arr' => true,  'title' => 'Thema',          'lab' => null),
-        array('dim' => 'duration',    'field' => '_duration',     'arr' => false, 'title' => 'Dauer',          'lab' => livento_cc_duration_labels()),
-        array('dim' => 'startmonth',  'field' => '_startmonth',   'arr' => false, 'title' => 'Start-Monat',    'lab' => 'month'),
-        array('dim' => 'availability','field' => '_availability', 'arr' => false, 'title' => 'Verfügbarkeit',  'lab' => livento_cc_availability_labels()),
         array('dim' => 'city',        'field' => 'site_city',     'arr' => false, 'title' => 'Ort',            'lab' => null),
+        array('dim' => 'type',        'field' => 'offering_type', 'arr' => false, 'title' => 'Typ',            'lab' => livento_cc_type_labels(),         'hidden' => true),
+        array('dim' => 'level',       'field' => 'level',         'arr' => false, 'title' => 'CarePath-Level', 'lab' => livento_cc_level_labels(),        'hidden' => true),
+        array('dim' => 'methodology', 'field' => 'methodology',   'arr' => true,  'title' => 'Methodik',       'lab' => livento_cc_methodology_labels(),  'hidden' => true),
+        array('dim' => 'availability','field' => '_availability', 'arr' => false, 'title' => 'Verfügbarkeit',  'lab' => livento_cc_availability_labels(), 'hidden' => true),
     );
 }
 
@@ -2728,6 +3038,7 @@ function livento_cc_render_sidebar($offerings) {
     $h  = '<div class="lvk-sidebar-head"><span class="lvk-sidebar-title">Filter</span>';
     $h .= '<button type="button" class="lvk-reset" hidden>Zurücksetzen</button></div>';
     $h .= '<div class="lvk-toggles">'
+        . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="pflicht">Pflichtfortbildung</button>'
         . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="azav">Bildungsgutschein</button>'
         . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="vatexempt">USt-frei</button>'
         . '<button type="button" class="lvk-pill lvk-toggle" data-toggle="free">Kostenfrei</button>'
@@ -2735,6 +3046,9 @@ function livento_cc_render_sidebar($offerings) {
 
     $idx = 0;
     foreach (livento_cc_filter_groups() as $g) {
+        if (!empty($g['hidden'])) {
+            continue; // v1.58.0: nur noch per URL-Parameter
+        }
         $counts = livento_cc_collect_facet($offerings, $g['field'], $g['arr']);
         if (empty($counts)) {
             continue; // Dimension nur zeigen, wenn Werte vorhanden
@@ -2745,6 +3059,12 @@ function livento_cc_render_sidebar($offerings) {
         }
         if ($g['dim'] === 'startmonth') {
             usort($items, function ($a, $b) { return strcmp($a['val'], $b['val']); }); // chronologisch
+        } elseif (is_array($g['lab']) && in_array($g['dim'], array('duration', 'zeitmodell'), true)) {
+            // v1.58.0: feste Reihenfolge der Label-Map (Umfang aufsteigend, Tageszeit)
+            $pos = array_flip(array_keys($g['lab']));
+            usort($items, function ($a, $b) use ($pos) {
+                return ($pos[$a['val']] ?? 99) - ($pos[$b['val']] ?? 99);
+            });
         } else {
             usort($items, function ($a, $b) { return strcasecmp($a['label'], $b['label']); });
         }
@@ -2797,7 +3117,15 @@ function livento_cc_ki_text() {
     return (string) apply_filters('livento_cc_ki_text', 'KI-generiert');
 }
 
-function livento_cc_render_card($o) {
+/**
+ * Eine Kurskarte. v1.58.0: $members = alle Termine derselben Gruppe (inkl. $o, nach Start
+ * sortiert). Die data-Attribute fuer den Filter tragen dann die Werte ALLER Termine
+ * (|a|b|), damit z. B. der Start-Monat-Filter auch den zweiten Termin findet.
+ */
+function livento_cc_render_card($o, $members = array()) {
+    if (empty($members)) {
+        $members = array($o);
+    }
     $has_slug = !empty($o['slug']);
     $url = $has_slug ? livento_cc_detail_url($o['slug']) : ($o['wc_checkout_url'] ?? '');
     $desc = $o['short_description'] ?: $o['public_description'] ?: '';
@@ -2830,25 +3158,57 @@ function livento_cc_render_card($o) {
     $data_text = strtolower(wp_strip_all_tags($o['title'] . ' ' . ($o['short_description'] ?? '') . ' ' . ($o['public_description'] ?? '')));
     $featured = !empty($o['is_featured']) ? (isset($o['featured_order']) ? (int) $o['featured_order'] : 0) : 99999;
     $price = ($o['public_price'] !== null && $o['public_price'] !== '') ? (string) (float) $o['public_price'] : '';
+    // v1.58.0: Werte ueber alle Termine der Gruppe (Union) bzw. Minimum/Summe.
+    $union = function ($field) use ($members) {
+        $vals = array();
+        foreach ($members as $m) {
+            $v = isset($m[$field]) ? $m[$field] : null;
+            foreach ((is_array($v) ? $v : array($v)) as $x) {
+                $x = (string) $x;
+                if ($x !== '') {
+                    $vals[$x] = true;
+                }
+            }
+        }
+        return empty($vals) ? '' : '|' . implode('|', array_keys($vals)) . '|';
+    };
+    $min_start = '';
+    $min_price = $price;
+    $booked    = 0;
+    foreach ($members as $m) {
+        $st = (string) ($m['start_datetime'] ?? '');
+        if ($st !== '' && ($min_start === '' || strcmp($st, $min_start) < 0)) {
+            $min_start = $st;
+        }
+        if (isset($m['public_price']) && $m['public_price'] !== null && $m['public_price'] !== ''
+            && ($min_price === '' || (float) $m['public_price'] < (float) $min_price)) {
+            $min_price = (string) (float) $m['public_price'];
+        }
+        $booked += (int) ($m['booking_count'] ?? 0);
+    }
     $data = ' data-type="' . esc_attr((string) ($o['offering_type'] ?? '')) . '"'
-          . ' data-format="' . esc_attr((string) ($o['format'] ?? '')) . '"'
+          . ' data-kind="' . esc_attr((string) ($o['_kind'] ?? '')) . '"'
+          . ' data-termine="' . (int) count($members) . '"'
+          . ' data-pflicht="' . (!empty($o['is_mandatory_training']) ? '1' : '') . '"'
+          . ' data-zeitmodell="' . esc_attr($union('_zeitmodell')) . '"'
+          . ' data-format="' . esc_attr($union('format')) . '"'
           . ' data-level="' . esc_attr((string) ($o['level'] ?? '')) . '"'
-          . ' data-city="' . esc_attr((string) ($o['site_city'] ?? '')) . '"'
+          . ' data-city="' . esc_attr($union('site_city')) . '"'
           . ' data-audience="' . esc_attr(livento_cc_data_list($o, 'audience')) . '"'
           . ' data-funding="' . esc_attr(livento_cc_data_list($o, 'funding')) . '"'
           . ' data-recognition="' . esc_attr(livento_cc_data_list($o, 'recognition')) . '"'
           . ' data-methodology="' . esc_attr(livento_cc_data_list($o, 'methodology')) . '"'
           . ' data-topics="' . esc_attr(livento_cc_data_list($o, 'topics')) . '"'
           . ' data-duration="' . esc_attr((string) ($o['_duration'] ?? '')) . '"'
-          . ' data-startmonth="' . esc_attr((string) ($o['_startmonth'] ?? '')) . '"'
-          . ' data-availability="' . esc_attr((string) ($o['_availability'] ?? '')) . '"'
+          . ' data-startmonth="' . esc_attr($union('_startmonth')) . '"'
+          . ' data-availability="' . esc_attr($union('_availability')) . '"'
           . ' data-azav="' . (!empty($o['is_azav_relevant']) ? '1' : '') . '"'
           . ' data-vatexempt="' . (!empty($o['is_vat_exempt']) ? '1' : '') . '"'
           . ' data-free="' . (!empty($o['is_free']) ? '1' : '') . '"'
-          . ' data-price="' . esc_attr($price) . '"'
-          . ' data-start="' . esc_attr((string) ($o['start_datetime'] ?? '')) . '"'
+          . ' data-price="' . esc_attr($min_price) . '"'
+          . ' data-start="' . esc_attr($min_start) . '"'
           . ' data-published="' . esc_attr((string) ($o['published_at'] ?? '')) . '"'
-          . ' data-booked="' . (int) ($o['booking_count'] ?? 0) . '"'
+          . ' data-booked="' . (int) $booked . '"'
           . ' data-rating="' . esc_attr((string) ($o['rating_avg'] ?? '')) . '"'
           . ' data-featured="' . (int) $featured . '"'
           . ' data-text="' . esc_attr($data_text) . '"';
@@ -2856,8 +3216,16 @@ function livento_cc_render_card($o) {
     $out  = '<article class="lvk-card"' . $data . '>';
     $out .= $img;
     $out .= '<div class="lvk-card-body">';
-    if (!empty($o['format']) || !empty($o['is_azav_relevant']) || livento_cc_is_on_request($o)) {
+    $kinds = livento_cc_kind_singular();
+    $kind  = (string) ($o['_kind'] ?? '');
+    if ($kind !== '' && isset($kinds[$kind])) {
+        $out .= '<p class="lvk-card-kind">' . esc_html($kinds[$kind]) . '</p>';
+    }
+    if (!empty($o['format']) || !empty($o['is_azav_relevant']) || livento_cc_is_on_request($o) || !empty($o['is_mandatory_training'])) {
         $out .= '<div class="lvk-badges">';
+        if (!empty($o['is_mandatory_training'])) {
+            $out .= '<span class="lvk-badge lvk-badge-pflicht">Pflichtfortbildung</span>';
+        }
         if (livento_cc_is_on_request($o)) {
             $out .= '<span class="lvk-badge lvk-badge-anfrage">Termin auf Anfrage</span>';
         }
@@ -2869,12 +3237,57 @@ function livento_cc_render_card($o) {
         }
         $out .= '</div>';
     }
-    $out .= '<h2 class="lvk-card-title">' . $title_html . '</h2>';
+    // v1.58.0: h3 — die Abschnitte des Katalogs tragen jetzt h2.
+    $out .= '<h3 class="lvk-card-title">' . $title_html . '</h3>';
     if ($desc) {
         $out .= '<p class="lvk-card-desc">' . esc_html($desc) . '</p>';
     }
     if (!empty($meta)) {
         $out .= '<p class="lvk-card-meta">' . esc_html(implode(' · ', $meta)) . '</p>';
+    }
+    // v1.58.0: Umfang · Laufzeit · Zeitmodell, Abschluss
+    $facts = array();
+    $umfang = livento_cc_umfang_label($o);
+    if ($umfang !== '') {
+        $facts[] = 'Umfang: ' . $umfang;
+    }
+    $laufzeit = livento_cc_laufzeit_label($o);
+    if ($laufzeit !== '') {
+        $facts[] = $laufzeit;
+    }
+    $zm_labels = livento_cc_time_model_labels();
+    $zm = array();
+    foreach ((array) ($o['_zeitmodell'] ?? array()) as $t) {
+        if (isset($zm_labels[$t])) {
+            $zm[] = $zm_labels[$t];
+        }
+    }
+    if (!empty($zm)) {
+        $facts[] = implode(', ', $zm);
+    }
+    if (!empty($facts)) {
+        $out .= '<p class="lvk-card-facts">' . esc_html(implode(' · ', $facts)) . '</p>';
+    }
+    $abschluss = livento_cc_abschluss_label($o);
+    if ($abschluss !== '') {
+        $out .= '<p class="lvk-card-facts">Abschluss: ' . esc_html($abschluss) . '</p>';
+    }
+    // v1.58.0: weitere Termine derselben Gruppe, je mit eigener Detailseite
+    $more = array();
+    foreach (array_slice($members, 1) as $m) {
+        if (!empty($m['start_datetime']) && !empty($m['slug'])) {
+            $more[] = $m;
+        }
+    }
+    if (!empty($more)) {
+        $links = array();
+        foreach (array_slice($more, 0, 4) as $m) {
+            $links[] = '<a href="' . esc_url(livento_cc_detail_url($m['slug'])) . '">'
+                . esc_html(wp_date('d.m.Y', strtotime((string) $m['start_datetime']))) . '</a>';
+        }
+        $rest = count($more) - 4;
+        $out .= '<p class="lvk-card-dates">Weitere Termine: ' . implode(', ', $links)
+            . ($rest > 0 ? ' <span>+' . (int) $rest . '</span>' : '') . '</p>';
     }
     if ($url) {
         $label = $has_slug ? (livento_cc_is_on_request($o) ? 'Jetzt anfragen' : 'Details ansehen') : 'Jetzt buchen';
@@ -4000,18 +4413,20 @@ function livento_cc_filter_js() {
   var root = document.getElementById('lvk-catalog');
   if(!root) return;
   root.classList.add('lvk-js');
-  var grid   = root.querySelector('#lvk-grid');
   var cards  = Array.prototype.slice.call(root.querySelectorAll('.lvk-card'));
+  var sections = Array.prototype.slice.call(root.querySelectorAll('.lvk-kat-section'));
+  var artBtns  = Array.prototype.slice.call(root.querySelectorAll('.lvk-art-btn'));
+  var art = '';
   var search = root.querySelector('.lvk-search');
   var sortSel= root.querySelector('.lvk-sort');
   var priceSel= root.querySelector('.lvk-pricemax');
   var reset  = root.querySelector('.lvk-reset');
   var countEl= root.querySelector('.lvk-count');
-  var total  = cards.length;
 
-  var DIMS  = ['type','format','level','audience','funding','recognition','methodology','topics','duration','startmonth','availability','city'];
-  var MULTI = {audience:1,funding:1,recognition:1,methodology:1,topics:1};
-  var TOGGLES = ['azav','vatexempt','free'];
+  // v1.58.0: Karten fassen mehrere Termine zusammen → je-Termin-Werte als |a|b|-Listen.
+  var DIMS  = ['type','format','level','audience','funding','recognition','methodology','topics','duration','zeitmodell','startmonth','availability','city'];
+  var MULTI = {audience:1,funding:1,recognition:1,methodology:1,topics:1,zeitmodell:1,format:1,city:1,startmonth:1,availability:1};
+  var TOGGLES = ['azav','vatexempt','free','pflicht'];
   var active = {}; DIMS.forEach(function(d){ active[d]=[]; });
   var toggles = {}; TOGGLES.forEach(function(t){ toggles[t]=false; });
   var term = '', priceMax = null;
@@ -4048,15 +4463,34 @@ function livento_cc_filter_js() {
         case 'price_desc':  { var qa=num(a,'price'),qb=num(b,'price'); qa=isNaN(qa)?-Infinity:qa; qb=isNaN(qb)?-Infinity:qb; return qb-qa; }
         default:            { var ka=function(c){ return str(c,'start')||(str(c,'type')==='on_request'?'zzzz':'9999'); }; return ka(a).localeCompare(ka(b)); }
       }
-    }).forEach(function(c){ if(grid) grid.appendChild(c); });
+    }).forEach(function(c){ if(c.parentNode) c.parentNode.appendChild(c); }); // je Abschnitt sortieren
   }
   function apply(){
-    var shown=0;
-    cards.forEach(function(c){ var ok=matches(c); c.style.display=ok?'':'none'; if(ok)shown++; });
+    var shown=0, termine=0, perArt={'':0};
+    cards.forEach(function(c){
+      var base=matches(c), k=c.getAttribute('data-kind')||'';
+      if(base){ perArt['']++; if(k) perArt[k]=(perArt[k]||0)+1; }
+      var ok = base && (art==='' || k===art);
+      c.style.display=ok?'':'none';
+      if(ok){ shown++; termine += parseInt(c.getAttribute('data-termine')||'1',10)||1; }
+    });
+    // v1.58.0: Abschnitte ohne Treffer ausblenden, Ueberschriften nur in „Alle“
+    sections.forEach(function(sec){
+      var n=0;
+      Array.prototype.forEach.call(sec.querySelectorAll('.lvk-card'), function(c){ if(c.style.display!=='none') n++; });
+      sec.style.display = n ? '' : 'none';
+      var cnt=sec.querySelector('.lvk-kat-count'); if(cnt) cnt.textContent=n;
+      var head=sec.querySelector('.lvk-kat-head'); if(head) head.style.display = art ? 'none' : '';
+    });
+    artBtns.forEach(function(b){
+      var k=b.getAttribute('data-art')||'', on=(k===art);
+      b.classList.toggle('is-active', on); b.setAttribute('aria-pressed', on?'true':'false');
+      var cn=b.querySelector('.lvk-art-count'); if(cn) cn.textContent = perArt[k]||0;
+    });
     var anyActive = term!=='' || priceMax!==null
       || DIMS.some(function(d){return active[d].length;})
       || TOGGLES.some(function(t){return toggles[t];});
-    if(countEl) countEl.textContent = shown+' von '+total+' Kursen';
+    if(countEl) countEl.textContent = shown+(shown===1?' Kurs':' Kurse')+(termine>shown?' · '+termine+' Termine':'');
     if(reset) reset.hidden = !anyActive;
     // Treffer-Badge je Filtergruppe (zeigt aktive Auswahl auch bei eingeklappter Gruppe)
     DIMS.forEach(function(d){
@@ -4079,6 +4513,7 @@ function livento_cc_filter_js() {
       var t=p.getAttribute('data-toggle'); toggles[t]=!toggles[t]; p.classList.toggle('is-active', toggles[t]); apply();
     });
   });
+  artBtns.forEach(function(b){ b.addEventListener('click', function(){ art=b.getAttribute('data-art')||''; apply(); }); });
   if(search)  search.addEventListener('input',  function(){ term=search.value.trim().toLowerCase(); apply(); });
   if(priceSel)priceSel.addEventListener('change',function(){ var v=priceSel.value; priceMax=(v===''?null:parseFloat(v)); apply(); });
   if(sortSel) sortSel.addEventListener('change', function(){ sortCards(sortSel.value); });
@@ -4101,6 +4536,8 @@ function livento_cc_filter_js() {
       raw.split(',').forEach(function(v){ v=v.trim(); if(v && active[d].indexOf(v)===-1) active[d].push(v); });
     });
     TOGGLES.forEach(function(t){ if(params.get(t)==='1') toggles[t]=true; });
+    var a = params.get('art');
+    if(a && /^[a-z_]+$/.test(a) && root.querySelector('.lvk-art-btn[data-art="'+a+'"]')) art = a;
     Array.prototype.forEach.call(root.querySelectorAll('.lvk-pill[data-dim]'), function(p){
       var d=p.getAttribute('data-dim'); if(active[d] && active[d].indexOf(p.getAttribute('data-value'))>-1) p.classList.add('is-active');
     });
@@ -4232,6 +4669,22 @@ function livento_cc_styles() {
 .lvk-reset{background:none;border:none;color:var(--lvk-lime);text-decoration:underline;cursor:pointer;font-size:.82rem;padding:0;white-space:nowrap}
 .lvk-count{display:none;color:var(--lvk-lime);font-size:.85rem;margin:0 0 12px}
 .lvk-js .lvk-count{display:block}
+/* v1.58.0: Umschalter nach Angebotsart + Abschnitte */
+.lvk-art{display:none;gap:6px;overflow-x:auto;margin:0 0 12px;padding-bottom:4px}
+.lvk-js .lvk-art{display:flex}
+.lvk-art-btn{flex:0 0 auto;white-space:nowrap;background:#fff;border:1px solid #cdd9c2;color:#2b3a2b;border-radius:99px;padding:7px 14px;font-size:.88rem;cursor:pointer;line-height:1.25}
+.lvk-art-btn:hover{border-color:var(--lvk-lime)}
+.lvk-art-btn.is-active{background:var(--lvk-green);border-color:var(--lvk-green);color:#fff}
+.lvk-art-count{opacity:.65;font-size:.75rem;margin-left:3px}
+.lvk-kat-section{margin:0 0 30px}
+.lvk-kat-head{margin:0 0 4px}
+.lvk-kat-title{margin:0;font-size:1.35rem;line-height:1.25;color:var(--lvk-green)}
+.lvk-kat-count{font-size:.85rem;font-weight:400;color:var(--lvk-lime);margin-left:4px}
+.lvk-kat-hint{margin:2px 0 0;color:#475569;font-size:.9rem}
+.lvk-card-kind{margin:0 0 6px;font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--lvk-green)}
+.lvk-badge-pflicht{background:var(--lvk-accent);color:#123}
+.lvk-card-facts{font-size:.85rem;color:#2b3a2b;margin:0}
+.lvk-card-dates{font-size:.82rem;color:#475569;margin:0}
 @media(max-width:860px){
   .lvk-layout{flex-direction:column}
   .lvk-sidebar{position:static;flex:1 1 auto;width:auto;box-sizing:border-box}
@@ -4527,7 +4980,9 @@ function livento_cc_shortcodes() {
                 'format'      => 'Format-Slug(s), Komma-getrennt (z. B. online_live,selbstlern).',
                 'bildungsgutschein' => '1 = nur Kurse, die mit Bildungsgutschein förderfähig sind (AZAV-zugelassen).',
                 'recognition' => 'Anerkennungs-Slug(s), Komma-getrennt (z. B. gesetzlich_anerkannt).',
-                'q'           => 'Titel-Stichwort (z. B. Pflichtfortbildung) – nur Kurse mit diesem Text im Titel.',
+                'art'         => 'Angebotsart: weiterbildung_abschluss, fortbildung, workshop oder selbstlernkurs.',
+                'pflicht'     => '1 = nur Pflichtfortbildungen.',
+                'q'           => 'Titel-Stichwort – nur Kurse mit diesem Text im Titel.',
                 'limit'       => 'Max. Anzahl Karten (Default 6).',
                 'sort'        => 'Sortierung: next_start, popular, newest, rating, most_booked, price_asc, price_desc.',
                 'heading'     => 'Öffentliche Überschrift über dem Grid (optional).',
@@ -4816,6 +5271,8 @@ function livento_cc_admin_page() {
                 'recognition' => $norm_csv($row['recognition'] ?? ''),
                 'q'           => isset($row['q']) ? sanitize_text_field($row['q']) : '',
                 'bildungsgutschein' => (isset($row['bildungsgutschein']) && $row['bildungsgutschein'] === 'yes') ? 'yes' : 'no',
+                'art'         => (isset($row['art']) && isset(livento_cc_kind_labels()[$row['art']])) ? $row['art'] : '',
+                'pflicht'     => (isset($row['pflicht']) && $row['pflicht'] === 'yes') ? 'yes' : 'no',
                 'limit'       => max(0, (int) ($row['limit'] ?? 6)),
                 'sort'        => isset($row['sort']) ? sanitize_key($row['sort']) : 'next_start',
                 'columns'     => max(0, min(4, (int) ($row['columns'] ?? 0))),
@@ -5193,6 +5650,8 @@ function livento_cc_admin_tab_slugs() {
     echo '<tr><td><code>azav</code></td><td><code>1</code></td><td>Nur Kurse, die mit Bildungsgutschein förderfähig sind (AZAV-zugelassen; Schalter „Bildungsgutschein“)</td></tr>';
     echo '<tr><td><code>vatexempt</code></td><td><code>1</code></td><td>Nur USt-freie Kurse</td></tr>';
     echo '<tr><td><code>free</code></td><td><code>1</code></td><td>Nur kostenfreie Kurse</td></tr>';
+    echo '<tr><td><code>pflicht</code></td><td><code>1</code></td><td>Nur Pflichtfortbildungen (v1.58.0)</td></tr>';
+    echo '<tr><td><code>art</code></td><td><code>' . esc_html(implode('</code>, <code>', array_keys(livento_cc_kind_labels()))) . '</code></td><td>Umschalter über dem Katalog auf eine Angebotsart stellen (v1.58.0)</td></tr>';
     echo '</tbody></table>';
 
     foreach (livento_cc_filter_groups() as $g) {
@@ -5463,6 +5922,17 @@ function livento_cc_admin_kursliste_row($idx, $l, $aud_counts, $rec_counts, $fmt
     $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Thema</strong>' . $group('topics', $topic_labels, $topic_counts, $sel_top) . '</p>';
     $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Format</strong>' . $group('format', livento_cc_format_labels(), $fmt_counts, $sel_fmt) . '</p>';
     $h .= '<p style="margin:8px 0 0"><strong style="font-size:12px">Anerkennung</strong>' . $group('recognition', livento_cc_recognition_labels(), $rec_counts, $sel_rec) . '</p>';
+    // v1.58.0: Angebotsart + Pflichtfortbildung
+    $art_counts = livento_cc_art_counts();
+    $art_sel    = isset($l['art']) ? (string) $l['art'] : '';
+    $art_html   = '<option value="">Alle Angebotsarten</option>';
+    foreach (livento_cc_kind_labels() as $slug => $label) {
+        $art_html .= '<option value="' . esc_attr($slug) . '"' . ($slug === $art_sel ? ' selected' : '') . '>'
+            . esc_html($label) . ' (' . (int) ($art_counts[$slug] ?? 0) . ')</option>';
+    }
+    $h .= '<label style="display:block;margin-top:10px">Angebotsart<br><select name="' . $n('art') . '">' . $art_html . '</select></label>';
+    $pf_on = (isset($l['pflicht']) && $l['pflicht'] === 'yes');
+    $h .= '<label style="display:block;margin-top:10px"><input type="checkbox" name="' . $n('pflicht') . '" value="yes"' . ($pf_on ? ' checked' : '') . '> <strong>Nur Pflichtfortbildungen</strong></label>';
     $h .= '<label style="display:block;margin-top:10px;max-width:560px">Titel-Stichwort <span class="description">(optional – nur Kurse, deren Titel diesen Text enthält)</span><br><input type="text" name="' . $n('q') . '" value="' . esc_attr($q) . '" class="regular-text" placeholder="z. B. Pflichtfortbildung"></label>';
     $bg_on = (isset($l['bildungsgutschein']) && $l['bildungsgutschein'] === 'yes');
     $h .= '<label style="display:block;margin-top:10px"><input type="checkbox" name="' . $n('bildungsgutschein') . '" value="yes"' . ($bg_on ? ' checked' : '') . '> <strong>Nur förderfähig mit Bildungsgutschein</strong> <span class="description">(AZAV-zugelassene Kurse)</span></label>';

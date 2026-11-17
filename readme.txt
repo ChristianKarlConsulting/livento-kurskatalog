@@ -3,12 +3,20 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.57.0
+Stable tag: 1.58.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.58.0 =
+* Katalog nach Angebotsart gegliedert (Campus Connect v4.47.0): Umschalter ueber der Liste - Alle, Weiterbildungen mit Abschluss, Fort- und Pflichtfortbildungen, Workshops und Kompaktkurse, Selbstlernkurse (?art=...). "Alle" zeigt eigene Abschnitte mit Ueberschrift.
+* Eine Karte je Kurs: Termine mit gleichem Titel stehen auf einer Karte unter "Weitere Termine"; jeder Termin behaelt seine Detailseite.
+* Karte: Angebotsart, Umfang mit Laufzeit, Abschluss, Zeitmodell, Abzeichen Pflichtfortbildung.
+* Filter: Umfang nach Gesamtstunden (statt Sitzungsdauer), Zeitmodell (tagsueber/abends/Wochenende), Schalter Pflichtfortbildung (?pflicht=1). Typ, CarePath-Level, Methodik und Verfuegbarkeit nicht mehr in der Seitenleiste (URL-Parameter wirken weiter).
+* Kurslisten: Kriterien "Angebotsart" (art=...) und "Nur Pflichtfortbildungen" (pflicht="1").
+* Kennt die Datenbank die neuen Spalten noch nicht, faellt der Abruf auf die bisherige Spaltenliste zurueck und die Angebotsart wird aus dem Umfang vorgeschlagen.
 
 = 1.57.0 =
 * Neue Supabase-Schlüssel: Das Feld „Supabase anon-Key“ nimmt jetzt auch den Publishable Key (sb_publishable_…) an. Der bisherige anon-Key (eyJ…) gilt weiter, bis Supabase ihn abschaltet. Secret Keys (sb_secret_…) werden abgewiesen.
