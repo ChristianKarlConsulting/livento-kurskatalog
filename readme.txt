@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.58.0
+Stable tag: 1.58.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.58.1 =
+* Umschalter ohne Scrollleiste: kurze Beschriftungen (Weiterbildungen mit Abschluss, Fortbildungen, Workshops, Selbstlernkurse) passen auf dem Desktop in eine Zeile; auf schmalen Bildschirmen Umbruch statt seitlichem Scrollen. Die Abschnittsueberschriften behalten die langen Namen, die Knoepfe zeigen sie als Tooltip.
 
 = 1.58.0 =
 * Katalog nach Angebotsart gegliedert (Campus Connect v4.47.0): Umschalter ueber der Liste - Alle, Weiterbildungen mit Abschluss, Fort- und Pflichtfortbildungen, Workshops und Kompaktkurse, Selbstlernkurse (?art=...). "Alle" zeigt eigene Abschnitte mit Ueberschrift.

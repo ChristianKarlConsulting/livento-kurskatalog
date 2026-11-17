@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.58.0
+ * Version:           1.58.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,10 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.58.1: Umschalter ohne Scrollleiste: kurze Beschriftungen (Fortbildungen, Workshops) passen auf
+ *          dem Desktop in eine Zeile, schmal bricht er um statt seitlich zu scrollen (unter Windows stand
+ *          sonst eine Scrollleiste darunter und der erste Knopf war angeschnitten). Abschnitte unveraendert.
  *
  * v1.58.0: Katalog nach Angebotsart gegliedert (Campus Connect v4.47.0, #282–#285). Anlass: Feedback,
  *          dass Live-Online-Kurse und weitere Programme ohne Trennung nach Abschluss oder Dauer in
@@ -685,6 +689,17 @@ function livento_cc_kind_labels() {
         'weiterbildung_abschluss' => 'Weiterbildungen mit Abschluss',
         'fortbildung'             => 'Fort- und Pflichtfortbildungen',
         'workshop'                => 'Workshops und Kompaktkurse',
+        'selbstlernkurs'          => 'Selbstlernkurse',
+    );
+}
+
+/** v1.58.1: Kurzform fuer den Umschalter — passt auf dem Desktop in eine Zeile.
+ *  Die Abschnittsueberschriften behalten die Langform aus livento_cc_kind_labels(). */
+function livento_cc_kind_short() {
+    return array(
+        'weiterbildung_abschluss' => 'Weiterbildungen mit Abschluss',
+        'fortbildung'             => 'Fortbildungen',
+        'workshop'                => 'Workshops',
         'selbstlernkurs'          => 'Selbstlernkurse',
     );
 }
@@ -2861,8 +2876,8 @@ function livento_cc_render_list($offerings, $sort = 'next_start', $limit = 0, $s
     // Umschalter (Zahlen = Kurse; JS aktualisiert sie bei Filteraenderungen)
     $sw  = '<div class="lvk-art" role="group" aria-label="Angebotsart">';
     $sw .= '<button type="button" class="lvk-art-btn is-active" data-art="" aria-pressed="true">Alle <span class="lvk-art-count">' . count($groups) . '</span></button>';
-    foreach ($labels as $k => $lbl) {
-        $sw .= '<button type="button" class="lvk-art-btn" data-art="' . esc_attr($k) . '" aria-pressed="false">' . esc_html($lbl)
+    foreach (livento_cc_kind_short() as $k => $lbl) {
+        $sw .= '<button type="button" class="lvk-art-btn" data-art="' . esc_attr($k) . '" aria-pressed="false" title="' . esc_attr($labels[$k]) . '">' . esc_html($lbl)
             . ' <span class="lvk-art-count">' . count($sections[$k]) . '</span></button>';
     }
     $sw .= '</div>';
@@ -4670,7 +4685,7 @@ function livento_cc_styles() {
 .lvk-count{display:none;color:var(--lvk-lime);font-size:.85rem;margin:0 0 12px}
 .lvk-js .lvk-count{display:block}
 /* v1.58.0: Umschalter nach Angebotsart + Abschnitte */
-.lvk-art{display:none;gap:6px;overflow-x:auto;margin:0 0 12px;padding-bottom:4px}
+.lvk-art{display:none;flex-wrap:wrap;gap:6px;margin:0 0 12px}
 .lvk-js .lvk-art{display:flex}
 .lvk-art-btn{flex:0 0 auto;white-space:nowrap;background:#fff;border:1px solid #cdd9c2;color:#2b3a2b;border-radius:99px;padding:7px 14px;font-size:.88rem;cursor:pointer;line-height:1.25}
 .lvk-art-btn:hover{border-color:var(--lvk-lime)}
