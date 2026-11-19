@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.58.1
+ * Version:           1.59.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,14 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.59.0: Sterne sichtbar und erst ab 5 Bewertungen (LIVENTO_CC_RATING_MIN). Vorher stand die
+ *          Bewertung nur im Schema (AggregateRating, z. B. „5,0 aus 1 Bewertung“), auf der Seite
+ *          selbst nirgends — Google verlangt, dass markierte Bewertungen sichtbar sind. Jetzt eine
+ *          Quelle (livento_cc_rating) fuer Schema, Detailseite, Karte und Sortierung „Beste
+ *          Bewertung“; darunter keine Sterne, kein Schema, Sortierung behandelt den Kurs als
+ *          unbewertet. Auf der Detailseite der Hinweis nach § 5b Abs. 3 UWG, wie Bewertungen
+ *          zustande kommen (Campus Connect prueft seit v4.51.1 den Platz im Kurs).
  *
  * v1.58.1: Umschalter ohne Scrollleiste: kurze Beschriftungen (Fortbildungen, Workshops) passen auf
  *          dem Desktop in eine Zeile, schmal bricht er um statt seitlich zu scrollen (unter Windows stand
@@ -569,6 +577,9 @@ if (!defined('LIVENTO_CC_UPDATE_TOKEN')) {
 
 // 1 Unterrichtseinheit (UE) in Minuten — fuer die Dauer-Anzeige.
 define('LIVENTO_CC_UE_MINUTES', 45);
+
+// v1.59.0: Sterne (sichtbar und im Schema) erst ab dieser Zahl freigegebener Bewertungen.
+define('LIVENTO_CC_RATING_MIN', 5);
 
 /* ============================================================
  * 2. Label-Maps (gespiegelt aus src/lib/courseFilterLabels.ts)
@@ -2134,16 +2145,56 @@ function livento_cc_jsonld_course($o, $url) {
     if (!empty($o['public_image_url'])) {
         $schema['image'] = $o['public_image_url'];
     }
-    if (isset($o['rating_avg']) && $o['rating_avg'] !== null && (int) ($o['rating_count'] ?? 0) > 0) {
+    // v1.59.0: nur, wenn die Sterne auch sichtbar auf der Seite stehen (gleiche Quelle).
+    $rating = livento_cc_rating($o);
+    if ($rating !== null) {
         $schema['aggregateRating'] = array(
             '@type'       => 'AggregateRating',
-            'ratingValue' => number_format((float) $o['rating_avg'], 2, '.', ''),
-            'reviewCount' => (int) $o['rating_count'],
+            'ratingValue' => number_format($rating['avg'], 2, '.', ''),
+            'reviewCount' => $rating['count'],
             'bestRating'  => 5,
             'worstRating' => 1,
         );
     }
     return $schema;
+}
+
+/**
+ * v1.59.0: Freigegebene Bewertung eines Angebots — oder null unter LIVENTO_CC_RATING_MIN.
+ * Einzige Quelle fuer Schema, Detailseite, Karte und Sortierung: Was im Schema steht,
+ * steht auch sichtbar auf der Seite (Google-Richtlinie fuer Bewertungs-Markup).
+ */
+function livento_cc_rating($o) {
+    $count = (int) ($o['rating_count'] ?? 0);
+    if (!isset($o['rating_avg']) || $o['rating_avg'] === null || $o['rating_avg'] === '' || $count < LIVENTO_CC_RATING_MIN) {
+        return null;
+    }
+    return array('avg' => (float) $o['rating_avg'], 'count' => $count);
+}
+
+/**
+ * v1.59.0: Sterne mit Wert und Anzahl. $hinweis = true ergaenzt auf der Detailseite den
+ * Hinweis nach § 5b Abs. 3 UWG, wie Bewertungen zustande kommen.
+ */
+function livento_cc_rating_html($rating, $hinweis = false) {
+    if ($rating === null) {
+        return '';
+    }
+    $wert   = number_format($rating['avg'], 1, ',', '');
+    $anzahl = $rating['count'] . ' ' . ($rating['count'] === 1 ? 'Bewertung' : 'Bewertungen');
+    $breite = max(0, min(100, round($rating['avg'] / 5 * 100)));
+    $out  = '<div class="lvk-rating">';
+    $out .= '<span class="lvk-stars" role="img" aria-label="' . esc_attr($wert . ' von 5 Sternen') . '">'
+          . '<span class="lvk-stars-fill" style="width:' . (int) $breite . '%"></span></span>';
+    $out .= '<span class="lvk-rating-val">' . esc_html($wert) . '</span>';
+    $out .= '<span class="lvk-rating-count">' . esc_html($anzahl) . '</span>';
+    if ($hinweis) {
+        $out .= '<details class="lvk-rating-info"><summary>Wie entstehen die Bewertungen?</summary>'
+              . '<p>Bewerten können nur Personen, die im Kurs eingeschrieben sind oder ihn abgeschlossen haben, '
+              . 'je Kurs einmal. Das prüft unsere Lernplattform Campus Connect. Bewertungen werden vor der '
+              . 'Veröffentlichung geprüft. Der Wert ist der Durchschnitt aller veröffentlichten Bewertungen.</p></details>';
+    }
+    return $out . '</div>';
 }
 
 function livento_cc_jsonld_list($offerings) {
@@ -2930,7 +2981,12 @@ function livento_cc_sort_offerings($offerings, $sort) {
             });
             break;
         case 'rating':
-            usort($offerings, function ($a, $b) { return (float) ($b['rating_avg'] ?? -1) <=> (float) ($a['rating_avg'] ?? -1); });
+            // v1.59.0: unter der Mindestzahl gilt ein Kurs als unbewertet (wie die Anzeige).
+            usort($offerings, function ($a, $b) {
+                $ra = livento_cc_rating($a);
+                $rb = livento_cc_rating($b);
+                return ($rb !== null ? $rb['avg'] : -1) <=> ($ra !== null ? $ra['avg'] : -1);
+            });
             break;
         case 'most_booked':
             usort($offerings, function ($a, $b) { return (int) ($b['booking_count'] ?? 0) - (int) ($a['booking_count'] ?? 0); });
@@ -3224,7 +3280,7 @@ function livento_cc_render_card($o, $members = array()) {
           . ' data-start="' . esc_attr($min_start) . '"'
           . ' data-published="' . esc_attr((string) ($o['published_at'] ?? '')) . '"'
           . ' data-booked="' . (int) $booked . '"'
-          . ' data-rating="' . esc_attr((string) ($o['rating_avg'] ?? '')) . '"'
+          . ' data-rating="' . esc_attr(($r = livento_cc_rating($o)) !== null ? (string) $r['avg'] : '') . '"'
           . ' data-featured="' . (int) $featured . '"'
           . ' data-text="' . esc_attr($data_text) . '"';
 
@@ -3254,6 +3310,7 @@ function livento_cc_render_card($o, $members = array()) {
     }
     // v1.58.0: h3 — die Abschnitte des Katalogs tragen jetzt h2.
     $out .= '<h3 class="lvk-card-title">' . $title_html . '</h3>';
+    $out .= livento_cc_rating_html(livento_cc_rating($o));
     if ($desc) {
         $out .= '<p class="lvk-card-desc">' . esc_html($desc) . '</p>';
     }
@@ -3682,6 +3739,7 @@ function livento_cc_render_detail($o) {
     $out = '<div class="lvk lvk-detail">';
     $out .= '<p class="lvk-back"><a href="' . esc_url(livento_cc_list_url()) . '">← Alle Kurse</a></p>';
     $out .= '<h1 class="lvk-detail-title">' . esc_html($o['title']) . '</h1>';
+    $out .= livento_cc_rating_html(livento_cc_rating($o), true);
 
     if (!empty($o['course_number'])) {
         $out .= '<p class="lvk-coursenr"><strong>Kurs-Nr.</strong> ' . esc_html($o['course_number']) . '</p>';
@@ -4742,6 +4800,15 @@ function livento_cc_styles() {
 .lvk-detail{max-width:760px;margin:0 auto}
 .lvk-detail-title{color:var(--lvk-green);font-size:2rem;line-height:1.2;margin:.2em 0}
 .lvk-coursenr{color:var(--lvk-lime);font-size:.9rem;margin:0 0 12px}
+.lvk-rating{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:4px 0 10px;font-size:.95rem;color:#444}
+.lvk-stars{position:relative;display:inline-block;width:5.5em;height:1.1em;background:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23d6d6d6%27 d=%27M12 2l2.9 6.9 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7L2 9.5l7.1-.6z%27/%3E%3C/svg%3E") repeat-x left center/1.1em 1.1em}
+.lvk-stars-fill{position:absolute;inset:0 auto 0 0;background:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23e3a008%27 d=%27M12 2l2.9 6.9 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7L2 9.5l7.1-.6z%27/%3E%3C/svg%3E") repeat-x left center/1.1em 1.1em}
+.lvk-rating-val{font-weight:700;color:#222}
+.lvk-rating-count{color:#666}
+.lvk-rating-info{flex-basis:100%;font-size:.85rem;color:#555}
+.lvk-rating-info summary{cursor:pointer;color:var(--lvk-green)}
+.lvk-rating-info p{margin:6px 0 0}
+.lvk-card .lvk-rating{font-size:.85rem;margin:2px 0 6px}
 .lvk-hero{max-width:100%;height:auto;border-radius:8px;margin:16px 0}
 .lvk-lead{font-size:1.1rem;color:#444}
 .lvk-facts{background:#f5f5f5;border-radius:8px;padding:16px;margin:24px 0}

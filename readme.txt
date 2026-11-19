@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.58.1
+Stable tag: 1.59.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.59.0 =
+* Sterne sichtbar und erst ab 5 Bewertungen: Detailseite und Karte zeigen Sterne, Schnitt und Anzahl. Unter 5 Bewertungen keine Sterne und kein Bewertungs-Schema mehr (vorher stand die Bewertung nur unsichtbar im Schema, z. B. 5,0 aus 1 Bewertung - Google verlangt sichtbare Bewertungen).
+* Detailseite: aufklappbarer Hinweis "Wie entstehen die Bewertungen?" (nur Teilnehmende mit Platz im Kurs, je Kurs einmal; Pruefung vor Veroeffentlichung) - Hinweispflicht nach Paragraf 5b Abs. 3 UWG.
+* Sortierung "Beste Bewertung" behandelt Kurse unter 5 Bewertungen als unbewertet.
 
 = 1.58.1 =
 * Umschalter ohne Scrollleiste: kurze Beschriftungen (Weiterbildungen mit Abschluss, Fortbildungen, Workshops, Selbstlernkurse) passen auf dem Desktop in eine Zeile; auf schmalen Bildschirmen Umbruch statt seitlichem Scrollen. Die Abschnittsueberschriften behalten die langen Namen, die Knoepfe zeigen sie als Tooltip.
