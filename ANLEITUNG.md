@@ -150,6 +150,16 @@ Gibt es ein Thema in mehreren Formen, etwa als Tageskurs, Abendkurs und Selbstle
 - Haben zwei Titel einer Gruppe dieselbe Form (gleiche Angebotsart, gleiches Format, gleiches Zeitmodell, beide Selbstlernkurs oder beide auf Anfrage), erscheint nur eine Karte. Die eigene Seite hat dabei Vorrang, sonst der nächste Start. Bleibt von einer Gruppe nur eine Form übrig, entfällt der Abschnitt.
 - Die Kursfamilien in Campus Connect werden dafür bewusst nicht genutzt. Sie fassen Durchgänge desselben Lehrgangs zusammen, nicht verschiedene Formen eines Themas.
 
+### Für dein Team: Inhouse-Anfrage (ab 1.67.0)
+
+Nach „Förderung mit Bildungsgutschein“ steht auf der Kursdetailseite der Abschnitt **„Für dein Team“**. Gepflegt wird dafür nichts.
+
+- **Termin-Kurse und Weiterbildungen** (auch mit Bildungsgutschein): Text, drei Vorteile und der Button „Inhouse-Angebot anfragen“. Er klappt ein kurzes Formular auf: Einrichtung, Teilnehmende, Name, E-Mail, Telefon, Durchführung (vor Ort oder live online), Wunschzeitraum und Nachricht. Bei AZAV-Kursen gibt es zusätzlich den Hinweis auf eine mögliche Förderung nach § 82 SGB III und die Checkbox „Bitte prüft, ob eine Förderung infrage kommt“. Ein Link auf `…/kurse/<slug>/#inhouse` öffnet das Formular direkt.
+- **Die Anfrage landet in Campus Connect** unter *Akquise → Inhouse-Anfragen*, mit dem Kurs als „Bezug zu Kurs“, und geht wie gewohnt an GoHighLevel. Kurs-Nr., Durchführung, Wunschzeitraum, Förderwunsch und die Kursseite stehen vorn in der Nachricht. Die anfragende Person bekommt eine Bestätigung per E-Mail.
+- **Selbstlernkurse:** statt des Formulars ein Hinweis mit Link auf „E-Learning für Einrichtungen“ (`/e-learning/`).
+- **Anfragekurse:** kein eigener Abschnitt. Ihr Formular „Kurs anfragen“ hat schon die Option „Für meine Einrichtung“.
+- Spam-Schutz wie bei der Kursanfrage: ein unsichtbares Feld für Bots, höchstens 5 Anfragen je IP und Stunde, eine je E-Mail und Kurs am Tag.
+
 ---
 
 ## 6. Kurskatalog & Filter

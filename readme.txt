@@ -3,12 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.66.0
+Stable tag: 1.67.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.67.0 =
+* Kursdetailseite: neuer Abschnitt "Fuer dein Team" mit Inhouse-Anfrage direkt am Kurs (Termin-Kurse und Weiterbildungen, auch mit Bildungsgutschein). Die Anfrage landet in Campus Connect unter Akquise > Inhouse-Anfragen mit dem Kurs als Bezug und geht an GoHighLevel. Bei AZAV-Kursen Hinweis auf Foerderung nach Paragraf 82 SGB III. Link mit #inhouse oeffnet das Formular.
+* Selbstlernkurse: Hinweis auf E-Learning fuer Einrichtungen. Anfragekurse unveraendert (ihre Kursanfrage hat "Fuer meine Einrichtung").
 
 = 1.66.0 =
 * Kursdetailseite: neuer Abschnitt "Welche Form passt zu dir?" fuer Themen, die es in mehreren Formen gibt (z. B. Tageskurs, Abendkurs, Selbstlernkurs). Je Form eine Karte mit Angebotsart, Format, Zeitmodell, Umfang, Start, Preis und Abschluss; die eigene Seite ist markiert, die anderen verlinken. Gruppen unter Einstellungen > Formvarianten (eine Gruppe je Zeile, Titel mit "|"), Vorgabe mit 5 Gruppen.
