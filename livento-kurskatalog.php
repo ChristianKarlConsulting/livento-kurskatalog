@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.60.0
+ * Version:           1.61.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,15 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.61.0: Ticketseite — Kurse nach Themenbereichen als Kacheln (Campus Connect v4.57.0, #295). Vorher
+ *          gruppierte die Liste nach Kursthemen (Website-Filter), die an Selbstlernkurse fast nie
+ *          vergeben sind: 268 von 273 Kursen standen unter „Weitere Themen“. Jetzt je Themenbereich
+ *          (wie „Meine Kurse“, topic_area aus public_bundle_courses) eine Kachel mit Kursanzahl im
+ *          Kartenstil der E-Learning-Seite (elt-paket), Klick oeffnet alle Kurse des Bereichs, Suchfeld
+ *          ueber alle Bereiche, Rechtsgrundlagen nur als Kuerzel (volle Fassung als Tooltip). Ohne
+ *          JavaScript stehen alle Bereiche mit allen Kursen untereinander (indexierbar). Ohne Bereich:
+ *          „Weitere Kurse“. Liefert Campus Connect noch keinen Bereich, gibt es nur die Liste.
  *
  * v1.60.0: Sterne auf der Ticketseite ([livento_tarif]): Schnitt aller veroeffentlichten Bewertungen
  *          der im Ticket enthaltenen Kurse, gewichtet nach Anzahl, gleiche Schwelle (5) und gleicher
@@ -7424,6 +7433,208 @@ function livento_cc_course_norms_line($course) {
     return $teile ? implode(' · ', $teile) : '';
 }
 
+/**
+ * v1.61.0: Rechtsgrundlagen kurz — nur die Kuerzel, die volle Angabe (Titel, Fassung) als
+ * Tooltip. Die lange Form (livento_cc_course_norms_line) bleibt fuer die Produktseite.
+ */
+function livento_cc_course_norms_short($course) {
+    if (empty($course['norms']) || !is_array($course['norms'])) {
+        return '';
+    }
+    $teile = array();
+    foreach ($course['norms'] as $n) {
+        if (empty($n['key'])) {
+            continue;
+        }
+        $voll = trim(implode(' ', array_filter(array(
+            (string) ($n['title'] ?? ''),
+            (string) ($n['edition_label'] ?? ''),
+        ))));
+        $teile[] = $voll !== ''
+            ? '<abbr title="' . esc_attr($voll) . '">' . esc_html($n['key']) . '</abbr>'
+            : esc_html($n['key']);
+    }
+    return implode(' · ', $teile);
+}
+
+/**
+ * v1.61.0: Kurse eines Tickets nach Themenbereich (Campus Connect v4.57.0: topic_area,
+ * topic_area_sort aus public_bundle_courses). Reihenfolge wie in „Meine Kurse“, Kurse darin
+ * alphabetisch; ohne Bereich unter „Weitere Kurse“ am Ende.
+ * Rueckgabe: Liste von array('key', 'label', 'courses'), dazu Anzahl echter Bereiche.
+ */
+function livento_cc_ticket_areas($courses) {
+    $groups = array();
+    foreach ((array) $courses as $c) {
+        $name = trim((string) ($c['topic_area'] ?? ''));
+        if ($name === '') {
+            $key = '_weitere'; $label = 'Weitere Kurse'; $sort = PHP_INT_MAX;
+        } else {
+            $key = sanitize_title($name); $label = $name; $sort = (int) ($c['topic_area_sort'] ?? 0);
+        }
+        if (!isset($groups[$key])) {
+            $groups[$key] = array('key' => $key, 'label' => $label, 'sort' => $sort, 'courses' => array());
+        }
+        $groups[$key]['courses'][] = $c;
+    }
+    $alpha = function ($a, $b) {
+        return strcasecmp(remove_accents((string) $a), remove_accents((string) $b));
+    };
+    foreach ($groups as &$g) {
+        usort($g['courses'], function ($x, $y) use ($alpha) { return $alpha($x['title'], $y['title']); });
+    }
+    unset($g);
+    uasort($groups, function ($x, $y) use ($alpha) {
+        return $x['sort'] !== $y['sort'] ? ($x['sort'] < $y['sort'] ? -1 : 1) : $alpha($x['label'], $y['label']);
+    });
+    $echte = count(array_filter(array_keys($groups), function ($k) { return $k !== '_weitere'; }));
+    return array(array_values($groups), $echte);
+}
+
+/** v1.61.0: Eine Kurszeile der Ticketliste (Titel, Kennzahlen, Rechtsgrundlagen kurz). */
+function livento_cc_ticket_course_li($course) {
+    $teile = array();
+    $std = rtrim(rtrim(number_format((float) ($course['total_hours'] ?? 0), 1, ',', '.'), '0'), ',');
+    $teile[] = esc_html($std . ' ' . livento_cc_hours_unit_label($course['hours_unit'] ?? ''));
+    $teile[] = esc_html((int) ($course['module_count'] ?? 0) . ' Module');
+    $teile[] = esc_html((int) ($course['lesson_count'] ?? 0) . ' Lektionen');
+    if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) {
+        $teile[] = '<strong>Zertifikat</strong>';
+    }
+    $nr   = !empty($course['course_number']) ? '<em>' . esc_html($course['course_number']) . '</em> · ' : '';
+    // Roh lassen: Das Skript normalisiert Suchtext und Kurstext gleich. remove_accents() macht auf
+    // deutschen Seiten aus „ä“ „ae“, die Eingabe „Prävention“ faende „Praevention“ dann nicht.
+    $such = ($course['title'] ?? '') . ' ' . ($course['course_number'] ?? '');
+    $out  = '<li data-text="' . esc_attr($such) . '">';
+    $out .= '<span class="lv-kb__ct">' . esc_html($course['title'] ?? '') . '</span>';
+    $out .= '<span class="lv-kb__cm">' . $nr . implode(' · ', $teile) . '</span>';
+    $normen = livento_cc_course_norms_short($course);
+    if ($normen !== '') {
+        $out .= '<span class="lv-kb__cn">Grundlage: ' . $normen . '</span>';
+    }
+    return $out . '</li>';
+}
+
+/**
+ * v1.61.0: Ticket-Kursliste als Kacheln je Themenbereich (Stil der E-Learning-Seite, elt-paket).
+ * Ohne JavaScript stehen alle Bereiche mit allen Kursen untereinander (lesbar, indexierbar),
+ * die Kacheln springen per Anker dorthin. Mit JavaScript (livento_cc_ticket_areas_js) oeffnet
+ * eine Kachel ihren Bereich, das Suchfeld filtert ueber alle Bereiche.
+ */
+function livento_cc_ticket_areas_html($courses, $bundle, $index) {
+    list($groups, $echte) = livento_cc_ticket_areas($courses);
+    $gesamt = count((array) $courses);
+    $pre    = 'lv-kb-' . (int) $index . '-';
+    $name   = (string) ($bundle['name'] ?? 'Ticket');
+
+    $out  = '<div class="lv-kb" data-lv-kb>';
+    $out .= '<span class="lv-kb__eyebrow">Was steckt im ' . esc_html($name) . '?</span>';
+    $out .= '<h3 class="lv-kb__h">' . esc_html($gesamt . ' Kurse'
+          . ($echte > 0 ? ' in ' . $echte . ' Themenbereich' . ($echte === 1 ? '' : 'en') : '')) . '</h3>';
+    $out .= '<p class="lv-kb__lead">' . ($echte > 0
+          ? 'Wähle einen Bereich und sieh alle Kurse darin – jeder mit Wissenstest und Zertifikat.'
+          : 'Alle Kurse im Überblick – jeder mit Wissenstest und Zertifikat.') . '</p>';
+    $out .= '<div class="lv-kb__search" hidden><input type="search" placeholder="Kurs im Ticket suchen …"'
+          . ' aria-label="Kurs im Ticket suchen" data-lv-kb-q></div>';
+
+    // Kacheln nur, wenn es mehr als eine Gruppe gibt (sonst reicht die Liste).
+    if (count($groups) > 1) {
+        $out .= '<div class="lv-kb__grid">';
+        foreach ($groups as $g) {
+            $n = count($g['courses']);
+            $out .= '<a class="lv-paket lv-kb__tile" href="#' . esc_attr($pre . $g['key']) . '"'
+                  . ' data-lv-kb-tile="' . esc_attr($g['key']) . '" aria-controls="' . esc_attr($pre . $g['key']) . '" aria-expanded="false">'
+                  . '<span class="lv-kb__t">' . esc_html($g['label']) . '</span>'
+                  . '<span class="lv-paket__tag"><span data-lv-kb-n>' . (int) $n . '</span> ' . ($n === 1 ? 'Kurs' : 'Kurse') . '</span>'
+                  . '<span class="lv-paket__btn" data-lv-kb-btn>Kurse ansehen →</span>'
+                  . '</a>';
+        }
+        $out .= '</div>';
+    }
+
+    $out .= '<div class="lv-kb__panels">';
+    foreach ($groups as $g) {
+        $n = count($g['courses']);
+        $out .= '<section class="lv-kb__panel" id="' . esc_attr($pre . $g['key']) . '" data-lv-kb-panel="' . esc_attr($g['key']) . '">';
+        $out .= '<h4>' . esc_html($g['label']) . '</h4>';
+        $out .= '<p class="lv-paket__tag">' . (int) $n . ' ' . ($n === 1 ? 'Kurs' : 'Kurse') . ' · alphabetisch</p>';
+        $out .= '<ul class="lv-kb__list">';
+        foreach ($g['courses'] as $c) {
+            $out .= livento_cc_ticket_course_li($c);
+        }
+        $out .= '</ul></section>';
+    }
+    $out .= '</div>';
+    $out .= '<p class="lv-kb__leer" hidden>Kein Kurs gefunden. Versuch es mit einem anderen Begriff.</p>';
+    $out .= '</div>';
+    return $out . livento_cc_ticket_areas_js();
+}
+
+/** v1.61.0: Bedienung der Kacheln und der Suche (einmal je Seite, ohne Abhaengigkeiten). */
+function livento_cc_ticket_areas_js() {
+    static $done = false;
+    if ($done) {
+        return '';
+    }
+    $done = true;
+    return <<<'JS'
+<script>
+(function(){
+  function norm(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ß/g,'ss'); }
+  document.querySelectorAll('[data-lv-kb]').forEach(function(root){
+    root.classList.add('lv-kb--js');
+    var tiles  = [].slice.call(root.querySelectorAll('[data-lv-kb-tile]'));
+    var panels = [].slice.call(root.querySelectorAll('[data-lv-kb-panel]'));
+    var input  = root.querySelector('[data-lv-kb-q]');
+    var leer   = root.querySelector('.lv-kb__leer');
+    var offen  = tiles.length ? null : (panels[0] ? panels[0].getAttribute('data-lv-kb-panel') : null);
+    root.querySelector('.lv-kb__search').hidden = false;
+
+    function zeigen(){
+      var q = norm(input.value.trim()), treffer = 0;
+      panels.forEach(function(p){
+        var key = p.getAttribute('data-lv-kb-panel'), n = 0;
+        p.querySelectorAll('li').forEach(function(li){
+          var ok = !q || norm(li.getAttribute('data-text')).indexOf(q) !== -1;
+          li.hidden = !ok; if (ok) { n++; }
+        });
+        treffer += n;
+        p.hidden = q ? n === 0 : key !== offen;
+        var t = root.querySelector('[data-lv-kb-tile="' + key + '"]');
+        if (t) {
+          var gesamt = p.querySelectorAll('li').length;
+          t.querySelector('[data-lv-kb-n]').textContent = q ? n : gesamt;
+          t.classList.toggle('lv-kb__tile--leer', !!q && n === 0);
+          var auf = !q && key === offen;
+          t.classList.toggle('lv-paket--hi', auf);
+          t.setAttribute('aria-expanded', auf ? 'true' : 'false');
+          t.querySelector('[data-lv-kb-btn]').textContent = auf ? 'Ausgewählt ↓' : 'Kurse ansehen →';
+        }
+      });
+      leer.hidden = !q || treffer > 0;
+    }
+
+    tiles.forEach(function(t){
+      t.addEventListener('click', function(e){
+        e.preventDefault();
+        var key = t.getAttribute('data-lv-kb-tile');
+        if (input.value) { input.value = ''; }
+        offen = offen === key ? null : key;
+        zeigen();
+        if (offen) {
+          var p = root.querySelector('[data-lv-kb-panel="' + key + '"]');
+          if (p && p.getBoundingClientRect().top > window.innerHeight * 0.75) { p.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+        }
+      });
+    });
+    input.addEventListener('input', zeigen);
+    zeigen();
+  });
+})();
+</script>
+JS;
+}
+
 /** Familie per Schluessel oder Slug. */
 function livento_cc_find_family($key_or_slug) {
     foreach (livento_cc_get_tariffs() as $family) {
@@ -8075,18 +8286,6 @@ add_shortcode('livento_tarif', function ($atts) {
             $price   = livento_cc_calc_price($plan, $users);
             $courses = livento_cc_get_bundle_courses($bundle['id']);
 
-            // Kurse nach Thema gruppieren; ohne Thema sammeln wir sie unter "Weitere Themen".
-            $groups = array();
-            foreach ((array) $courses as $course) {
-                $topics = !empty($course['topics']) && is_array($course['topics']) ? $course['topics'] : array('_sonstige');
-                $key    = $topics[0];
-                if (!isset($groups[$key])) {
-                    $groups[$key] = array();
-                }
-                $groups[$key][] = $course;
-            }
-            ksort($groups);
-
             $lessons = 0;
             foreach ((array) $courses as $course) {
                 $lessons += (int) $course['lesson_count'];
@@ -8152,40 +8351,10 @@ add_shortcode('livento_tarif', function ($atts) {
                 <p class="lv-variant__note"><?php echo esc_html($bundle['public_note']); ?></p>
             <?php endif; ?>
 
+            <?php // v1.61.0: Kacheln je Themenbereich statt einer Liste nach Kursthemen (dort standen
+                  // 268 von 273 Kursen unter „Weitere Themen“). Stil der E-Learning-Seite (elt-paket). ?>
             <?php if (!empty($courses)) : ?>
-                <details class="lv-courses" <?php echo $index === 0 ? 'open' : ''; ?>>
-                    <summary>Enthaltene Kurse ansehen (<?php echo esc_html(count($courses)); ?>)</summary>
-                    <?php foreach ($groups as $topic => $items) : ?>
-                        <div class="lv-courses__group">
-                            <h4><?php echo esc_html(livento_cc_topic_label($topic)); ?> <span>(<?php echo esc_html(count($items)); ?>)</span></h4>
-                            <ul>
-                                <?php foreach ($items as $course) : ?>
-                                    <li>
-                                        <span class="lv-course__title"><?php echo esc_html($course['title']); ?></span>
-                                        <span class="lv-course__meta">
-                                            <?php if (!empty($course['course_number'])) : ?>
-                                                <em><?php echo esc_html($course['course_number']); ?></em> ·
-                                            <?php endif; ?>
-                                            <?php echo esc_html(rtrim(rtrim(number_format((float) $course['total_hours'], 1, ',', '.'), '0'), ',')); ?>
-                                            <?php echo esc_html(livento_cc_hours_unit_label($course['hours_unit'])); ?> ·
-                                            <?php echo esc_html((int) $course['module_count']); ?> Module ·
-                                            <?php echo esc_html((int) $course['lesson_count']); ?> Lektionen
-                                            <?php if (!empty($course['auto_certify']) || !empty($course['certificate_title'])) : ?>
-                                                · <strong>Zertifikat</strong>
-                                            <?php endif; ?>
-                                        </span>
-                                        <?php $normen = livento_cc_course_norms_line($course); ?>
-                                        <?php if ($normen) : ?>
-                                            <span class="lv-course__norms">
-                                                Grundlage: <?php echo wp_kses_post($normen); ?>
-                                            </span>
-                                        <?php endif; ?>
-                                    </li>
-                                <?php endforeach; ?>
-                            </ul>
-                        </div>
-                    <?php endforeach; ?>
-                </details>
+                <?php echo livento_cc_ticket_areas_html($courses, $bundle, $index); ?>
             <?php endif; ?>
         </section>
         <?php endforeach; ?>
@@ -8753,13 +8922,6 @@ function livento_cc_tariff_tiers_table($family) {
     return $out;
 }
 
-/** Themen-Slug lesbar machen (die Labels leben in Campus Connect; hier reicht eine Normalisierung). */
-function livento_cc_topic_label($slug) {
-    if ($slug === '_sonstige' || $slug === '') {
-        return 'Weitere Themen';
-    }
-    return ucfirst(str_replace('-', ' ', $slug));
-}
 
 /* v1.34.0: livento_cc_tariff_schema() ist entfallen. Sie gab das Product im Body aus,
  * mit einem Offer je Variante zum Festpreis fuer die gerade eingestellte Teamgroesse —
@@ -9060,6 +9222,40 @@ function livento_cc_tariff_styles() {
     /* v1.41.0: Regelwerke je Kurs. Zurueckhaltend — es ist ein Beleg, keine Werbung. */
     .lv-course__norms{display:block;margin-top:2px;font-size:.78rem;color:#6b7a80;line-height:1.45}
     .lv-course__norm-ed{color:#8a969b}
+    /* v1.61.0: Kacheln je Themenbereich — Kartenstil der E-Learning-Seite (.elt-paket). */
+    .lv-kb{--g:#004D33;--lime:#AAC42B;--body:#334155;margin-top:1.75rem;padding-top:1.75rem;border-top:1px solid #eef1f2}
+    .lv-kb [hidden]{display:none!important}
+    .lv-kb__eyebrow{display:block;text-align:center;font-size:16px;color:var(--body);margin-bottom:6px}
+    .lv-kb__h{margin:0 0 10px;text-align:center;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:clamp(24px,3vw,34px);line-height:1.15;color:#1e293b}
+    .lv-kb__lead{margin:0 auto 22px;text-align:center;max-width:680px;font-size:16px;line-height:1.6;color:var(--body)}
+    .lv-kb__search{max-width:460px;margin:0 auto 28px}
+    .lv-kb__search input{width:100%;box-sizing:border-box;border:1px solid #e3e7df;border-radius:10px;padding:12px 16px 12px 42px;font-size:15px;color:#1e293b;background:#fff url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%2394a3b8%27 stroke-width=%272%27 stroke-linecap=%27round%27%3E%3Ccircle cx=%2711%27 cy=%2711%27 r=%277%27/%3E%3Cpath d=%27M20 20l-3.5-3.5%27/%3E%3C/svg%3E") no-repeat 14px center/18px 18px}
+    .lv-kb__grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+    .lv-kb a.lv-paket,.lv-kb a.lv-paket:hover,.lv-kb a.lv-paket *{text-decoration:none!important}
+    .lv-kb .lv-paket{display:flex;flex-direction:column;background:#fff;border:1px solid #eef0ea;border-radius:18px;padding:24px 22px;color:inherit;transition:transform .2s,box-shadow .2s}
+    .lv-kb .lv-paket:hover{transform:translateY(-4px);box-shadow:0 14px 30px rgba(0,77,51,.10)}
+    .lv-kb .lv-paket--hi{border:2px solid var(--lime);padding:23px 21px}
+    .lv-kb__t{display:block;margin:0 0 4px;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:20px;line-height:1.25;color:var(--g)}
+    .lv-kb .lv-paket__tag{display:block;margin:0 0 18px;font-weight:600;font-size:14px;color:#6b7a72}
+    .lv-kb .lv-paket__btn{margin-top:auto;align-self:flex-start;display:inline-block;background:var(--g);color:#fff!important;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:14px;padding:10px 18px;border-radius:10px}
+    .lv-kb .lv-paket--hi .lv-paket__btn{background:#fff;color:var(--g)!important;box-shadow:inset 0 0 0 2px var(--g)}
+    .lv-kb__tile--leer{opacity:.45}
+    .lv-kb__panels{margin-top:24px;display:grid;gap:18px}
+    .lv-kb__panel{background:#fff;border:1px solid #eef0ea;border-radius:18px;padding:26px 28px}
+    .lv-kb--js .lv-kb__panel{border:2px solid var(--lime)}
+    .lv-kb__panel h4{margin:0 0 4px;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:22px;color:var(--g)}
+    .lv-kb__panel .lv-paket__tag{margin-bottom:10px}
+    .lv-kb__list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;column-gap:36px}
+    .lv-kb__list li{padding:12px 0;border-bottom:1px solid #f1f3ee}
+    .lv-kb__ct{display:block;font-weight:600;color:#1e293b;font-size:15px;line-height:1.4}
+    .lv-kb__cm{display:block;font-size:13px;color:#64748b;margin-top:3px}
+    .lv-kb__cm em{font-style:normal;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+    .lv-kb__cm strong{color:var(--g)}
+    .lv-kb__cn{display:block;font-size:12.5px;color:#64748b;margin-top:3px}
+    .lv-kb__cn abbr{text-decoration:none;border-bottom:1px dotted #94a3b8;color:var(--g);cursor:help}
+    .lv-kb__leer{text-align:center;color:#64748b;margin:18px 0 0}
+    @media(max-width:1000px){.lv-kb__grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:760px){.lv-kb__grid{grid-template-columns:repeat(2,1fr);gap:12px}.lv-kb__list{grid-template-columns:1fr}.lv-kb .lv-paket{padding:16px 14px}.lv-kb .lv-paket--hi{padding:15px 13px}.lv-kb__t{font-size:16px}.lv-kb .lv-paket__tag{margin-bottom:12px;font-size:13px}.lv-kb .lv-paket__btn{font-size:13px;padding:8px 12px}.lv-kb__panel{padding:20px 16px}}
     @media(max-width:640px){.lv-variant__bar{flex-direction:column;align-items:flex-start}}
     </style>
     <?php

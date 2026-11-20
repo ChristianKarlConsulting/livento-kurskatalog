@@ -3,12 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.60.0
+Stable tag: 1.61.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.61.0 =
+* Ticketseite: Kurse als Kacheln je Themenbereich (wie "Meine Kurse" in Campus Connect) mit Kursanzahl, im Kartenstil der E-Learning-Seite. Ein Klick oeffnet alle Kurse des Bereichs, Suchfeld ueber alle Bereiche, Rechtsgrundlagen als Kuerzel mit Tooltip. Ohne JavaScript stehen alle Kurse untereinander.
+* Voraussetzung: Campus Connect v4.57.0 (Themenbereich in public_bundle_courses). Ohne sie zeigt die Seite nur die Liste. Nach dem Update einmal "Cache jetzt leeren".
 
 = 1.60.0 =
 * Ticketseite: Sterne mit dem Schnitt aller veroeffentlichten Bewertungen der im Ticket enthaltenen Kurse (gewichtet nach Anzahl), beschriftet "... Bewertungen der Kurse in diesem Ticket". Gleiche Schwelle (ab 5) und gleicher Hinweis "Wie entstehen die Bewertungen?" wie beim einzelnen Kurs.
