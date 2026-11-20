@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.64.0
+Stable tag: 1.65.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.65.0 =
+* "Aufbau & Module" zeigt je Modul das Lernziel (Groblernziel aus Campus Connect v4.58.0), hervorgehoben ueber Beschreibung und Lektionen. Module nur mit Lernziel erscheinen jetzt auch. Ohne Campus Connect v4.58.0 bleibt alles wie bisher.
 
 = 1.64.0 =
 * Fachbeitraege und Kurse verknuepft: Box "Passende Kurse (Livento)" im Beitrags-Editor (Kurse und CampusTicket-Bereiche, mit Filter). Unter dem Beitrag erscheint "Passende Weiterbildungen" (Kurse mit Angebotsart, Start und Preis; Ticket-Bereiche oeffnen auf der Ticketseite direkt den Bereich), auf der Kursdetailseite "Fachbeitraege zum Thema" (bis zu 3).

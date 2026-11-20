@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.64.0
+ * Version:           1.65.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,11 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.65.0: „Aufbau & Module“ zeigt je Modul das Lernziel (Groblernziel aus Campus Connect v4.58.0,
+ *          learning_goal in public_offering_modules / public_offering_entry_modules), hervorgehoben
+ *          ueber Beschreibung und Lektionen. Formulierung bewusst unveraendert (Lehrplan-Stil). Module
+ *          nur mit Lernziel erscheinen jetzt auch. Ohne v4.58.0 bleibt alles wie bisher.
  *
  * v1.64.0: Fachbeiträge ↔ Kurse. Je Blogbeitrag Post-Meta _livento_cc_ziel (k:<Kurstitel> bzw.
  *          t:<Themenbereich des CampusTickets>), gepflegt in der Box „Passende Kurse (Livento)“ im
@@ -4848,7 +4853,8 @@ function livento_cc_render_modules($modules) {
         }
         $has_desc = !empty($m['description']) && trim(wp_strip_all_tags($m['description'])) !== '';
         $has_lessons = !empty($m['lessons']) && is_array($m['lessons']) && count($m['lessons']) > 0;
-        return $has_desc || $has_lessons;
+        $has_goal = !empty($m['learning_goal']) && trim((string) $m['learning_goal']) !== ''; // v1.65.0
+        return $has_desc || $has_lessons || $has_goal;
     });
     if (empty($modules)) {
         return '';
@@ -4867,6 +4873,11 @@ function livento_cc_render_modules($modules) {
         $open = $first ? ' open' : '';
         $first = false;
         $out .= '<details class="lvk-module"' . $open . '><summary>' . esc_html($title) . $umfang . '</summary>';
+        // v1.65.0: Groblernziel aus Campus Connect (Lehrplan-Formulierung, bewusst unveraendert)
+        $ziel = trim((string) ($m['learning_goal'] ?? ''));
+        if ($ziel !== '') {
+            $out .= '<p class="lvk-mod-ziel"><strong>Lernziel:</strong> ' . nl2br(esc_html($ziel)) . '</p>';
+        }
         if (!empty($m['description'])) {
             $out .= livento_cc_richtext($m['description']);
         }
@@ -5497,6 +5508,8 @@ function livento_cc_styles() {
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-mod-hours{font-weight:400;color:var(--lvk-lime);font-size:.9rem}
+.lvk-mod-ziel{margin:0 0 12px;padding:10px 14px;background:#f3f8ec;border-left:3px solid var(--lvk-accent);border-radius:0 8px 8px 0;font-size:.95rem;line-height:1.5}
+.lvk-mod-ziel strong{color:var(--lvk-green)}
 .lvk-faq-item{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-faq-item summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-faq-a{padding:0 0 12px}
