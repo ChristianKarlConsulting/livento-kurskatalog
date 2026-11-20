@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.61.0
+ * Version:           1.62.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,15 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.62.0: Kursdetailseite — drei Bausteine aus der Wettbewerber-Analyse (19.11.2026):
+ *          „So läuft es ab“ in 3–4 Schritten je Angebotsart (Selbstlernkurs, Termin je Format,
+ *          Anfragekurs; nicht bei Bildungsgutschein, das erklaert der eigene Abschnitt), „Dein
+ *          Abschluss“ (Zertifikat, Pruefung, RbP-Punkte, Echtheitspruefung per Pruefnummer — nur aus
+ *          gepflegten Feldern) und die Karte „Fragen zum Kurs?“ mit Ansprechpartner, Antwortzeit,
+ *          Telefon und E-Mail (Einstellungen → Ansprechpartner; Name/Foto nicht im Code). Dazu:
+ *          Nach einem Plugin-Update leert das Plugin seinen Cache einmal selbst; Ticketseite ohne
+ *          Themenbereiche heisst die Liste „Alle Kurse“ statt „Weitere Kurse“.
  *
  * v1.61.0: Ticketseite — Kurse nach Themenbereichen als Kacheln (Campus Connect v4.57.0, #295). Vorher
  *          gruppierte die Liste nach Kursthemen (Website-Filter), die an Selbstlernkurse fast nie
@@ -1201,6 +1210,20 @@ function livento_cc_get_instructors() {
  * Cache-Version — alte Transient-Schluessel werden damit auf einen Schlag
  * entwertet (und laufen per TTL aus). Aufruf via Purge-Webhook oder manuell.
  */
+/**
+ * v1.62.0: Nach einem Plugin-Update einmal den Cache leeren. Der Cache-Schluessel haengt nur an
+ * der Cache-Version, nicht an der Plugin-Version — bei v1.61.0 zeigte die Ticketseite deshalb
+ * bis zum manuellen Leeren die Kursliste von vor der Migration (ohne Themenbereiche).
+ */
+add_action('init', function () {
+    $kopf = get_file_data(__FILE__, array('v' => 'Version'));
+    $v    = (string) ($kopf['v'] ?? '');
+    if ($v !== '' && get_option('livento_cc_plugin_version') !== $v) {
+        update_option('livento_cc_plugin_version', $v);
+        livento_cc_flush_cache();
+    }
+});
+
 function livento_cc_flush_cache() {
     $old = livento_cc_ver();
     update_option('livento_cc_cachever', $old + 1);
@@ -3927,6 +3950,10 @@ function livento_cc_render_detail($o) {
         $out .= '<div class="lvk-section"><h2>Zugangsvoraussetzungen</h2>' . livento_cc_richtext($o['admission_requirements']) . '</div>';
     }
 
+    // v1.62.0: So laeuft es ab (je Angebotsart) und was der Abschluss belegt.
+    $out .= livento_cc_ablauf_html($o);
+    $out .= livento_cc_abschluss_html($o);
+
     // v1.56.0: Foerderung mit Bildungsgutschein (nur AZAV-Kurse).
     $out .= livento_cc_bg_section_html($o);
 
@@ -3945,6 +3972,9 @@ function livento_cc_render_detail($o) {
         }
         $out .= '</div>';
     }
+
+    // v1.62.0: Ansprechpartner (Einstellungen → Ansprechpartner).
+    $out .= livento_cc_kontakt_html();
 
     // CRO: wiederholter CTA-Block am Seitenende (zweite Conversion-Chance nach dem Inhalt).
     if (!empty($o['wc_checkout_url'])) {
@@ -3980,6 +4010,180 @@ function livento_cc_render_detail($o) {
 
     $out .= '</div>';
     return $out;
+}
+
+/**
+ * v1.62.0: Ansprechpartner der Kursdetailseiten (Livento Katalog → Einstellungen → Ansprechpartner).
+ * Name, Rolle und Foto stehen bewusst NICHT im Code (oeffentliches Repo) — ohne Name heisst die
+ * Karte „Deine Kursberatung“. Vorgaben sind nur die Firmenkontakte aus dem Website-Kopf.
+ */
+function livento_cc_kontakt() {
+    $vorgabe = array(
+        'aktiv'   => 1,
+        'name'    => '',
+        'rolle'   => '',
+        'foto'    => '',
+        'telefon' => '+49 3494 3864790',
+        'email'   => 'info@livento-bildung.de',
+        'antwort' => 'innerhalb weniger Stunden an Werktagen',
+    );
+    $gespeichert = get_option('livento_cc_kontakt', null);
+    return is_array($gespeichert) ? array_merge($vorgabe, $gespeichert) : $vorgabe;
+}
+
+/** v1.62.0: Karte „Fragen zum Kurs?“ mit Foto, Antwortzeit, Telefon und E-Mail. */
+function livento_cc_kontakt_html() {
+    $k = livento_cc_kontakt();
+    if (empty($k['aktiv']) || (trim($k['telefon']) === '' && trim($k['email']) === '')) {
+        return '';
+    }
+    $person = trim($k['name']) !== '';
+    $name   = $person ? $k['name'] : 'Deine Kursberatung';
+    $satz   = 'Du hast Fragen zu Inhalten, Förderung oder Ablauf? '
+            . ($person ? 'Ich melde mich' : 'Wir melden uns')
+            . (trim($k['antwort']) !== '' ? ' ' . trim($k['antwort']) : '') . '.';
+
+    $out  = '<div class="lvk-section lvk-kontakt"><h2>Fragen zum Kurs?</h2><div class="lvk-kontakt-card">';
+    if (trim($k['foto']) !== '') {
+        $out .= '<img class="lvk-kontakt-foto" src="' . esc_url($k['foto']) . '" alt="' . esc_attr($name) . '" width="96" height="96" loading="lazy">';
+    }
+    $out .= '<div class="lvk-kontakt-body">';
+    $out .= '<p class="lvk-kontakt-name">' . esc_html($name) . '</p>';
+    if (trim($k['rolle']) !== '') {
+        $out .= '<p class="lvk-kontakt-rolle">' . esc_html($k['rolle']) . '</p>';
+    }
+    $out .= '<p class="lvk-kontakt-text">' . esc_html($satz) . '</p><p class="lvk-kontakt-links">';
+    if (trim($k['telefon']) !== '') {
+        $tel = preg_replace('/[^0-9+]/', '', $k['telefon']);
+        $out .= '<a href="tel:' . esc_attr($tel) . '">' . esc_html($k['telefon']) . '</a>';
+    }
+    if (trim($k['email']) !== '') {
+        $out .= '<a href="mailto:' . esc_attr($k['email']) . '">' . esc_html($k['email']) . '</a>';
+    }
+    return $out . '</p></div></div></div>';
+}
+
+/**
+ * v1.62.0: Letzter Schritt „Abschluss“ aus den gepflegten Feldern (livento_cc_abschluss_label).
+ * Nichts gepflegt = kein Schritt; es wird nie ein Abschluss behauptet, den der Kurs nicht hat.
+ */
+function livento_cc_ablauf_abschluss_step($o, $selbstlern) {
+    switch (livento_cc_abschluss_label($o)) {
+        case 'Zertifikat mit Abschlusstest':
+            return array('Zertifikat', $selbstlern
+                ? 'Nach bestandenem Abschlusstest steht dein Zertifikat in Campus Connect zum Download bereit.'
+                : 'Nach bestandenem Abschlusstest erhältst du dein Zertifikat.');
+        case 'Zertifikat mit Abschlussprüfung':
+            return array('Zertifikat', 'Nach bestandener Abschlussprüfung erhältst du dein Zertifikat.');
+        case 'Zertifikat':
+            return array('Zertifikat', $selbstlern
+                ? 'Am Ende steht dein Zertifikat in Campus Connect zum Download bereit.'
+                : 'Am Ende erhältst du dein Zertifikat.');
+        case 'Teilnahmebescheinigung':
+            return array('Teilnahmebescheinigung', 'Am Ende erhältst du deine Teilnahmebescheinigung.');
+    }
+    return null;
+}
+
+/**
+ * v1.62.0: „So läuft es ab“ in 3–4 Schritten je Angebotsart. Grundlage ist der echte Ablauf:
+ * Nach jeder Buchung ueber WooCommerce schickt Campus Connect eine E-Mail mit dem Zugang bzw.
+ * der Buchungsbestaetigung (send-enrollment-welcome, Lehrgaenge und Einzeltermine).
+ * Kurse mit Bildungsgutschein: kein Ablauf hier, das erklaert der Abschnitt zum Bildungsgutschein.
+ * Ohne Buchungs- oder Anfrageweg: keine Schritte.
+ */
+function livento_cc_ablauf_steps($o) {
+    if (livento_cc_is_bildungsgutschein($o)) {
+        return array();
+    }
+    // Nicht nur die Angebotsart: Ist sie nicht gepflegt, liefert livento_cc_effective_kind ''.
+    $selbst = livento_cc_effective_kind($o) === 'selbstlernkurs'
+           || ($o['offering_type'] ?? '') === 'self_learning'
+           || ($o['format'] ?? '') === 'selbstlern';
+    $steps  = array();
+
+    if (livento_cc_is_on_request($o)) {
+        $antwort = trim(livento_cc_kontakt()['antwort']);
+        $bald    = $antwort !== '' ? ' ' . $antwort : '';
+        if ($selbst) {
+            // Selbstlernkurse auf Anfrage haben keinen Termin (20.11.2026: 7 von 21 Anfragekursen).
+            $steps[] = array('Kurs anfragen', 'Schreib uns über das Formular auf dieser Seite.');
+            $steps[] = array('Wir melden uns', 'Wir melden uns' . $bald . ' und klären alles Weitere mit dir.');
+        } else {
+            $steps[] = array('Termin anfragen', 'Sag uns über das Formular auf dieser Seite, wann es dir passt.');
+            $steps[] = array('Wir melden uns', 'Wir melden uns' . $bald . ' und stimmen den Termin mit dir ab.');
+        }
+    } elseif (!empty($o['wc_checkout_url'])) {
+        if ($selbst) {
+            $steps[] = array('Online buchen', 'Du buchst den Kurs direkt hier auf der Seite.');
+            $steps[] = array('Zugang per E‑Mail', 'Nach der Buchung bekommst du deinen Zugang zu Campus Connect, unserer Lernplattform.');
+            $steps[] = array('Lernen im eigenen Tempo', 'Am PC, Tablet oder Handy – unterbrechen und weitermachen, wann es dir passt.');
+        } else {
+            $steps[] = array('Platz sichern', 'Du meldest dich direkt hier auf der Seite an.');
+            $steps[] = array('Bestätigung per E‑Mail', 'Du bekommst deine Buchungsbestätigung und deinen Zugang zu Campus Connect, unserer Lernplattform.');
+            switch ((string) ($o['format'] ?? '')) {
+                case 'praesenz':
+                    $ort = trim((string) ($o['site_city'] ?? ''));
+                    $steps[] = array('Vor Ort lernen', 'Du lernst in der Gruppe ' . ($ort !== '' ? 'in ' . $ort : 'vor Ort') . '.');
+                    break;
+                case 'online_live':
+                    $steps[] = array('Live online lernen', 'Du bist live dabei – vom Arbeitsplatz oder von zu Hause aus.');
+                    break;
+                case 'blended':
+                    $steps[] = array('Vor Ort und online', 'Du lernst abwechselnd in der Gruppe vor Ort und online.');
+                    break;
+                default:
+                    $steps[] = array('Teilnehmen', 'Du nimmst an den Unterrichtsterminen teil.');
+            }
+        }
+    } else {
+        return array();
+    }
+
+    $ende = livento_cc_ablauf_abschluss_step($o, $selbst);
+    if ($ende !== null) {
+        $steps[] = $ende;
+    }
+    return $steps;
+}
+
+function livento_cc_ablauf_html($o) {
+    $steps = livento_cc_ablauf_steps($o);
+    if (empty($steps)) {
+        return '';
+    }
+    $out = '<div class="lvk-section lvk-ablauf"><h2>So läuft es ab</h2><ol class="lvk-steps">';
+    foreach ($steps as $i => $s) {
+        $out .= '<li><span class="lvk-step-nr" aria-hidden="true">' . ($i + 1) . '</span>'
+              . '<span class="lvk-step-t">' . esc_html($s[0]) . '</span>'
+              . '<span class="lvk-step-x">' . esc_html($s[1]) . '</span></li>';
+    }
+    return $out . '</ol></div>';
+}
+
+/**
+ * v1.62.0: „Dein Abschluss“ — nur bei Kursen mit Zertifikat, nur aus gepflegten Feldern:
+ * Zertifikatstitel, Pruefung, RbP-Punkte, dazu die Echtheitspruefung ueber die Pruefnummer
+ * (Campus Connect /zertifikat-prüfen). Keine Aussagen ueber Anerkennungen, die nicht gepflegt sind.
+ */
+function livento_cc_abschluss_html($o) {
+    if (strpos(livento_cc_abschluss_label($o), 'Zertifikat') !== 0) {
+        return '';
+    }
+    $punkte = array();
+    $titel  = trim((string) ($o['certificate_title'] ?? ''));
+    $punkte[] = $titel !== '' ? 'Du erhältst das Zertifikat „' . esc_html($titel) . '“.' : 'Du erhältst ein Zertifikat.';
+    $exam = trim((string) ($o['exam_title'] ?? ''));
+    if ($exam !== '') {
+        $punkte[] = '<strong>Prüfung:</strong> ' . esc_html($exam);
+    }
+    if (!empty($o['rbp_points'])) {
+        $punkte[] = '<strong>' . (int) $o['rbp_points'] . ' Fortbildungspunkte</strong> bei der Registrierung beruflich Pflegender (RbP)';
+    }
+    $punkte[] = 'Jedes Zertifikat trägt eine Prüfnummer. Arbeitgeber und Behörden können es online auf Echtheit prüfen: '
+              . '<a href="https://campus-connect.livento-bildung.de/zertifikat-pr%C3%BCfen" rel="noopener">Zertifikat prüfen →</a>';
+    return '<div class="lvk-section lvk-abschluss"><h2>Dein Abschluss</h2><ul class="lvk-abschluss-list"><li>'
+         . implode('</li><li>', $punkte) . '</li></ul></div>';
 }
 
 /**
@@ -4898,6 +5102,24 @@ function livento_cc_styles() {
 .lvk-audience{color:var(--lvk-lime)}
 .lvk-section{margin:28px 0}
 .lvk-section h2{color:var(--lvk-green);font-size:1.3rem;border-bottom:2px solid var(--lvk-accent);padding-bottom:6px}
+.lvk-steps{list-style:none;margin:16px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}
+.lvk-steps li{background:#fff;border:1px solid #eef0ea;border-radius:14px;padding:18px 16px 16px;margin:0}
+.lvk-step-nr{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:var(--lvk-green);color:#fff;font-weight:700;font-size:.95rem;margin-bottom:10px}
+.lvk-step-t{display:block;font-weight:700;color:var(--lvk-green);margin-bottom:4px}
+.lvk-step-x{display:block;font-size:.92rem;color:#444;line-height:1.5}
+.lvk-abschluss-list{list-style:none;margin:12px 0 0;padding:0}
+.lvk-abschluss-list li{position:relative;padding:6px 0 6px 28px;line-height:1.5;margin:0}
+.lvk-abschluss-list li:before{content:"\2713";position:absolute;left:4px;top:6px;color:var(--lvk-lime);font-weight:700}
+.lvk-abschluss-list a{color:var(--lvk-green)!important;font-weight:600}
+.lvk-kontakt-card{display:flex;gap:18px;align-items:center;background:#fff;border:2px solid var(--lvk-accent);border-radius:18px;padding:20px 22px;margin-top:14px}
+.lvk-kontakt-foto{width:96px;height:96px;border-radius:50%;object-fit:cover;flex:0 0 96px}
+.lvk-kontakt-name{margin:0;font-weight:700;font-size:1.1rem;color:var(--lvk-green)}
+.lvk-kontakt-rolle{margin:2px 0 0;color:#666;font-size:.9rem}
+.lvk-kontakt-text{margin:8px 0 10px;color:#444}
+.lvk-kontakt-links{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0}
+.lvk-kontakt-links a{color:var(--lvk-green)!important;font-weight:600;text-decoration:none}
+.lvk-kontakt-links a:hover{text-decoration:underline}
+@media(max-width:560px){.lvk-kontakt-card{flex-direction:column;align-items:flex-start}}
 .lvk-benefit{background:#f3f8ee;border-radius:8px;padding:4px 20px}
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
@@ -5255,6 +5477,16 @@ function livento_cc_admin_page() {
         update_option('livento_cc_foerder_webhook', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_foerder_webhook'] ?? ''))));
         update_option('livento_cc_beratung_url', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_beratung_url'] ?? ''))));
         update_option('livento_cc_dozenten_url', esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_dozenten_url'] ?? ''))));
+        // v1.62.0: Ansprechpartner der Kursdetailseiten
+        update_option('livento_cc_kontakt', array(
+            'aktiv'   => !empty($_POST['livento_cc_kontakt_aktiv']) ? 1 : 0,
+            'name'    => sanitize_text_field(wp_unslash($_POST['livento_cc_kontakt_name'] ?? '')),
+            'rolle'   => sanitize_text_field(wp_unslash($_POST['livento_cc_kontakt_rolle'] ?? '')),
+            'foto'    => esc_url_raw(trim((string) wp_unslash($_POST['livento_cc_kontakt_foto'] ?? ''))),
+            'telefon' => sanitize_text_field(wp_unslash($_POST['livento_cc_kontakt_telefon'] ?? '')),
+            'email'   => sanitize_email(wp_unslash($_POST['livento_cc_kontakt_email'] ?? '')),
+            'antwort' => sanitize_text_field(wp_unslash($_POST['livento_cc_kontakt_antwort'] ?? '')),
+        ));
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -5894,6 +6126,19 @@ function livento_cc_admin_tab_settings() {
     echo '<h3 style="margin-top:24px">Dozentenseite</h3>';
     echo '<p>Die Seite mit dem Shortcode <code>[livento_dozenten]</code>. Wird nur fuer den Link "Alle Dozentinnen und Dozenten" unter dem Dozenten-Abschnitt der Kursdetailseiten gebraucht. <strong>Leer = der Link wird weggelassen</strong> (kein toter Link). Der Shortcode selbst funktioniert unabhaengig davon auf jeder Seite.</p>';
     echo '<p><label><strong>URL:</strong><br><input type="url" name="livento_cc_dozenten_url" class="large-text code" value="' . esc_attr((string) get_option('livento_cc_dozenten_url', '')) . '" placeholder="https://livento-bildung.de/dozenten/"></label></p>';
+
+    // v1.62.0: Ansprechpartner der Kursdetailseiten
+    $k = livento_cc_kontakt();
+    echo '<h3 style="margin-top:24px">Ansprechpartner (Kursdetailseiten)</h3>';
+    echo '<p>Karte „Fragen zum Kurs?“ unter den häufigen Fragen jeder Kursdetailseite. Ohne Name heißt sie „Deine Kursberatung“ (Wir-Form), mit Name spricht die Person selbst (Ich-Form). Die Antwortzeit steht auch im Ablauf der Anfragekurse.</p>';
+    echo '<p><label><input type="checkbox" name="livento_cc_kontakt_aktiv" value="1"' . checked(!empty($k['aktiv']), true, false) . '> Karte anzeigen</label></p>';
+    echo '<p><label><strong>Name:</strong><br><input type="text" name="livento_cc_kontakt_name" class="regular-text" value="' . esc_attr($k['name']) . '" placeholder="leer = „Deine Kursberatung“"></label></p>';
+    echo '<p><label><strong>Rolle (optional):</strong><br><input type="text" name="livento_cc_kontakt_rolle" class="regular-text" value="' . esc_attr($k['rolle']) . '" placeholder="z. B. Kursberatung"></label></p>';
+    echo '<p><label><strong>Foto-URL (optional):</strong><br><input type="url" name="livento_cc_kontakt_foto" class="large-text code" value="' . esc_attr($k['foto']) . '" placeholder="https://… (z. B. Profilfoto aus Campus Connect)"></label></p>';
+    echo '<p><label><strong>Telefon:</strong><br><input type="text" name="livento_cc_kontakt_telefon" class="regular-text" value="' . esc_attr($k['telefon']) . '"></label></p>';
+    echo '<p><label><strong>E-Mail:</strong><br><input type="email" name="livento_cc_kontakt_email" class="regular-text" value="' . esc_attr($k['email']) . '"></label></p>';
+    echo '<p><label><strong>Antwortzeit:</strong><br><input type="text" name="livento_cc_kontakt_antwort" class="regular-text" value="' . esc_attr($k['antwort']) . '" placeholder="innerhalb weniger Stunden an Werktagen"></label></p>';
+    echo '<p class="description">Erscheint als „… melde mich <em>Antwortzeit</em>.“ Telefon und E-Mail beide leer = keine Karte.</p>';
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
@@ -7488,6 +7733,10 @@ function livento_cc_ticket_areas($courses) {
         return $x['sort'] !== $y['sort'] ? ($x['sort'] < $y['sort'] ? -1 : 1) : $alpha($x['label'], $y['label']);
     });
     $echte = count(array_filter(array_keys($groups), function ($k) { return $k !== '_weitere'; }));
+    // v1.62.0: Hat kein Kurs einen Bereich, ist „Weitere Kurse“ irrefuehrend.
+    if ($echte === 0 && isset($groups['_weitere'])) {
+        $groups['_weitere']['label'] = 'Alle Kurse';
+    }
     return array(array_values($groups), $echte);
 }
 

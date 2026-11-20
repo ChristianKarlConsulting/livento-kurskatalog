@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.61.0
+Stable tag: 1.62.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.62.0 =
+* Kursdetailseite: "So laeuft es ab" in 3-4 Schritten je Angebotsart (Selbstlernkurs, Termin je Format, Anfragekurs; nicht bei Bildungsgutschein), "Dein Abschluss" (Zertifikat, Pruefung, RbP-Punkte, Echtheitspruefung per Pruefnummer) und Karte "Fragen zum Kurs?" mit Ansprechpartner, Antwortzeit, Telefon und E-Mail.
+* Neue Einstellung: Livento Katalog -> Einstellungen -> Ansprechpartner (Kursdetailseiten). Ohne Name heisst die Karte "Deine Kursberatung".
+* Nach einem Plugin-Update leert das Plugin seinen Cache einmal selbst. Ticketseite ohne Themenbereiche: "Alle Kurse" statt "Weitere Kurse".
 
 = 1.61.0 =
 * Ticketseite: Kurse als Kacheln je Themenbereich (wie "Meine Kurse" in Campus Connect) mit Kursanzahl, im Kartenstil der E-Learning-Seite. Ein Klick oeffnet alle Kurse des Bereichs, Suchfeld ueber alle Bereiche, Rechtsgrundlagen als Kuerzel mit Tooltip. Ohne JavaScript stehen alle Kurse untereinander.

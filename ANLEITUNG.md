@@ -122,6 +122,14 @@ Profile **ohne Foto** erscheinen trotzdem — in einer eigenen Textdarstellung m
 
 **Verlinkung von den Kursseiten:** Auf jeder Kursdetailseite steht automatisch der Abschnitt „Wer dich unterrichtet". Darunter erscheint der Link „Alle Dozentinnen und Dozenten" — aber nur, wenn unter *Livento Katalog → Einstellungen → Dozentenseite* die URL hinterlegt ist. Ist das Feld leer, wird ohne Link gerendert; ein toter Link entsteht nie.
 
+### Kursdetailseite: Ablauf, Abschluss, Ansprechpartner (ab 1.62.0)
+
+Jede Kursdetailseite zeigt automatisch drei weitere Abschnitte. Gepflegt wird nichts davon im Plugin. Ausnahme ist der Ansprechpartner.
+
+- **So läuft es ab:** 3–4 Schritte je Angebotsart. Selbstlernkurs: buchen, Zugang per E-Mail, lernen im eigenen Tempo, Zertifikat. Termin-Kurs: Platz sichern, Bestätigung per E-Mail, Teilnahme je Format, Abschluss. Anfragekurs: anfragen, wir melden uns, Abschluss. Der letzte Schritt erscheint nur, wenn in Campus Connect ein Abschluss gepflegt ist. Bei Kursen mit Bildungsgutschein entfällt der Abschnitt, dort erklärt „Förderung mit Bildungsgutschein“ den Weg.
+- **Dein Abschluss:** Nur bei Kursen mit Zertifikat. Er zeigt den Zertifikatstitel, die Prüfung und die RbP-Punkte aus Campus Connect, dazu den Hinweis auf die Echtheitsprüfung per Prüfnummer mit Link zu „Zertifikat prüfen“.
+- **Fragen zum Kurs?:** Karte mit Foto, Name, Antwortzeit, Telefon und E-Mail. Einstellen unter *Livento Katalog → Einstellungen → Ansprechpartner (Kursdetailseiten)*. Ohne Name heißt die Karte „Deine Kursberatung“ und spricht in der Wir-Form, mit Name in der Ich-Form. Die Antwortzeit steht auch im Ablauf der Anfragekurse. Das Foto ist eine Bild-URL, zum Beispiel das Profilfoto aus Campus Connect.
+
 ---
 
 ## 6. Kurskatalog & Filter
@@ -295,6 +303,7 @@ Gepflegt wird die Staffel in Campus Connect unter *Kursbundles → Produktpläne
 
 - Kurse/Themen werden **zwischengespeichert** (Standard-TTL siehe Übersicht), damit die Seite schnell bleibt.
 - **Sofort aktualisieren:** **Übersicht → Cache jetzt leeren**.
+- **Nach einem Plugin-Update** leert das Plugin den Cache einmal selbst (ab 1.62.0). Neue Versionen erwarten oft neue Felder aus Campus Connect.
 - **Automatisch bei Kursänderungen:** **Einstellungen → Purge-Secret** setzen (langer Zufallsstring) und in Campus Connect als Webhook hinterlegen (`POST /wp-json/livento/v1/purge`, Header `X-Livento-Purge-Secret`). Dann leert Campus Connect den Cache bei jeder Kursänderung selbst. Leer = nur TTL.
 
 ---
