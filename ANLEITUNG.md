@@ -140,6 +140,16 @@ Im Beitrags-Editor steht rechts die Box **„Passende Kurse (Livento)“**. Dort
 - Die Zuordnung hängt am **Kurstitel**, nicht am einzelnen Termin. Ein neuer Durchgang mit gleichem Titel übernimmt sie also automatisch. Ist ein Kurs gerade nicht im Katalog, fällt er aus dem Kasten heraus. Die Zuordnung bleibt aber gespeichert und ist in der Box als „derzeit nicht im Katalog“ markiert.
 - Mit 1.64.0 kam eine bestätigte Erstzuordnung für 48 Beiträge. Sie wird einmal übernommen, und zwar nur bei Beiträgen, die noch keine eigene Zuordnung haben.
 
+### Formvergleich „Welche Form passt zu dir?“ (ab 1.66.0)
+
+Gibt es ein Thema in mehreren Formen, etwa als Tageskurs, Abendkurs und Selbstlernkurs, zeigt die Kursdetailseite nach „Dein Abschluss“ einen Vergleich. Jede Form steht als Karte mit Angebotsart, Format und Zeitmodell, dazu Umfang, Start, Preis und Abschluss. Die eigene Seite ist mit „Du bist hier“ markiert, die anderen Karten verlinken auf ihre Detailseite.
+
+- **Welche Kurse zusammengehören**, steht unter *Livento Katalog → Einstellungen → Formvarianten (Kursdetailseiten)*. Je Zeile eine Gruppe, die Kurstitel mit `|` getrennt, mindestens zwei Titel je Zeile. Beispiel: `Medizinproduktebeauftragte:r | Medizinproduktebeauftragte:r (Abendkurs)`
+- Bis zum ersten Speichern gilt eine Vorgabe mit fünf Gruppen: Betreuungskräfte-Pflichtfortbildung, Praxisanleiter-Pflichtfortbildung, Medizinproduktebeauftragte:r, Pain Nursing/Schmerzmanagement und Gewaltprävention. Wer das Feld leer speichert, schaltet den Vergleich überall ab.
+- Verglichen wird über den **Kurstitel**, Groß- und Kleinschreibung und Leerzeichen zählen nicht. Ein neuer Durchgang mit gleichem Titel ist also automatisch dabei, und zwar der früheste.
+- Haben zwei Titel einer Gruppe dieselbe Form (gleiche Angebotsart, gleiches Format, gleiches Zeitmodell, beide Selbstlernkurs oder beide auf Anfrage), erscheint nur eine Karte. Die eigene Seite hat dabei Vorrang, sonst der nächste Start. Bleibt von einer Gruppe nur eine Form übrig, entfällt der Abschnitt.
+- Die Kursfamilien in Campus Connect werden dafür bewusst nicht genutzt. Sie fassen Durchgänge desselben Lehrgangs zusammen, nicht verschiedene Formen eines Themas.
+
 ---
 
 ## 6. Kurskatalog & Filter

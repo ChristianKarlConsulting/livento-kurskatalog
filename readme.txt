@@ -3,12 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.65.0
+Stable tag: 1.66.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.66.0 =
+* Kursdetailseite: neuer Abschnitt "Welche Form passt zu dir?" fuer Themen, die es in mehreren Formen gibt (z. B. Tageskurs, Abendkurs, Selbstlernkurs). Je Form eine Karte mit Angebotsart, Format, Zeitmodell, Umfang, Start, Preis und Abschluss; die eigene Seite ist markiert, die anderen verlinken. Gruppen unter Einstellungen > Formvarianten (eine Gruppe je Zeile, Titel mit "|"), Vorgabe mit 5 Gruppen.
+* Abschluss: Heisst das Dokument in Campus Connect "Teilnahmebescheinigung ...", steht dort jetzt "Teilnahmebescheinigung" statt "Zertifikat".
 
 = 1.65.0 =
 * "Aufbau & Module" zeigt je Modul das Lernziel (Groblernziel aus Campus Connect v4.58.0), hervorgehoben ueber Beschreibung und Lektionen. Module nur mit Lernziel erscheinen jetzt auch. Ohne Campus Connect v4.58.0 bleibt alles wie bisher.

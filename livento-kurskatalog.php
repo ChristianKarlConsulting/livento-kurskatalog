@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.65.0
+ * Version:           1.66.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,13 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.66.0: Formvergleich „Welche Form passt zu dir?“ auf der Kursdetailseite — Gruppen „gleiches
+ *          Thema, andere Form“ als Kurstitel (Vorgabe: 5 Gruppen, vom Nutzer bestaetigt; Pflege unter
+ *          Einstellungen → Formvarianten). Karten mit Angebotsart/Form/Zeitmodell, Umfang, Start,
+ *          Preis, Abschluss; aktuelle Seite markiert. Bewusst nicht ueber Kursfamilien (= Durchgaenge).
+ *          Dazu: Dokumente namens „Teilnahmebescheinigung …“ heissen ueberall Teilnahmebescheinigung
+ *          (vorher „Zertifikat mit Abschlusstest“, z. B. Pflichtfortbildung Betreuungskraefte).
  *
  * v1.65.0: „Aufbau & Module“ zeigt je Modul das Lernziel (Groblernziel aus Campus Connect v4.58.0,
  *          learning_goal in public_offering_modules / public_offering_entry_modules), hervorgehoben
@@ -879,8 +886,15 @@ function livento_cc_laufzeit_label($o) {
 function livento_cc_abschluss_label($o) {
     $exam = trim((string) ($o['exam_title'] ?? ''));
     $rec  = (isset($o['recognition']) && is_array($o['recognition'])) ? $o['recognition'] : array();
+    // v1.66.0: Heisst das Dokument selbst „Teilnahmebescheinigung …“, ist es kein Zertifikat
+    // (z. B. Jaehrliche Pflichtfortbildung fuer Betreuungskraefte: Abschlusstest + Teilnahmebescheinigung).
+    $tn = stripos(ltrim((string) ($o['certificate_title'] ?? '')), 'Teilnahmebescheinigung') === 0;
     if ($exam !== '') {
-        return stripos($exam, 'test') !== false ? 'Zertifikat mit Abschlusstest' : 'Zertifikat mit Abschlussprüfung';
+        return ($tn ? 'Teilnahmebescheinigung' : 'Zertifikat')
+             . (stripos($exam, 'test') !== false ? ' mit Abschlusstest' : ' mit Abschlussprüfung');
+    }
+    if ($tn) {
+        return 'Teilnahmebescheinigung';
     }
     if (trim((string) ($o['certificate_title'] ?? '')) !== '' || in_array('fp_zertifikat', $rec, true) || in_array('azav_zertifikat', $rec, true)) {
         return 'Zertifikat';
@@ -3982,6 +3996,8 @@ function livento_cc_render_detail($o) {
     // v1.62.0: So laeuft es ab (je Angebotsart) und was der Abschluss belegt.
     $out .= livento_cc_ablauf_html($o);
     $out .= livento_cc_abschluss_html($o);
+    // v1.66.0: dasselbe Thema in anderer Form (Einstellungen → Formvarianten)
+    $out .= livento_cc_formvergleich_html($o);
 
     // v1.56.0: Foerderung mit Bildungsgutschein (nur AZAV-Kurse).
     $out .= livento_cc_bg_section_html($o);
@@ -4111,6 +4127,12 @@ function livento_cc_ablauf_abschluss_step($o, $selbstlern) {
             return array('Zertifikat', $selbstlern
                 ? 'Am Ende steht dein Zertifikat in Campus Connect zum Download bereit.'
                 : 'Am Ende erhältst du dein Zertifikat.');
+        case 'Teilnahmebescheinigung mit Abschlusstest':
+            return array('Teilnahmebescheinigung', $selbstlern
+                ? 'Nach bestandenem Abschlusstest steht deine Teilnahmebescheinigung in Campus Connect zum Download bereit.'
+                : 'Nach bestandenem Abschlusstest erhältst du deine Teilnahmebescheinigung.');
+        case 'Teilnahmebescheinigung mit Abschlussprüfung':
+            return array('Teilnahmebescheinigung', 'Nach bestandener Abschlussprüfung erhältst du deine Teilnahmebescheinigung.');
         case 'Teilnahmebescheinigung':
             return array('Teilnahmebescheinigung', 'Am Ende erhältst du deine Teilnahmebescheinigung.');
     }
@@ -4548,6 +4570,157 @@ add_action('save_post_post', function ($post_id) {
         add_post_meta($post_id, '_livento_cc_ziel', $z);
     }
 });
+
+/* ============================================================
+ * v1.66.0: Formvergleich „Welche Form passt zu dir?“
+ * Gruppen „gleiches Thema, andere Form“ (Live tags/abends, Selbstlernkurs, Präsenz …) als Listen
+ * von Kurstiteln. Bewusst NICHT ueber die Kursfamilien in Campus Connect: Die fassen Durchgaenge
+ * desselben Lehrgangs zusammen (gleiche Module), nicht verschiedene Formen eines Themas.
+ * Pflege: Livento Katalog → Einstellungen → Formvarianten (eine Gruppe je Zeile, Titel mit „|“).
+ * ============================================================ */
+
+/** Vorgabe, vom Nutzer am 20.11.2026 bestaetigt. */
+function livento_cc_formvarianten_vorgabe() {
+    return array(
+        array('Auffrischungs-Pflichtfortbildung Betreuungskräfte (ambulant & stationär) – Tageskurs',
+              'Auffrischungs-Pflichtfortbildung Betreuungskräfte (ambulant & stationär) – Abendkurs',
+              'Auffrischungs-Pflichtfortbildung Betreuungskräfte',
+              'Jährliche Pflichtfortbildung für Betreuungskräfte'),
+        array('Praxisanleiter – jährliche Pflichtfortbildung (Abendkurs)',
+              'Jährliche Pflichtfortbildung „Praxisanleitung aktuell“'),
+        array('Medizinproduktebeauftragte:r',
+              'Medizinproduktebeauftragte:r (Abendkurs)'),
+        array('Pain Nursing (Schmerzmanagement)',
+              'Pain Nursing (Schmerzmanagement) Abendkurs',
+              'Professionelles Schmerzmanagement in der Pflege'),
+        array('Deeskalation & Gewaltprävention in der Pflege',
+              'Gewaltprävention, Eigenschutz & Führungsverantwortung im ambulanten Dienst',
+              'Sicher handeln bei aggressiven Klient:innen – Gewaltprävention im ambulanten Setting'),
+    );
+}
+
+/** Gespeicherte Gruppen (auch eine leere Liste) gehen vor; ungespeichert gilt die Vorgabe. */
+function livento_cc_formvarianten() {
+    $g = get_option('livento_cc_formvarianten', null);
+    return is_array($g) ? $g : livento_cc_formvarianten_vorgabe();
+}
+
+/** Textarea-Inhalt → Gruppen (je Zeile eine Gruppe, Titel mit „|“ getrennt, mindestens zwei). */
+function livento_cc_formvarianten_parsen($text) {
+    $gruppen = array();
+    foreach (preg_split('/\r\n|\r|\n/', (string) $text) as $zeile) {
+        $titel = array_values(array_filter(array_map('trim', explode('|', $zeile)), 'strlen'));
+        if (count($titel) >= 2) {
+            $gruppen[] = $titel;
+        }
+    }
+    return $gruppen;
+}
+
+function livento_cc_formvergleich_html($o) {
+    $key    = livento_cc_title_key($o['title'] ?? '');
+    $gruppe = null;
+    foreach (livento_cc_formvarianten() as $g) {
+        foreach ((array) $g as $t) {
+            if (livento_cc_title_key($t) === $key) {
+                $gruppe = $g;
+                break 2;
+            }
+        }
+    }
+    if ($gruppe === null) {
+        return '';
+    }
+    $varianten = array();
+    foreach ($gruppe as $t) {
+        $k = livento_cc_title_key($t);
+        if (isset($varianten[$k])) {
+            continue;
+        }
+        $v = $k === $key ? $o : livento_cc_offering_by_title_key($k);
+        if ($v) {
+            $varianten[$k] = $v;
+        }
+    }
+    // Gleiche Form unter verschiedenen Titeln (z. B. ein Durchgang ohne „– Tageskurs“ im Titel)
+    // nur einmal: die aktuelle Seite hat Vorrang, sonst der naechste Start.
+    $je_form = array();
+    foreach ($varianten as $k => $v) {
+        $tm = (array) ($v['time_models'] ?? array());
+        sort($tm);
+        $form = livento_cc_effective_kind($v) . '|' . ($v['format'] ?? '') . '|' . implode(',', $tm) . '|'
+              . (livento_cc_is_self_learning($v) ? 's' : '') . (livento_cc_is_on_request($v) ? 'a' : '');
+        $start = !empty($v['start_datetime']) ? (string) $v['start_datetime'] : '9999';
+        if (!isset($je_form[$form])
+            || ($k === $key)
+            || ($je_form[$form][0] !== $key && strcmp($start, $je_form[$form][2]) < 0)) {
+            $je_form[$form] = array($k, $v, $start);
+        }
+    }
+    $varianten = array();
+    foreach ($je_form as $e) {
+        $varianten[$e[0]] = $e[1];
+    }
+    if (count($varianten) < 2) {
+        return ''; // die anderen Formen sind gerade nicht im Katalog
+    }
+
+    $kinds = livento_cc_kind_singular();
+    $zm    = livento_cc_time_model_labels();
+    $out   = '<div class="lvk-section lvk-formen"><h2>Welche Form passt zu dir?</h2>'
+           . '<p class="lvk-formen-lead">Dieses Thema gibt es bei uns in ' . count($varianten) . ' Formen.</p>'
+           . '<div class="lvk-formen-grid">';
+    foreach ($varianten as $k => $v) {
+        $hier   = $k === $key;
+        $selbst = livento_cc_is_self_learning($v);
+        $kopf   = array_filter(array(
+            $kinds[livento_cc_effective_kind($v)] ?? '',
+            $selbst ? 'Online im eigenen Tempo' : (!empty($v['format']) ? livento_cc_format_label($v['format']) : ''),
+        ));
+        $zeit = array();
+        foreach ((array) ($v['time_models'] ?? array()) as $t) {
+            if (isset($zm[$t])) {
+                $zeit[] = $zm[$t];
+            }
+        }
+        if (!empty($zeit)) {
+            $kopf[] = implode(' & ', $zeit);
+        }
+
+        $zeilen = array();
+        $umfang = livento_cc_umfang_label($v);
+        if ($umfang !== '') {
+            $zeilen['Umfang'] = $umfang;
+        }
+        if (livento_cc_is_on_request($v)) {
+            $zeilen['Start'] = 'auf Anfrage';
+        } elseif ($selbst) {
+            $zeilen['Start'] = 'jederzeit';
+        } elseif (!empty($v['start_datetime'])) {
+            $zeilen['Start'] = livento_cc_fmt_date($v['start_datetime']);
+        }
+        $zeilen['Preis'] = (isset($v['public_price']) && $v['public_price'] !== null && $v['public_price'] !== '')
+            ? livento_cc_fmt_price($v['public_price'], !empty($v['is_vat_exempt'])) : 'auf Anfrage';
+        $abschluss = livento_cc_abschluss_label($v);
+        if ($abschluss !== '') {
+            $zeilen['Abschluss'] = $abschluss;
+        }
+
+        $innen = '<span class="lvk-form-kopf">' . esc_html(implode(' · ', $kopf)) . '</span>'
+               . '<span class="lvk-form-t">' . esc_html(trim((string) $v['title'])) . '</span><dl>';
+        foreach ($zeilen as $l => $w) {
+            $innen .= '<dt>' . esc_html($l) . '</dt><dd>' . esc_html($w) . '</dd>';
+        }
+        $innen .= '</dl>';
+        if ($hier) {
+            $out .= '<div class="lvk-form lvk-form--hier">' . $innen . '<span class="lvk-form-hier">Du bist hier</span></div>';
+        } else {
+            $out .= '<a class="lvk-form" href="' . esc_url(livento_cc_detail_url($v['slug'])) . '">' . $innen
+                  . '<span class="lvk-form-link">Zu dieser Form →</span></a>';
+        }
+    }
+    return $out . '</div></div>';
+}
 
 /**
  * v1.52.0: Box „Naechster Termin" auf der Seite eines Anfragekurses. Nur wenn
@@ -5504,6 +5677,18 @@ function livento_cc_styles() {
 .lvk-beitrag-t{font-weight:700;color:var(--lvk-green);margin:4px 0 6px;line-height:1.35}
 .lvk-beitrag-x{font-size:.9rem;color:#555;line-height:1.5}
 .lvk-beitrag-more{margin-top:auto;padding-top:8px;font-weight:700;color:var(--lvk-green);font-size:.9rem}
+.lvk-formen-lead{margin:8px 0 0;color:#555}
+.lvk-formen-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:14px}
+.lvk .lvk-form{display:flex;flex-direction:column;background:#fff;border:1px solid #eef0ea;border-radius:14px;padding:16px;text-decoration:none!important;color:inherit!important;transition:transform .2s,box-shadow .2s}
+.lvk a.lvk-form:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10)}
+.lvk .lvk-form--hier{border:2px solid var(--lvk-accent);background:#f9fcf5;padding:15px}
+.lvk-form-kopf{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6b7a72}
+.lvk-form-t{font-weight:700;color:var(--lvk-green);margin:4px 0 10px;line-height:1.35}
+.lvk-form dl{margin:0 0 12px;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:.9rem}
+.lvk-form dt{color:#777;margin:0}
+.lvk-form dd{margin:0;color:#222}
+.lvk-form-hier,.lvk-form-link{margin-top:auto;font-weight:700;font-size:.9rem;color:var(--lvk-green)}
+.lvk-form-hier{color:var(--lvk-lime)}
 .lvk-benefit{background:#f3f8ee;border-radius:8px;padding:4px 20px}
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
@@ -5873,6 +6058,11 @@ function livento_cc_admin_page() {
             'email'   => sanitize_email(wp_unslash($_POST['livento_cc_kontakt_email'] ?? '')),
             'antwort' => sanitize_text_field(wp_unslash($_POST['livento_cc_kontakt_antwort'] ?? '')),
         ));
+        // v1.66.0: Formvarianten (eine Gruppe je Zeile, Titel mit „|“)
+        if (isset($_POST['livento_cc_formvarianten'])) {
+            $gruppen = livento_cc_formvarianten_parsen(sanitize_textarea_field(wp_unslash($_POST['livento_cc_formvarianten'])));
+            update_option('livento_cc_formvarianten', $gruppen);
+        }
         livento_cc_flush_cache(); // mit ggf. neuem Key sofort neu laden
         $notice = 'Einstellungen gespeichert.';
     }
@@ -6525,6 +6715,15 @@ function livento_cc_admin_tab_settings() {
     echo '<p><label><strong>E-Mail:</strong><br><input type="email" name="livento_cc_kontakt_email" class="regular-text" value="' . esc_attr($k['email']) . '"></label></p>';
     echo '<p><label><strong>Antwortzeit:</strong><br><input type="text" name="livento_cc_kontakt_antwort" class="regular-text" value="' . esc_attr($k['antwort']) . '" placeholder="innerhalb weniger Stunden an Werktagen"></label></p>';
     echo '<p class="description">Erscheint als „… melde mich <em>Antwortzeit</em>.“ Telefon und E-Mail beide leer = keine Karte.</p>';
+
+    // v1.66.0: Formvarianten
+    $zeilen = array();
+    foreach (livento_cc_formvarianten() as $g) {
+        $zeilen[] = implode(' | ', (array) $g);
+    }
+    echo '<h3 style="margin-top:24px">Formvarianten (Kursdetailseiten)</h3>';
+    echo '<p>Kurse zum selben Thema in anderer Form (live tagsüber oder abends, Selbstlernkurs, Präsenz …). Auf jeder Seite einer Gruppe erscheint „Welche Form passt zu dir?“ mit Umfang, Start, Preis und Abschluss. <strong>Eine Gruppe je Zeile, Kurstitel mit „|“ getrennt</strong>, genau wie im Katalog (Groß-/Kleinschreibung egal). Formen, die gerade nicht im Katalog sind, werden ausgelassen.</p>';
+    echo '<textarea name="livento_cc_formvarianten" class="large-text" rows="6">' . esc_textarea(implode("\n", $zeilen)) . '</textarea>';
 
     echo '<p style="margin-top:20px"><button class="button button-primary" name="livento_cc_save_settings" value="1">Speichern</button></p>';
     echo '</form>';
