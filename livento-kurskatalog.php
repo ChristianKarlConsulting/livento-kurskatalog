@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.62.0
+ * Version:           1.63.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,11 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.63.0: Selbstlernkurse auf Anfrage ohne „Termin“ (7 von 21 Anfragekursen): Kartenabzeichen und
+ *          Sticky-Leiste „Auf Anfrage“, Button und Formular „Kurs anfragen“, Feld „Gewünschter Start“,
+ *          Danke-Meldung ohne „passenden Termin“.
+ *          Erkennung zentral in livento_cc_is_self_learning (Angebotsart, Kurstyp oder Format).
  *
  * v1.62.0: Kursdetailseite — drei Bausteine aus der Wettbewerber-Analyse (19.11.2026):
  *          „So läuft es ab“ in 3–4 Schritten je Angebotsart (Selbstlernkurs, Termin je Format,
@@ -1140,6 +1145,17 @@ function livento_cc_get_offering($slug) {
 /** v1.52.0: Anfragekurs (Kurs ohne Termin, Anfrage statt Buchung)? */
 function livento_cc_is_on_request($o) {
     return isset($o['offering_type']) && $o['offering_type'] === 'on_request';
+}
+
+/**
+ * v1.63.0: Selbstlernkurs? Nicht nur ueber die Angebotsart — ist sie nicht gepflegt, liefert
+ * livento_cc_effective_kind ''. Anfragekurse koennen Selbstlernkurse sein (20.11.2026: 7 von 21);
+ * dort gibt es keinen Termin, also auch kein „Termin anfragen“.
+ */
+function livento_cc_is_self_learning($o) {
+    return livento_cc_effective_kind($o) === 'selbstlernkurs'
+        || ($o['offering_type'] ?? '') === 'self_learning'
+        || ($o['format'] ?? '') === 'selbstlern';
 }
 
 /**
@@ -3409,7 +3425,7 @@ function livento_cc_render_card($o, $members = array()) {
             $out .= '<span class="lvk-badge lvk-badge-pflicht">Pflichtfortbildung</span>';
         }
         if (livento_cc_is_on_request($o)) {
-            $out .= '<span class="lvk-badge lvk-badge-anfrage">Termin auf Anfrage</span>';
+            $out .= '<span class="lvk-badge lvk-badge-anfrage">' . (livento_cc_is_self_learning($o) ? 'Auf Anfrage' : 'Termin auf Anfrage') . '</span>';
         }
         if (!empty($o['format'])) {
             $out .= '<span class="lvk-badge">' . esc_html(livento_cc_format_label($o['format'])) . '</span>';
@@ -3831,7 +3847,7 @@ function livento_cc_factbox_html($o) {
         $out .= '<a class="lvk-cta lvk-fb-cta" href="' . esc_url($o['wc_checkout_url']) . '" rel="nofollow">Jetzt anmelden</a>';
     } elseif (livento_cc_is_on_request($o)) {
         // v1.52.0: Anfragekurs — kein Checkout, das Formular steht weiter unten.
-        $out .= '<a class="lvk-cta lvk-fb-cta" href="#kursanfrage">Termin anfragen</a>';
+        $out .= '<a class="lvk-cta lvk-fb-cta" href="#kursanfrage">' . (livento_cc_is_self_learning($o) ? 'Kurs anfragen' : 'Termin anfragen') . '</a>';
     }
     $out .= '<a class="lvk-cta-secondary lvk-fb-cta2" href="' . esc_url($beratung) . '">Unsicher? Kostenlose Beratung</a>';
     $out .= '</div>';
@@ -4003,7 +4019,7 @@ function livento_cc_render_detail($o) {
         $out .= '</div>';
     } elseif (livento_cc_is_on_request($o)) {
         $out .= '<div class="lvk-sticky">'
-              . '<div class="lvk-sticky-price">Termin auf Anfrage</div>'
+              . '<div class="lvk-sticky-price">' . (livento_cc_is_self_learning($o) ? 'Auf Anfrage' : 'Termin auf Anfrage') . '</div>'
               . '<a class="lvk-cta" href="#kursanfrage">Anfragen</a>'
               . '</div>';
     }
@@ -4096,10 +4112,7 @@ function livento_cc_ablauf_steps($o) {
     if (livento_cc_is_bildungsgutschein($o)) {
         return array();
     }
-    // Nicht nur die Angebotsart: Ist sie nicht gepflegt, liefert livento_cc_effective_kind ''.
-    $selbst = livento_cc_effective_kind($o) === 'selbstlernkurs'
-           || ($o['offering_type'] ?? '') === 'self_learning'
-           || ($o['format'] ?? '') === 'selbstlern';
+    $selbst = livento_cc_is_self_learning($o);
     $steps  = array();
 
     if (livento_cc_is_on_request($o)) {
@@ -4218,10 +4231,16 @@ function livento_cc_next_program_html($o) {
  */
 function livento_cc_inquiry_section($o) {
     $datenschutz = livento_cc_privacy_url();
+    $selbst      = livento_cc_is_self_learning($o); // v1.63.0: Selbstlernkurse haben keinen Termin
     ob_start(); ?>
     <section class="lvk-section lv-inq" id="kursanfrage">
+        <?php if ($selbst) : ?>
+        <h2>Kurs anfragen</h2>
+        <p class="lv-inq__lead">Diesen Kurs gibt es auf Anfrage. Sag uns, für wen du ihn anfragst – wir melden uns bei dir.</p>
+        <?php else : ?>
         <h2>Termin anfragen</h2>
         <p class="lv-inq__lead">Für diesen Kurs steht gerade kein fester Termin. Sag uns, wann es dir passt – wir melden uns bei dir.</p>
+        <?php endif; ?>
         <form class="lv-inq-form" novalidate
               data-endpoint="<?php echo esc_url(rest_url('livento/v1/kursanfrage')); ?>"
               data-slug="<?php echo esc_attr((string) $o['slug']); ?>"
@@ -4256,7 +4275,7 @@ function livento_cc_inquiry_section($o) {
                     <input type="tel" name="phone" autocomplete="tel">
                 </label>
                 <label class="lv-inq-field lv-inq-field--wide">
-                    <span>Wunschzeitraum (optional)</span>
+                    <span><?php echo $selbst ? 'Gewünschter Start (optional)' : 'Wunschzeitraum (optional)'; ?></span>
                     <input type="text" name="desired_period" placeholder="z. B. Frühjahr 2027">
                 </label>
                 <label class="lv-inq-field lv-inq-field--wide">
@@ -4280,7 +4299,9 @@ function livento_cc_inquiry_section($o) {
             </label>
 
             <p class="lv-inq-err" hidden></p>
-            <p class="lv-inq-ok" hidden>Danke, deine Anfrage ist da. Wir melden uns, sobald es einen passenden Termin gibt – oder vorher, wenn wir Fragen haben.</p>
+            <p class="lv-inq-ok" hidden><?php echo $selbst
+                ? 'Danke, deine Anfrage ist da. Wir melden uns bei dir.'
+                : 'Danke, deine Anfrage ist da. Wir melden uns, sobald es einen passenden Termin gibt – oder vorher, wenn wir Fragen haben.'; ?></p>
             <button type="submit" class="lvk-cta">Jetzt anfragen</button>
             <p class="lv-inq__small">* Pflichtfelder. Die Anfrage ist unverbindlich.</p>
         </form>

@@ -3,12 +3,15 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.62.0
+Stable tag: 1.63.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.63.0 =
+* Selbstlernkurse auf Anfrage ohne "Termin": Kartenabzeichen und Sticky-Leiste "Auf Anfrage", Button und Formular "Kurs anfragen", Feld "Gewuenschter Start", Danke-Meldung ohne "passenden Termin". Kurse mit Termin unveraendert.
 
 = 1.62.0 =
 * Kursdetailseite: "So laeuft es ab" in 3-4 Schritten je Angebotsart (Selbstlernkurs, Termin je Format, Anfragekurs; nicht bei Bildungsgutschein), "Dein Abschluss" (Zertifikat, Pruefung, RbP-Punkte, Echtheitspruefung per Pruefnummer) und Karte "Fragen zum Kurs?" mit Ansprechpartner, Antwortzeit, Telefon und E-Mail.
