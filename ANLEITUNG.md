@@ -128,7 +128,17 @@ Jede Kursdetailseite zeigt automatisch drei weitere Abschnitte. Gepflegt wird ni
 
 - **So läuft es ab:** 3–4 Schritte je Angebotsart. Selbstlernkurs: buchen, Zugang per E-Mail, lernen im eigenen Tempo, Zertifikat. Termin-Kurs: Platz sichern, Bestätigung per E-Mail, Teilnahme je Format, Abschluss. Anfragekurs: anfragen, wir melden uns, Abschluss. Der letzte Schritt erscheint nur, wenn in Campus Connect ein Abschluss gepflegt ist. Bei Kursen mit Bildungsgutschein entfällt der Abschnitt, dort erklärt „Förderung mit Bildungsgutschein“ den Weg.
 - **Dein Abschluss:** Nur bei Kursen mit Zertifikat. Er zeigt den Zertifikatstitel, die Prüfung und die RbP-Punkte aus Campus Connect, dazu den Hinweis auf die Echtheitsprüfung per Prüfnummer mit Link zu „Zertifikat prüfen“.
+- **Fachbeiträge zum Thema (ab 1.64.0):** bis zu drei Blogbeiträge, die dem Kurs zugeordnet sind, die neuesten zuerst. Zugeordnet wird beim Beitrag, siehe unten.
 - **Fragen zum Kurs?:** Karte mit Foto, Name, Antwortzeit, Telefon und E-Mail. Einstellen unter *Livento Katalog → Einstellungen → Ansprechpartner (Kursdetailseiten)*. Ohne Name heißt die Karte „Deine Kursberatung“ und spricht in der Wir-Form, mit Name in der Ich-Form. Die Antwortzeit steht auch im Ablauf der Anfragekurse. Das Foto ist eine Bild-URL, zum Beispiel das Profilfoto aus Campus Connect.
+
+### Blogbeiträge mit Kursen verknüpfen (ab 1.64.0)
+
+Im Beitrags-Editor steht rechts die Box **„Passende Kurse (Livento)“**. Dort hakst du die passenden Kurse an. Für Themen ohne einzelnen öffentlichen Kurs wählst du einen Bereich des CampusTickets, etwa „CampusTicket: Behandlungspflege & Prophylaxen“. Das Filterfeld darüber durchsucht die Liste.
+
+- **Unter dem Beitrag** erscheint der Kasten „Passende Weiterbildungen“. Er zeigt die Kurse mit Angebotsart, nächstem Start und Preis. Ein CampusTicket-Bereich zeigt die Zahl seiner Online-Kurse, und sein Link öffnet auf der Ticketseite genau diesen Bereich.
+- **Auf der Kursdetailseite** erscheint der Beitrag unter „Fachbeiträge zum Thema“, mit höchstens drei Beiträgen, die neuesten zuerst.
+- Die Zuordnung hängt am **Kurstitel**, nicht am einzelnen Termin. Ein neuer Durchgang mit gleichem Titel übernimmt sie also automatisch. Ist ein Kurs gerade nicht im Katalog, fällt er aus dem Kasten heraus. Die Zuordnung bleibt aber gespeichert und ist in der Box als „derzeit nicht im Katalog“ markiert.
+- Mit 1.64.0 kam eine bestätigte Erstzuordnung für 48 Beiträge. Sie wird einmal übernommen, und zwar nur bei Beiträgen, die noch keine eigene Zuordnung haben.
 
 ---
 

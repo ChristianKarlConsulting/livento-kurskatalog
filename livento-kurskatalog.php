@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.63.0
+ * Version:           1.64.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,14 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.64.0: Fachbeiträge ↔ Kurse. Je Blogbeitrag Post-Meta _livento_cc_ziel (k:<Kurstitel> bzw.
+ *          t:<Themenbereich des CampusTickets>), gepflegt in der Box „Passende Kurse (Livento)“ im
+ *          Beitrags-Editor. Kursdetailseite: „Fachbeiträge zum Thema“ (bis zu 3, neueste zuerst).
+ *          Unter dem Beitrag: „Passende Weiterbildungen“ (Kurse mit Start/Preis bzw. Bereich auf der
+ *          Ticketseite; der Link oeffnet den Bereich). Erstzuordnung (48 Beitraege, vom Nutzer
+ *          bestaetigt) wird einmal uebernommen, nur wo noch nichts gesetzt ist. Zuordnung am Titel,
+ *          damit sie neue Durchgaenge ueberlebt; Kurse, die gerade nicht im Katalog sind, fallen weg.
  *
  * v1.63.0: Selbstlernkurse auf Anfrage ohne „Termin“ (7 von 21 Anfragekursen): Kartenabzeichen und
  *          Sticky-Leiste „Auf Anfrage“, Button und Formular „Kurs anfragen“, Feld „Gewünschter Start“,
@@ -3989,6 +3997,9 @@ function livento_cc_render_detail($o) {
         $out .= '</div>';
     }
 
+    // v1.64.0: Blogbeitraege, die diesem Kurs zugeordnet sind.
+    $out .= livento_cc_fachbeitraege_html($o);
+
     // v1.62.0: Ansprechpartner (Einstellungen → Ansprechpartner).
     $out .= livento_cc_kontakt_html();
 
@@ -4198,6 +4209,340 @@ function livento_cc_abschluss_html($o) {
     return '<div class="lvk-section lvk-abschluss"><h2>Dein Abschluss</h2><ul class="lvk-abschluss-list"><li>'
          . implode('</li><li>', $punkte) . '</li></ul></div>';
 }
+
+/* ============================================================
+ * v1.64.0: Fachbeiträge ↔ Kurse
+ * Zuordnung je Blogbeitrag als Post-Meta _livento_cc_ziel (je Ziel eine Zeile):
+ *   k:<Kurstitel, klein>  = Kurs (alle Durchgaenge mit diesem Titel)
+ *   t:<Themenbereich>     = Bereich auf der CampusTicket-Seite (Anker lv-kb-<n>-<bereich>)
+ * Am Titel, nicht am Slug: Ein neuer Durchgang bekommt einen neuen Slug, die Zuordnung bleibt.
+ * Gepflegt im Beitrag (Box „Passende Kurse (Livento)“). Ausgabe: „Fachbeiträge zum Thema“ auf
+ * der Kursdetailseite und „Passende Weiterbildungen“ unter dem Beitrag.
+ * ============================================================ */
+
+function livento_cc_title_key($title) {
+    $t = trim((string) $title);
+    $t = function_exists('mb_strtolower') ? mb_strtolower($t, 'UTF-8') : strtolower($t);
+    return preg_replace('/\s+/u', ' ', $t);
+}
+
+function livento_cc_ticket_url() {
+    return home_url('/e-learning/campus-ticket/');
+}
+
+/**
+ * Erstzuordnung, vom Nutzer am 20.11.2026 bestaetigt (48 Beitraege). Wird einmal in die Beitraege
+ * uebernommen — nur dort, wo noch nichts gesetzt ist —, danach gilt allein die Pflege im Beitrag.
+ */
+function livento_cc_fb_erstzuordnung() {
+    return array(
+        6015 => array('k:pain nursing (schmerzmanagement)', 'k:pain nursing (schmerzmanagement) abendkurs', 'k:professionelles schmerzmanagement in der pflege'), // Expertenstandard Schmerzmanagement in der Pflege 2026
+        6011 => array('k:ki-führerschein basic – künstliche intelligenz für pflege und betreuung', 'k:ki-kompetenzen für pflegekräfte – praxisworkshop', 'k:eu ai act essentials – datenschutz im umgang mit ki in der pflege'), // KI in der Pflege: Use Cases, Prompts und Recht 2026
+        5411 => array('k:ki-führerschein basic – künstliche intelligenz für pflege und betreuung', 'k:ki-kompetenzen für pflegekräfte – praxisworkshop', 'k:wie uns ki in der maßnahmenplanung und dokumentation wirklich helfen kann – praxisworkshop'), // KI in der Pflege: Was Künstliche Intelligenz heute wirklich 
+        6008 => array('k:qualitätsmanagementbeauftragte:r in sozial-, gesundheits- und pflegeeinrichtungen', 'k:interner auditor in der stationären und ambulanten pflege (iso 19011)'), // QMB Pflege: Qualitätsbeauftragte Weiterbildung 2026
+        2604 => array('k:qualitätsmanagementbeauftragte:r in sozial-, gesundheits- und pflegeeinrichtungen', 'k:interner auditor in der stationären und ambulanten pflege (iso 19011)'), // Was ändert sich bei der Prüfung von ambulanten Einrichtungen
+        6005 => array('k:medizinproduktebeauftragte:r', 'k:medizinproduktebeauftragte:r (abendkurs)'), // Medizinproduktebeauftragter Pflege: Pflicht &038 Aufgaben
+        5973 => array('k:hygienebeauftragte:r in stationärer und ambulanter pflege', 'k:medizinproduktebeauftragte:r', 'k:qualitätsmanagementbeauftragte:r in sozial-, gesundheits- und pflegeeinrichtungen'), // Beauftragte in der Pflege: Wer ist Pflicht (2026)
+        5970 => array('k:hygienebeauftragte:r in stationärer und ambulanter pflege'), // Hygienebeauftragte vs. Hygienefachkraft: Unterschied
+        6002 => array('k:palliative care – fachweiterbildung für pflegekräfte'), // Palliative Care Weiterbildung: 160 Std., Pflicht &038 Kosten
+        2547 => array('k:palliative care – fachweiterbildung für pflegekräfte', 'k:trauerbegleitung – basis- und aufbaukurs'), // Palliative Care Ausbildung für Pflegekräfte: Der vollständig
+        5998 => array('k:pain nursing (schmerzmanagement) abendkurs', 'k:medizinproduktebeauftragte:r (abendkurs)', 'k:praxisanleiter – jährliche pflichtfortbildung (abendkurs)'), // Weiterbildung neben dem Schichtdienst in der Pflege
+        5985 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)', 'k:qualifizierung zur betreuungskraft nach §53b sgb xi - für stationäre und ambulante betreuung', 'k:praxisanleiter:in (§ 4 pflaprv)', 'k:palliative care – fachweiterbildung für pflegekräfte'), // Bildungsgutschein Pflege 2026: § 81 vs. § 82 SGB III
+        5982 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)'), // Heimleitung und Wohnbereichsleitung: Voraussetzungen, Landes
+        5967 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)'), // Voraussetzungen nach § 71 SGB XI
+        4918 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)'), // Aufgaben einer Pflegedienstleitung (PDL)  LIVENTO BILDUNG
+        4917 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)'), // Gehalt als Pflegedienstleitung (PDL) 2026  LIVENTO BILDUNG
+        5979 => array('k:pflegeberater:in nach § 7a und § 45 sgb xi', 'k:pflegeberatungseinsätze nach § 37.3 & § 45 sgb xi', 'k:pflegeberater – pflegekurs nach §45 sgb xi'), // Pflegeberater werden: § 7a, § 37.3 und § 45 SGB XI
+        3946 => array('k:pflegeberater:in nach § 7a und § 45 sgb xi', 'k:pflegeberatungseinsätze nach § 37.3 & § 45 sgb xi', 'k:pflegeberater – pflegekurs nach §45 sgb xi'), // Pflegeberatung nach § 7a SGB XI: Kostenlos, neutral und oft 
+        3931 => array('k:beratungseinsatz nach § 37 abs. 3 sgb xi – vom ersten anruf bis zum nachweis', 'k:pflegeberatungseinsätze nach § 37.3 & § 45 sgb xi'), // Beratungseinsatz nach § 37 Abs. 3 SGB XI 2026: Was jetzt gil
+        5964 => array('k:jährliche pflichtfortbildung „praxisanleitung aktuell“', 'k:praxisanleiter – jährliche pflichtfortbildung (abendkurs)'), // Praxisanleiter Pflichtfortbildung: 24 Stunden erklärt
+        4899 => array('k:praxisanleiter:in (§ 4 pflaprv)', 'k:berufspädagogische zusatzqualifikation zur praxisanleitung in der pflege', 'k:jährliche pflichtfortbildung „praxisanleitung aktuell“'), // Praxisanleitung in der Pflege
+        5961 => array('k:jährliche pflichtfortbildung für betreuungskräfte', 'k:auffrischungs-pflichtfortbildung betreuungskräfte', 'k:auffrischungs-pflichtfortbildung betreuungskräfte (ambulant & stationär) – abendkurs', 'k:auffrischungs-pflichtfortbildung betreuungskräfte (ambulant & stationär) – tageskurs'), // Fortbildung Betreuungskräfte: 16 Stunden Pflicht
+        5958 => array('k:qualifizierung zur betreuungskraft nach §53b sgb xi - für stationäre und ambulante betreuung'), // Betreuungskraft 43b 53b: Voraussetzungen &038 Kosten
+        1904 => array('k:qualifizierung zur betreuungskraft nach §53b sgb xi - für stationäre und ambulante betreuung'), // Betreuungskraft Weiterbildung
+        6078 => array('k:fachkraft für demenzversorgung'), // Demenzprävention in der Pflege: Risikofaktoren, Frühdiagnost
+        5732 => array('k:fachkraft für demenzversorgung'), // Selbsterhaltungstherapie (SET) bei Demenz  einfach erklärt
+        4150 => array('k:fachkraft für demenzversorgung', 't:betreuung-aktivierung'), // Biografiearbeit in der Pflege: Methoden, Nutzen und praktisc
+        5951 => array('k:basiskurs: behandlungspflege lg1'), // Behandlungspflege LG1 und LG2: Regeln je Bundesland
+        5097 => array('k:pflegehelfer qn 1 – grundqualifikation pflege für pflegehilfskräfte', 'k:basiskurs für pflegehilfs- und assistenzkräfte qn 2 nach § 113c sgb xi'), // Pflegeassistenz-Ausbildung ab 2027: Was die neue bundeseinhe
+        1662 => array('k:pflegehelfer qn 1 – grundqualifikation pflege für pflegehilfskräfte', 'k:basiskurs für pflegehilfs- und assistenzkräfte qn 2 nach § 113c sgb xi', 'k:qualifizierung zur betreuungskraft nach §53b sgb xi - für stationäre und ambulante betreuung'), // Quereinsteiger Pflege
+        5781 => array('k:rechtsupdate pflege- und sozialrecht'), // Pflegereform 2026: Das PNOG im Überblick
+        3945 => array('k:rechtsupdate pflege- und sozialrecht'), // Das BEEP-Gesetz 2026: Was die Befugniserweiterung und Entbür
+        2574 => array('k:verwaltung in pflegeeinrichtungen (ambulant und stationär)', 'k:excel-grundkurs für verwaltungsmitarbeitende'), // Verwaltung Pflegeeinrichtungen Kurs 2026: Was Sie für ambula
+        2556 => array('k:verwaltung in pflegeeinrichtungen (ambulant und stationär)', 'k:excel-grundkurs für verwaltungsmitarbeitende'), // Grundlagen der Verwaltung in Pflegeeinrichtungen (ambulant &
+        1899 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)', 'k:praxisanleiter:in (§ 4 pflaprv)', 'k:palliative care – fachweiterbildung für pflegekräfte'), // Pflegefachkraft Weiterbildung
+        1641 => array('k:verantwortliche pflegefachkraft (§ 71 sgb xi)', 'k:praxisanleiter:in (§ 4 pflaprv)', 'k:palliative care – fachweiterbildung für pflegekräfte'), // Weiterbildung für Pflegekräfte
+        5690 => array('t:behandlungspflege-prophylaxen'), // Soor- und Parotitisprophylaxe: Maßnahmen
+        5689 => array('t:behandlungspflege-prophylaxen'), // Aspirationsprophylaxe: Maßnahmen in der Pflege
+        5688 => array('t:behandlungspflege-prophylaxen'), // Zystitisprophylaxe: Maßnahmen in der Pflege
+        5681 => array('t:behandlungspflege-prophylaxen'), // Obstipationsprophylaxe: Maßnahmen in der Pflege
+        5678 => array('t:behandlungspflege-prophylaxen'), // Intertrigoprophylaxe: Maßnahmen &038 Hautpflege
+        5674 => array('t:behandlungspflege-prophylaxen'), // Norton-Skala: Kriterien &038 Punktwerte
+        5671 => array('t:behandlungspflege-prophylaxen'), // Braden-Skala: Punktwerte &038 Anwendung
+        4257 => array('t:behandlungspflege-prophylaxen'), // Kontrakturenprophylaxe: Maßnahmen &038 Übungen
+        4254 => array('t:behandlungspflege-prophylaxen'), // Pneumonieprophylaxe: Maßnahmen &038 Übungen
+        4242 => array('t:behandlungspflege-prophylaxen'), // Dekubitus: Grade, Entstehung &038 Prophylaxe
+        4237 => array('t:behandlungspflege-prophylaxen'), // Sturzprophylaxe: Maßnahmen, Übungen &038 Standard
+        4195 => array('t:behandlungspflege-prophylaxen'), // Expertenstandards Pflege
+    );
+}
+
+add_action('init', function () {
+    if (get_option('livento_cc_fb_import') === '1') {
+        return;
+    }
+    foreach (livento_cc_fb_erstzuordnung() as $post_id => $ziele) {
+        if (get_post_type($post_id) !== 'post' || metadata_exists('post', $post_id, '_livento_cc_ziel')) {
+            continue;
+        }
+        foreach ($ziele as $z) {
+            add_post_meta($post_id, '_livento_cc_ziel', $z);
+        }
+    }
+    update_option('livento_cc_fb_import', '1');
+}, 20);
+
+/** Themenbereiche der CampusTicket-Seite: Schluessel => Name, Anzahl, Link mit Anker. */
+function livento_cc_ticket_bereiche() {
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+    $cache  = array();
+    $family = livento_cc_find_family('campusticket');
+    if (!$family) {
+        return $cache;
+    }
+    $index = 0; // gleiche Zaehlung wie die Varianten in [livento_tarif]
+    foreach ((array) $family['plans'] as $plan) {
+        foreach ((array) $plan['bundles'] as $bundle) {
+            list($groups) = livento_cc_ticket_areas(livento_cc_get_bundle_courses($bundle['id']));
+            foreach ($groups as $g) {
+                if ($g['key'] !== '_weitere' && !isset($cache[$g['key']])) {
+                    $cache[$g['key']] = array(
+                        'label' => $g['label'],
+                        'count' => count($g['courses']),
+                        'url'   => livento_cc_ticket_url() . '#lv-kb-' . $index . '-' . $g['key'],
+                    );
+                }
+            }
+            $index++;
+        }
+    }
+    return $cache;
+}
+
+/** Fruehester Durchgang eines Kurstitels im Katalog (oder null, wenn gerade keiner da ist). */
+function livento_cc_offering_by_title_key($key) {
+    $best = null;
+    foreach ((array) livento_cc_get_offerings() as $o) {
+        if (empty($o['slug']) || livento_cc_title_key($o['title'] ?? '') !== $key) {
+            continue;
+        }
+        $s = !empty($o['start_datetime']) ? (string) $o['start_datetime'] : '9999';
+        if ($best === null || strcmp($s, $best[0]) < 0) {
+            $best = array($s, $o);
+        }
+    }
+    return $best ? $best[1] : null;
+}
+
+/** Text aus WordPress (Titel, Inhalt) ohne Tags und Entitaeten — fuer esc_html. */
+function livento_cc_klartext($html) {
+    return trim(html_entity_decode(wp_strip_all_tags((string) $html), ENT_QUOTES, 'UTF-8'));
+}
+
+/** Kursdetailseite: bis zu drei Beitraege, die diesem Kurs zugeordnet sind (neueste zuerst). */
+function livento_cc_fachbeitraege_html($o) {
+    $posts = get_posts(array(
+        'post_type'     => 'post',
+        'post_status'   => 'publish',
+        'numberposts'   => 3,
+        'meta_key'      => '_livento_cc_ziel',
+        'meta_value'    => 'k:' . livento_cc_title_key($o['title'] ?? ''),
+        'orderby'       => 'date',
+        'order'         => 'DESC',
+        'no_found_rows' => true,
+    ));
+    if (empty($posts)) {
+        return '';
+    }
+    $out = '<div class="lvk-section lvk-beitraege-sec"><h2>Fachbeiträge zum Thema</h2><div class="lvk-beitraege">';
+    foreach ($posts as $p) {
+        $text   = $p->post_excerpt !== '' ? $p->post_excerpt : strip_shortcodes($p->post_content);
+        // Viele Beitraege beginnen mit „📌 Kurz gesagt“ — in der Karte ueberfluessig.
+        $auszug = preg_replace('/^[^\p{L}\p{N}]*Kurz gesagt[\s:]*/u', '', livento_cc_klartext($text));
+        $auszug = wp_trim_words($auszug, 22, ' …');
+        $out .= '<a class="lvk-beitrag" href="' . esc_url(get_permalink($p)) . '">'
+              . '<span class="lvk-beitrag-d">' . esc_html(get_the_date('d.m.Y', $p)) . '</span>'
+              . '<span class="lvk-beitrag-t">' . esc_html(livento_cc_klartext(get_the_title($p))) . '</span>'
+              . '<span class="lvk-beitrag-x">' . esc_html($auszug) . '</span>'
+              . '<span class="lvk-beitrag-more">Weiterlesen →</span></a>';
+    }
+    return $out . '</div></div>';
+}
+
+/** Kasten „Passende Weiterbildungen“ unter einem Beitrag. Kurse, die gerade nicht im Katalog sind, fallen weg. */
+function livento_cc_beitrag_kurse_html($post_id) {
+    $ziele = array_unique((array) get_post_meta($post_id, '_livento_cc_ziel', false));
+    if (empty($ziele)) {
+        return '';
+    }
+    $kinds    = livento_cc_kind_singular();
+    $bereiche = null;
+    $karten   = array();
+    foreach ($ziele as $z) {
+        $z = (string) $z;
+        if (strpos($z, 'k:') === 0) {
+            $o = livento_cc_offering_by_title_key(substr($z, 2));
+            if (!$o) {
+                continue;
+            }
+            $selbst = livento_cc_is_self_learning($o);
+            $kopf   = array_filter(array(
+                $kinds[livento_cc_effective_kind($o)] ?? '',
+                (!empty($o['format']) && !$selbst) ? livento_cc_format_label($o['format']) : '',
+            ));
+            $meta = array();
+            if (livento_cc_is_on_request($o)) {
+                $meta[] = $selbst ? 'Auf Anfrage' : 'Termin auf Anfrage';
+            } elseif (!$selbst && !empty($o['start_datetime'])) {
+                $meta[] = 'Start ' . livento_cc_fmt_date($o['start_datetime']);
+            } elseif ($selbst) {
+                $meta[] = 'Online im eigenen Tempo';
+            }
+            if (isset($o['public_price']) && $o['public_price'] !== null && $o['public_price'] !== '') {
+                $meta[] = livento_cc_fmt_price($o['public_price'], !empty($o['is_vat_exempt']));
+            }
+            $karten[] = array(implode(' · ', $kopf), (string) $o['title'], implode(' · ', $meta),
+                              livento_cc_detail_url($o['slug']), 'Zum Kurs →');
+        } elseif (strpos($z, 't:') === 0) {
+            if ($bereiche === null) {
+                $bereiche = livento_cc_ticket_bereiche();
+            }
+            $b = $bereiche[substr($z, 2)] ?? null;
+            if (!$b) {
+                continue;
+            }
+            $karten[] = array('CampusTicket · Online-Kurse', $b['label'],
+                              $b['count'] . ' Online-Kurse mit Zertifikat für dein ganzes Team', $b['url'], 'Kurse ansehen →');
+        }
+    }
+    if (empty($karten)) {
+        return '';
+    }
+    static $css = false;
+    $out = '';
+    if (!$css) {
+        $css = true;
+        $out .= '<style>'
+              . '.lvk-bk{--g:#004D33;margin:40px 0 0;padding:28px 26px;background:#fdf4ef;border-radius:20px}'
+              . '.lvk-bk-eyebrow{margin:0 0 4px!important;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#5C8A30}'
+              . '.lvk-bk-h{margin:0 0 16px!important;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:26px;line-height:1.2;color:var(--g)!important}'
+              . '.lvk-bk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}'
+              . '.lvk-bk a.lvk-bk-card{display:flex;flex-direction:column;background:#fff;border:1px solid #eef0ea;border-radius:16px;padding:18px;text-decoration:none!important;color:inherit!important;transition:transform .2s,box-shadow .2s}'
+              . '.lvk-bk a.lvk-bk-card:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10)}'
+              . '.lvk-bk-kopf{font-size:12px;font-weight:700;color:#6b7a72;text-transform:uppercase;letter-spacing:.04em}'
+              . '.lvk-bk-t{margin:6px 0;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:17px;line-height:1.3;color:var(--g)}'
+              . '.lvk-bk-m{font-size:14px;color:#475569;margin-bottom:14px}'
+              . '.lvk-bk-btn{margin-top:auto;align-self:flex-start;background:var(--g);color:#fff!important;font-family:"Qurova","Figtree",sans-serif;font-weight:600;font-size:14px;padding:9px 16px;border-radius:10px}'
+              . '</style>';
+    }
+    $out .= '<aside class="lvk-bk" aria-label="Passende Weiterbildungen"><p class="lvk-bk-eyebrow">Passend zum Beitrag</p>'
+          . '<h2 class="lvk-bk-h">Passende Weiterbildungen</h2><div class="lvk-bk-grid">';
+    foreach ($karten as $k) {
+        $out .= '<a class="lvk-bk-card" href="' . esc_url($k[3]) . '">'
+              . ($k[0] !== '' ? '<span class="lvk-bk-kopf">' . esc_html($k[0]) . '</span>' : '')
+              . '<span class="lvk-bk-t">' . esc_html($k[1]) . '</span>'
+              . ($k[2] !== '' ? '<span class="lvk-bk-m">' . esc_html($k[2]) . '</span>' : '')
+              . '<span class="lvk-bk-btn">' . esc_html($k[4]) . '</span></a>';
+    }
+    return $out . '</div></aside>';
+}
+
+/**
+ * Kasten unter jedem zugeordneten Beitrag. Nur im Hauptinhalt der Einzelansicht — nicht in Feeds,
+ * REST, Auszuegen (wp_trim_excerpt laeuft ueber the_content und landete sonst in Meta-Beschreibungen)
+ * oder anderen Beitraegen auf derselben Seite.
+ */
+add_filter('the_content', function ($content) {
+    if (is_admin() || is_feed() || !is_singular('post') || doing_filter('get_the_excerpt')
+        || (defined('REST_REQUEST') && REST_REQUEST)) {
+        return $content;
+    }
+    $id = get_the_ID();
+    if (!$id || (int) $id !== (int) get_queried_object_id() || strpos($content, 'class="lvk-bk"') !== false) {
+        return $content;
+    }
+    return $content . livento_cc_beitrag_kurse_html($id);
+}, 20);
+
+/** Box „Passende Kurse (Livento)“ im Beitrags-Editor. */
+add_action('add_meta_boxes', function () {
+    add_meta_box('livento_cc_ziele', 'Passende Kurse (Livento)', 'livento_cc_fb_metabox', 'post', 'side', 'default');
+});
+
+function livento_cc_fb_metabox($post) {
+    wp_nonce_field('livento_cc_ziele_speichern', 'livento_cc_ziele_nonce');
+    $gesetzt  = array_unique((array) get_post_meta($post->ID, '_livento_cc_ziel', false));
+    $optionen = array();
+    foreach ((array) livento_cc_get_offerings() as $o) {
+        $k = 'k:' . livento_cc_title_key($o['title'] ?? '');
+        if ($k !== 'k:' && !isset($optionen[$k])) {
+            $optionen[$k] = trim((string) $o['title']);
+        }
+    }
+    uasort($optionen, function ($a, $b) {
+        return strcasecmp(remove_accents($a), remove_accents($b));
+    });
+    foreach (livento_cc_ticket_bereiche() as $key => $b) {
+        $optionen['t:' . $key] = 'CampusTicket: ' . $b['label'] . ' (' . $b['count'] . ')';
+    }
+    foreach ($gesetzt as $z) {
+        if (!isset($optionen[$z])) {
+            $optionen[$z] = substr((string) $z, 2) . ' (derzeit nicht im Katalog)';
+        }
+    }
+    // Gesetzte zuerst
+    $sortiert = array();
+    foreach ($optionen as $v => $l) {
+        if (in_array($v, $gesetzt, true)) {
+            $sortiert[$v] = $l;
+        }
+    }
+    $sortiert += $optionen;
+
+    echo '<p style="margin:0 0 8px">Erscheinen unter dem Beitrag als „Passende Weiterbildungen“. Auf der Kursseite steht der Beitrag dann unter „Fachbeiträge zum Thema“.</p>';
+    echo '<input type="search" placeholder="Kurs filtern …" style="width:100%;margin-bottom:6px"'
+       . ' oninput="var q=this.value.toLowerCase();this.nextElementSibling.querySelectorAll(\'label\').forEach(function(l){l.style.display=l.textContent.toLowerCase().indexOf(q)>-1?\'\':\'none\'})">';
+    echo '<div style="max-height:280px;overflow:auto;border:1px solid #dcdcde;padding:6px 8px;background:#fff">';
+    foreach ($sortiert as $v => $l) {
+        echo '<label style="display:block;margin:3px 0"><input type="checkbox" name="livento_cc_ziele[]" value="' . esc_attr($v) . '"'
+           . checked(in_array($v, $gesetzt, true), true, false) . '> ' . esc_html($l) . '</label>';
+    }
+    echo '</div>';
+}
+
+add_action('save_post_post', function ($post_id) {
+    $nonce = isset($_POST['livento_cc_ziele_nonce']) ? sanitize_text_field(wp_unslash($_POST['livento_cc_ziele_nonce'])) : '';
+    if ($nonce === '' || !wp_verify_nonce($nonce, 'livento_cc_ziele_speichern')) {
+        return;
+    }
+    if ((defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) || wp_is_post_revision($post_id) || !current_user_can('edit_post', $post_id)) {
+        return;
+    }
+    $neu = array();
+    foreach ((array) ($_POST['livento_cc_ziele'] ?? array()) as $z) {
+        $z = sanitize_text_field(wp_unslash((string) $z));
+        if (preg_match('/^(k|t):.+/u', $z)) {
+            $neu[$z] = true;
+        }
+    }
+    delete_post_meta($post_id, '_livento_cc_ziel');
+    foreach (array_keys($neu) as $z) {
+        add_post_meta($post_id, '_livento_cc_ziel', $z);
+    }
+});
 
 /**
  * v1.52.0: Box „Naechster Termin" auf der Seite eines Anfragekurses. Nur wenn
@@ -5141,6 +5486,13 @@ function livento_cc_styles() {
 .lvk-kontakt-links a{color:var(--lvk-green)!important;font-weight:600;text-decoration:none}
 .lvk-kontakt-links a:hover{text-decoration:underline}
 @media(max-width:560px){.lvk-kontakt-card{flex-direction:column;align-items:flex-start}}
+.lvk-beitraege{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:14px}
+.lvk a.lvk-beitrag{display:flex;flex-direction:column;background:#fff;border:1px solid #eef0ea;border-radius:14px;padding:16px;text-decoration:none!important;color:inherit!important;transition:transform .2s,box-shadow .2s}
+.lvk a.lvk-beitrag:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(0,77,51,.10)}
+.lvk-beitrag-d{font-size:.8rem;color:#777}
+.lvk-beitrag-t{font-weight:700;color:var(--lvk-green);margin:4px 0 6px;line-height:1.35}
+.lvk-beitrag-x{font-size:.9rem;color:#555;line-height:1.5}
+.lvk-beitrag-more{margin-top:auto;padding-top:8px;font-weight:700;color:var(--lvk-green);font-size:.9rem}
 .lvk-benefit{background:#f3f8ee;border-radius:8px;padding:4px 20px}
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
@@ -7898,7 +8250,20 @@ function livento_cc_ticket_areas_js() {
       });
     });
     input.addEventListener('input', zeigen);
+
+    // v1.64.0: Link mit Anker (#lv-kb-0-bereich, z. B. aus einem Blogbeitrag) oeffnet den Bereich.
+    function ausAnker(scrollen){
+      var h = decodeURIComponent((location.hash || '').slice(1)), p = null;
+      panels.forEach(function(x){ if (x.id === h) { p = x; } });
+      if (!p) { return; }
+      input.value = '';
+      offen = p.getAttribute('data-lv-kb-panel');
+      zeigen();
+      if (scrollen) { setTimeout(function(){ p.scrollIntoView({block: 'start'}); }, 50); }
+    }
+    window.addEventListener('hashchange', function(){ ausAnker(true); });
     zeigen();
+    ausAnker(true);
   });
 })();
 </script>
