@@ -3,12 +3,16 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.59.0
+Stable tag: 1.60.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.60.0 =
+* Ticketseite: Sterne mit dem Schnitt aller veroeffentlichten Bewertungen der im Ticket enthaltenen Kurse (gewichtet nach Anzahl), beschriftet "... Bewertungen der Kurse in diesem Ticket". Gleiche Schwelle (ab 5) und gleicher Hinweis "Wie entstehen die Bewertungen?" wie beim einzelnen Kurs.
+* Bewusst nur sichtbar, nicht im Produkt-Schema: Die Bewertungen gelten den Kursen, nicht dem Ticket selbst.
 
 = 1.59.0 =
 * Sterne sichtbar und erst ab 5 Bewertungen: Detailseite und Karte zeigen Sterne, Schnitt und Anzahl. Unter 5 Bewertungen keine Sterne und kein Bewertungs-Schema mehr (vorher stand die Bewertung nur unsichtbar im Schema, z. B. 5,0 aus 1 Bewertung - Google verlangt sichtbare Bewertungen).

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.59.0
+ * Version:           1.60.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,13 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.60.0: Sterne auf der Ticketseite ([livento_tarif]): Schnitt aller veroeffentlichten Bewertungen
+ *          der im Ticket enthaltenen Kurse, gewichtet nach Anzahl, gleiche Schwelle (5) und gleicher
+ *          Hinweis wie beim Kurs, beschriftet „… Bewertungen der Kurse in diesem Ticket“. Quelle:
+ *          View program_rating_summary (anon, nur Schnitt und Anzahl je Lehrgang, gecached).
+ *          Bewusst KEIN aggregateRating im Product-Schema — die Bewertungen gelten den Kursen,
+ *          nicht dem Ticket. CSS der Sterne jetzt in livento_cc_rating_css() (Katalog + Ticket).
  *
  * v1.59.0: Sterne sichtbar und erst ab 5 Bewertungen (LIVENTO_CC_RATING_MIN). Vorher stand die
  *          Bewertung nur im Schema (AggregateRating, z. B. „5,0 aus 1 Bewertung“), auf der Seite
@@ -2175,13 +2182,16 @@ function livento_cc_rating($o) {
 /**
  * v1.59.0: Sterne mit Wert und Anzahl. $hinweis = true ergaenzt auf der Detailseite den
  * Hinweis nach § 5b Abs. 3 UWG, wie Bewertungen zustande kommen.
+ * v1.60.0: $bezug benennt, worauf sich der Schnitt bezieht, wenn er mehrere Kurse
+ * zusammenfasst (Ticketseite: „der Kurse in diesem Ticket“).
  */
-function livento_cc_rating_html($rating, $hinweis = false) {
+function livento_cc_rating_html($rating, $hinweis = false, $bezug = '') {
     if ($rating === null) {
         return '';
     }
     $wert   = number_format($rating['avg'], 1, ',', '');
-    $anzahl = $rating['count'] . ' ' . ($rating['count'] === 1 ? 'Bewertung' : 'Bewertungen');
+    $anzahl = $rating['count'] . ' ' . ($rating['count'] === 1 ? 'Bewertung' : 'Bewertungen')
+            . ($bezug !== '' ? ' ' . $bezug : '');
     $breite = max(0, min(100, round($rating['avg'] / 5 * 100)));
     $out  = '<div class="lvk-rating">';
     $out .= '<span class="lvk-stars" role="img" aria-label="' . esc_attr($wert . ' von 5 Sternen') . '">'
@@ -2192,9 +2202,78 @@ function livento_cc_rating_html($rating, $hinweis = false) {
         $out .= '<details class="lvk-rating-info"><summary>Wie entstehen die Bewertungen?</summary>'
               . '<p>Bewerten können nur Personen, die im Kurs eingeschrieben sind oder ihn abgeschlossen haben, '
               . 'je Kurs einmal. Das prüft unsere Lernplattform Campus Connect. Bewertungen werden vor der '
-              . 'Veröffentlichung geprüft. Der Wert ist der Durchschnitt aller veröffentlichten Bewertungen.</p></details>';
+              . 'Veröffentlichung geprüft. Der Wert ist der Durchschnitt aller veröffentlichten Bewertungen'
+              . esc_html($bezug !== '' ? ' ' . $bezug : '') . '.</p></details>';
     }
     return $out . '</div>';
+}
+
+/**
+ * v1.60.0: CSS der Sterne — eine Quelle fuer Katalog (livento_cc_styles) und Ticketseite
+ * (livento_cc_tariff_styles). Steht in einem einfach quotierten PHP-String: in den
+ * SVG-Daten-URIs daher %27 statt '. Farben mit Rueckfall, weil die Ticketseite die
+ * .lvk-Variablen nicht kennt.
+ */
+function livento_cc_rating_css() {
+    $stern = 'M12 2l2.9 6.9 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7L2 9.5l7.1-.6z';
+    $svg = function ($farbe) use ($stern) {
+        return 'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E'
+             . '%3Cpath fill=%27%23' . $farbe . '%27 d=%27' . $stern . '%27/%3E%3C/svg%3E") repeat-x left center/1.1em 1.1em';
+    };
+    return '.lvk-rating{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:4px 0 10px;font-size:.95rem;color:#444}'
+         . '.lvk-stars{position:relative;display:inline-block;width:5.5em;height:1.1em;background:' . $svg('d6d6d6') . '}'
+         . '.lvk-stars-fill{position:absolute;inset:0 auto 0 0;background:' . $svg('e3a008') . '}'
+         . '.lvk-rating-val{font-weight:700;color:#222}'
+         . '.lvk-rating-count{color:#666}'
+         . '.lvk-rating-info{flex-basis:100%;font-size:.85rem;color:#555}'
+         . '.lvk-rating-info summary{cursor:pointer;color:var(--lvk-green,#004D33)}'
+         . '.lvk-rating-info p{margin:6px 0 0}'
+         . '.lvk-card .lvk-rating{font-size:.85rem;margin:2px 0 6px}'
+         . '.lv-tarif-detail__head .lvk-rating{margin:.75rem 0 0;font-size:1rem}';
+}
+
+/** v1.60.0: Veroeffentlichte Bewertungsschnitte je Lehrgang (View program_rating_summary, anon, nur Zahlen). */
+function livento_cc_get_rating_summary() {
+    $key = 'livento_cc_ratings_v' . livento_cc_ver();
+    $cached = get_transient($key);
+    if (is_array($cached)) {
+        return $cached;
+    }
+    $data = livento_cc_rest_get_path('program_rating_summary',
+        'select=training_program_id,avg_value,count&scheduled_course_id=is.null');
+    if (is_wp_error($data)) {
+        error_log('[livento] program_rating_summary nicht erreichbar: ' . $data->get_error_message());
+        return array();
+    }
+    set_transient($key, $data, LIVENTO_CC_TTL);
+    return $data;
+}
+
+/**
+ * v1.60.0: Bewertung ueber alle Kurse der Varianten eines Tickets (gewichtet nach Anzahl),
+ * gleiche Schwelle wie beim einzelnen Kurs. Nur sichtbar, bewusst KEIN aggregateRating im
+ * Product-Schema: Die Bewertungen gelten den enthaltenen Kursen, nicht dem Ticket selbst.
+ */
+function livento_cc_family_rating($variants) {
+    $ids = array();
+    foreach ($variants as $v) {
+        foreach (livento_cc_get_bundle_courses($v['bundle']['id']) as $c) {
+            if (!empty($c['id'])) {
+                $ids[(string) $c['id']] = true;
+            }
+        }
+    }
+    $summe  = 0.0;
+    $anzahl = 0;
+    foreach (livento_cc_get_rating_summary() as $r) {
+        $n = (int) ($r['count'] ?? 0);
+        if ($n > 0 && isset($r['avg_value']) && $r['avg_value'] !== null
+            && isset($ids[(string) ($r['training_program_id'] ?? '')])) {
+            $summe  += (float) $r['avg_value'] * $n;
+            $anzahl += $n;
+        }
+    }
+    return $anzahl > 0 ? livento_cc_rating(array('rating_avg' => $summe / $anzahl, 'rating_count' => $anzahl)) : null;
 }
 
 function livento_cc_jsonld_list($offerings) {
@@ -4800,15 +4879,7 @@ function livento_cc_styles() {
 .lvk-detail{max-width:760px;margin:0 auto}
 .lvk-detail-title{color:var(--lvk-green);font-size:2rem;line-height:1.2;margin:.2em 0}
 .lvk-coursenr{color:var(--lvk-lime);font-size:.9rem;margin:0 0 12px}
-.lvk-rating{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:4px 0 10px;font-size:.95rem;color:#444}
-.lvk-stars{position:relative;display:inline-block;width:5.5em;height:1.1em;background:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23d6d6d6%27 d=%27M12 2l2.9 6.9 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7L2 9.5l7.1-.6z%27/%3E%3C/svg%3E") repeat-x left center/1.1em 1.1em}
-.lvk-stars-fill{position:absolute;inset:0 auto 0 0;background:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23e3a008%27 d=%27M12 2l2.9 6.9 7.1.6-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7L2 9.5l7.1-.6z%27/%3E%3C/svg%3E") repeat-x left center/1.1em 1.1em}
-.lvk-rating-val{font-weight:700;color:#222}
-.lvk-rating-count{color:#666}
-.lvk-rating-info{flex-basis:100%;font-size:.85rem;color:#555}
-.lvk-rating-info summary{cursor:pointer;color:var(--lvk-green)}
-.lvk-rating-info p{margin:6px 0 0}
-.lvk-card .lvk-rating{font-size:.85rem;margin:2px 0 6px}
+' . livento_cc_rating_css() . '
 .lvk-hero{max-width:100%;height:auto;border-radius:8px;margin:16px 0}
 .lvk-lead{font-size:1.1rem;color:#444}
 .lvk-facts{background:#f5f5f5;border-radius:8px;padding:16px;margin:24px 0}
@@ -7901,6 +7972,8 @@ add_shortcode('livento_tarif', function ($atts) {
             <span class="lv-tarif-detail__eyebrow">E-Learning-Ticket</span>
             <h1><?php echo esc_html($family['name']); ?></h1>
             <?php if (!empty($family['claim'])) : ?><p class="lv-lead"><?php echo esc_html($family['claim']); ?></p><?php endif; ?>
+            <?php // v1.60.0: Schnitt aller veroeffentlichten Bewertungen der enthaltenen Kurse (ab 5), nur sichtbar, nicht im Schema.
+                  echo livento_cc_rating_html(livento_cc_family_rating($variants), true, 'der Kurse in diesem Ticket'); ?>
         </header>
 
         <div class="lv-tarif-hero">
@@ -8809,6 +8882,7 @@ function livento_cc_tariff_styles() {
     $done = true;
     ?>
     <style>
+    <?php echo livento_cc_rating_css(); // v1.60.0: Sterne im Ticket-Kopf ?>
     .lv-tarife__head{text-align:center;max-width:46rem;margin:0 auto 1.5rem}
     .lv-tarife__head h2{margin:0 0 .5rem}
     .lv-calc{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;justify-content:center;background:#f5f7f8;border:1px solid #e3e8ea;border-radius:14px;padding:1rem 1.25rem;margin:0 auto 2rem;max-width:44rem}
