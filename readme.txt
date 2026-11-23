@@ -3,12 +3,19 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.68.0
+Stable tag: 1.69.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.69.0 =
+* Bewertungen zaehlen jetzt je Kurs, nicht je Durchgang. Sterne und aggregateRating gibt es seit 1.59.0, sie erschienen aber nirgends: sichtbar werden sie ab 5 freigegebenen Bewertungen, und weil in Campus Connect jeder Durchgang ein eigener Kurs ist, zaehlte jeder fuer sich. Am 23.11.2026 lagen 19 Bewertungen auf 17 Kursen, hoechstens 2 je Kurs - und 15 davon auf Durchgaengen, die nicht mehr oeffentlich sind, also dauerhaft unsichtbar.
+* Jetzt werden die Bewertungen aller Durchgaenge eines Kurses zusammengefasst, gruppiert wie die Karten im Katalog. Das wirkt an einer Stelle fuer Karte, Detailseite, aggregateRating und die Sortierung "Beste Bewertung".
+* Schwelle und der Hinweis nach Paragraf 5b Abs. 3 UWG bleiben unveraendert: was im Schema steht, steht auch sichtbar auf der Seite.
+* Braucht Campus Connect v4.62.0 (Funktion fn_public_offering_group_ratings). Faellt der Abruf aus, gelten weiter die Einzelwerte.
+* Ohne sichtbare Folge, solange kein Kurs 5 Bewertungen hat - es ist der Unterschied zwischen "irgendwann erscheinen Sterne" und "es erscheinen nie welche".
 
 = 1.68.0 =
 * Suchmaschinen: Alle Termine eines Kurses zeigen jetzt mit rel=canonical auf dieselbe Seite. In Campus Connect ist jeder Durchgang ein eigenes Programm, darum hatte jeder Termin eine eigene Detailseite - am 23.11.2026 waren das 95 Adressen fuer 56 Kurse, 39 davon Zweitfassungen mit gleichem Titel und Text und nur anderem Startdatum, jede mit Canonical auf sich selbst. Google musste sich eine aussuchen, Links und Autoritaet verteilten sich auf bis zu fuenf Adressen je Kurs.

@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.68.0
+ * Version:           1.69.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,25 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.69.0: Bewertungen je Kurs statt je Durchgang (braucht Campus Connect v4.62.0).
+ *          Sterne und aggregateRating gibt es seit v1.59.0, sie erschienen aber nirgends: die
+ *          Schwelle liegt bei 5 freigegebenen Bewertungen (LIVENTO_CC_RATING_MIN), und weil
+ *          jeder Durchgang ein eigenes Programm ist, zaehlt jeder fuer sich. Am 23.11.2026
+ *          lagen 19 Bewertungen auf 17 Kursen, hoechstens 2 je Kurs — und 15 davon auf
+ *          Durchgaengen, die nicht mehr oeffentlich sind, also dauerhaft unsichtbar. Ein Kurs
+ *          konnte ueber Jahre sammeln und zeigte nie Sterne; das war kein Mengen-, sondern ein
+ *          Strukturproblem.
+ *          Jetzt holt livento_cc_get_group_ratings() die Gruppenwerte aus Campus Connect
+ *          (fn_public_offering_group_ratings, gruppiert wie die Katalogkarten) und
+ *          livento_cc_rating() nimmt sie, sobald es zum Slug welche gibt. Das wirkt an einer
+ *          Stelle fuer Karte, Detailseite, aggregateRating und die Sortierung „Beste
+ *          Bewertung" — die Funktion ist seit v1.59.0 die einzige Quelle.
+ *          Schwelle und UWG-Hinweis bleiben unveraendert: was im Schema steht, steht auch
+ *          sichtbar auf der Seite.
+ *          Faellt der Abruf aus, gelten weiter die Einzelwerte aus public_offerings.
+ *          Heute noch ohne sichtbare Folge (hoechstens 2 von 5) — es ist der Unterschied
+ *          zwischen „irgendwann erscheinen Sterne" und „es erscheinen nie welche".
  *
  * v1.68.0: Canonical je Kursgruppe statt je Termin. Jeder Durchgang ist in Campus Connect ein
  *          eigenes Programm und hat darum eine eigene Detailseite — am 23.11.2026 standen 95
@@ -2327,11 +2346,64 @@ function livento_cc_jsonld_course($o, $url) {
 }
 
 /**
+ * v1.69.0: Bewertungen je Kursgruppe (Campus Connect v4.62.0).
+ *
+ * Jeder Durchgang ist in Campus Connect ein eigenes Programm, Bewertungen haengen also am
+ * Durchgang. Pro Durchgang wird LIVENTO_CC_RATING_MIN praktisch nie erreicht, und sobald ein
+ * Durchgang ausgelaufen ist, sind seine Bewertungen dauerhaft unsichtbar. Am 23.11.2026 lagen
+ * 15 von 19 freigegebenen Bewertungen auf Durchgaengen, die nicht mehr oeffentlich sind.
+ *
+ * fn_public_offering_group_ratings() fasst sie je Kurs zusammen und liefert sie je
+ * oeffentlichem Slug. Die Funktion laeuft als SECURITY DEFINER, weil anon die ausgelaufenen
+ * Durchgaenge nicht sieht; sie gibt nur Slug und Kennzahlen heraus.
+ *
+ * Rueckgabe: Slug => array('avg' => float, 'count' => int). Leeres Array, wenn die Funktion
+ * nicht erreichbar ist — dann gelten weiter die Einzelwerte aus public_offerings.
+ */
+function livento_cc_get_group_ratings() {
+    $key = 'livento_cc_group_ratings_v' . livento_cc_ver();
+    $cached = get_transient($key);
+    if (is_array($cached)) {
+        return $cached;
+    }
+    // Bewusst ohne select=: die Funktion liefert genau vier Spalten, und ein Tippfehler im
+    // Spaltennamen wuerde den ganzen Abruf mit HTTP 400 scheitern lassen.
+    $data = livento_cc_rest_get_path('rpc/fn_public_offering_group_ratings');
+    if (is_wp_error($data)) {
+        error_log('[livento] fn_public_offering_group_ratings nicht erreichbar: ' . $data->get_error_message());
+        return array();
+    }
+    $map = array();
+    foreach ((array) $data as $r) {
+        $s = isset($r['slug']) ? (string) $r['slug'] : '';
+        $n = isset($r['group_rating_count']) ? (int) $r['group_rating_count'] : 0;
+        if ($s !== '' && $n > 0 && isset($r['group_rating_avg']) && $r['group_rating_avg'] !== null) {
+            $map[$s] = array('avg' => (float) $r['group_rating_avg'], 'count' => $n);
+        }
+    }
+    set_transient($key, $map, LIVENTO_CC_TTL);
+    return $map;
+}
+
+/**
  * v1.59.0: Freigegebene Bewertung eines Angebots — oder null unter LIVENTO_CC_RATING_MIN.
  * Einzige Quelle fuer Schema, Detailseite, Karte und Sortierung: Was im Schema steht,
  * steht auch sichtbar auf der Seite (Google-Richtlinie fuer Bewertungs-Markup).
+ *
+ * v1.69.0: Hat das Angebot einen Slug und kennt Campus Connect dazu Gruppenwerte, gelten
+ * diese — eine Bewertung gilt dem Kurs, nicht dem einzelnen Durchgang. Die Gruppenzahl
+ * enthaelt die eigene immer mit (Selbsttest der Migration v4.62.0 prueft das). Aufrufe ohne
+ * Slug (livento_cc_family_rating fuer die Ticketseite) bleiben unberuehrt.
  */
 function livento_cc_rating($o) {
+    $slug = isset($o['slug']) ? (string) $o['slug'] : '';
+    if ($slug !== '') {
+        $gruppe = livento_cc_get_group_ratings();
+        if (isset($gruppe[$slug])) {
+            $o['rating_avg']   = $gruppe[$slug]['avg'];
+            $o['rating_count'] = $gruppe[$slug]['count'];
+        }
+    }
     $count = (int) ($o['rating_count'] ?? 0);
     if (!isset($o['rating_avg']) || $o['rating_avg'] === null || $o['rating_avg'] === '' || $count < LIVENTO_CC_RATING_MIN) {
         return null;
