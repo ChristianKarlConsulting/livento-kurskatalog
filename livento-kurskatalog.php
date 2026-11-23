@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.69.0
+ * Version:           1.70.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,21 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.70.0: Block "Das wirst du koennen" auf der Kursdetailseite (braucht Campus Connect
+ *          v4.63.0, Feld learning_outcomes). Steht zwischen Zielgruppe und "Dein Nutzen" —
+ *          die erste Antwort auf "was kann ich danach", bevor argumentiert wird.
+ *          Anlass war der Aufbauvergleich mit kenbi-akademie.com am 23.11.2026: dort tragen
+ *          60 von 62 Seiten an dieser Stelle genau vier knappe Punkte (zusammen rund 42
+ *          Woerter), die Leserin weiss nach etwa 70 Woertern, was sie danach kann. Unsere
+ *          Seiten hatten dort nur "Dein Nutzen" mit im Schnitt 6 argumentierenden Punkten —
+ *          Verkauf, keine Lernzielliste; das Koennen stand erst nach 400+ Woertern.
+ *          Haken statt Punkt, zweispaltig ab 640px. Hoechstens 6 Punkte werden ausgegeben
+ *          (wie die CHECK-Bedingung in Campus Connect).
+ *          Leeres Feld = kein Block. Bewusst kein Rueckfall auf benefit, course_contents
+ *          oder die Modul-Lernziele: ein automatisch gefuellter Block waere laenger und
+ *          unpraeziser als keiner. Kennt die Datenbank die Spalte noch nicht, entfaellt der
+ *          Block stillschweigend (Detailseite liest select=*).
  *
  * v1.69.0: Bewertungen je Kurs statt je Durchgang (braucht Campus Connect v4.62.0).
  *          Sterne und aggregateRating gibt es seit v1.59.0, sie erschienen aber nirgends: die
@@ -2087,6 +2102,57 @@ function livento_cc_jsonld_tariff_product($family, $url) {
         $product['image'] = $family['public_image_url'];
     }
     return $product;
+}
+
+/**
+ * v1.70.0: Block „Das wirst du koennen" (Campus Connect v4.63.0, learning_outcomes).
+ *
+ * Steht auf der Detailseite zwischen Zielgruppe und „Dein Nutzen" — die erste Antwort auf
+ * „was kann ich danach", bevor argumentiert wird. Vorlage ist der Aufbau von Kenbi: dort
+ * tragen 60 von 62 Seiten an dieser Stelle genau vier knappe Punkte, zusammen rund 42
+ * Woerter, und die Leserin weiss nach etwa 70 Woertern, was sie danach kann.
+ *
+ * Leeres oder fehlendes Feld = kein Block. Kein Rueckfall auf benefit, course_contents oder
+ * die Modul-Lernziele: ein automatisch gefuellter Block waere laenger und unpraeziser als
+ * keiner, und „Dein Nutzen" steht ohnehin direkt darunter.
+ *
+ * Kennt die Datenbank die Spalte noch nicht, fehlt sie im Datensatz und der Block entfaellt
+ * stillschweigend — Plugin- und App-Release bleiben unabhaengig (Muster aus v1.58.0).
+ */
+function livento_cc_outcomes_html($o) {
+    $werte = isset($o['learning_outcomes']) ? $o['learning_outcomes'] : null;
+    // PostgREST liefert text[] als JSON-Array; bei aelteren Staenden kann auch ein
+    // JSON-String ankommen. Beides annehmen, alles andere verwerfen.
+    if (is_string($werte)) {
+        $dekodiert = json_decode($werte, true);
+        $werte = is_array($dekodiert) ? $dekodiert : null;
+    }
+    if (!is_array($werte)) {
+        return '';
+    }
+
+    $punkte = array();
+    foreach ($werte as $w) {
+        if (!is_string($w)) {
+            continue;
+        }
+        $w = trim(wp_strip_all_tags($w));
+        if ($w !== '') {
+            $punkte[] = $w;
+        }
+    }
+    // Obergrenze wie die CHECK-Bedingung in Campus Connect: mehr waere ein Pflegefehler,
+    // und die Seite soll ihn nicht ausspielen.
+    $punkte = array_slice($punkte, 0, 6);
+    if (empty($punkte)) {
+        return '';
+    }
+
+    $out = '<div class="lvk-section lvk-outcomes"><h2>Das wirst du können</h2><ul class="lvk-outcomes__list">';
+    foreach ($punkte as $p) {
+        $out .= '<li>' . esc_html($p) . '</li>';
+    }
+    return $out . '</ul></div>';
 }
 
 /** Ist Rank Math aktiv? Dann fuettern wir es, statt selbst Tags auszugeben (Dublettenschutz). */
@@ -4120,6 +4186,9 @@ function livento_cc_render_detail($o) {
         $out .= '<div class="lvk-section"><h2>Zielgruppe</h2>' . livento_cc_richtext($o['target_audience']) . '</div>';
     }
 
+    // v1.70.0: „Das wirst du koennen" — vier knappe Punkte, bevor argumentiert wird.
+    $out .= livento_cc_outcomes_html($o);
+
     // Ihr Nutzen
     if (!empty($o['benefit'])) {
         $out .= '<div class="lvk-section lvk-benefit"><h2>Dein Nutzen</h2>' . livento_cc_richtext($o['benefit']) . '</div>';
@@ -6151,6 +6220,15 @@ function livento_cc_styles() {
 .lvk-form-hier,.lvk-form-link{margin-top:auto;font-weight:700;font-size:.9rem;color:var(--lvk-green)}
 .lvk-form-hier{color:var(--lvk-lime)}
 .lvk-benefit{background:#f3f8ee;border-radius:8px;padding:4px 20px}
+/* v1.70.0: „Das wirst du koennen" — Haken statt Punkt, damit der Block als Koennensliste
+   gelesen wird und nicht als weitere Aufzaehlung im Text. Haken als Zeichen, nicht als
+   eingebettetes SVG: diese CSS steht in einem einfach quotierten PHP-String, ein SVG mit
+   Attributen in Hochkommas beendet ihn (am 23.11.2026 genau so passiert). */
+.lvk-outcomes__list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.lvk-outcomes__list li{position:relative;padding-left:26px;line-height:1.45}
+.lvk-outcomes__list li::before{content:"\2713";position:absolute;left:0;top:0;
+  color:var(--lvk-green);font-weight:700;font-size:1.05em;line-height:1.45}
+@media (min-width:640px){.lvk-outcomes__list{grid-template-columns:1fr 1fr;gap:8px 24px}}
 .lvk-module{border:1px solid #e6e6e6;border-radius:8px;margin:10px 0;padding:0 14px}
 .lvk-module summary{font-weight:600;color:var(--lvk-green);cursor:pointer;padding:12px 0}
 .lvk-mod-hours{font-weight:400;color:var(--lvk-lime);font-size:.9rem}

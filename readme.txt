@@ -3,12 +3,19 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.69.0
+Stable tag: 1.70.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.70.0 =
+* Neuer Block "Das wirst du koennen" auf der Kursdetailseite, zwischen Zielgruppe und "Dein Nutzen" - die erste Antwort auf "was kann ich danach", bevor argumentiert wird.
+* Anlass war der Aufbauvergleich mit kenbi-akademie.com am 23.11.2026: dort tragen 60 von 62 Kursseiten an dieser Stelle genau vier knappe Punkte, zusammen rund 42 Woerter. Unsere Seiten hatten dort nur "Dein Nutzen" mit im Schnitt 6 argumentierenden Punkten - das ist Verkauf, keine Lernzielliste; das Koennen stand erst nach mehr als 400 Woertern.
+* Haken statt Aufzaehlungspunkt, ab 640px zweispaltig, hoechstens 6 Punkte (wie die CHECK-Bedingung in Campus Connect).
+* Braucht Campus Connect v4.63.0 (Feld learning_outcomes, gepflegt je Kurs unter Lehrgaenge bzw. Anfragekurse). Kennt die Datenbank die Spalte noch nicht, entfaellt der Block stillschweigend - Plugin- und App-Release bleiben unabhaengig.
+* Leeres Feld = kein Block. Bewusst ohne Rueckfall auf benefit, course_contents oder die Modul-Lernziele: ein automatisch gefuellter Block waere laenger und unpraeziser als keiner. Solange die Felder leer sind, sieht man nichts.
 
 = 1.69.0 =
 * Bewertungen zaehlen jetzt je Kurs, nicht je Durchgang. Sterne und aggregateRating gibt es seit 1.59.0, sie erschienen aber nirgends: sichtbar werden sie ab 5 freigegebenen Bewertungen, und weil in Campus Connect jeder Durchgang ein eigener Kurs ist, zaehlte jeder fuer sich. Am 23.11.2026 lagen 19 Bewertungen auf 17 Kursen, hoechstens 2 je Kurs - und 15 davon auf Durchgaengen, die nicht mehr oeffentlich sind, also dauerhaft unsichtbar.
