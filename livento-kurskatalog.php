@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.67.0
+ * Version:           1.68.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,22 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.68.0: Canonical je Kursgruppe statt je Termin. Jeder Durchgang ist in Campus Connect ein
+ *          eigenes Programm und hat darum eine eigene Detailseite — am 23.11.2026 standen 95
+ *          Termin-Adressen fuer 56 Kurse, 39 davon waren Zweitfassungen in 23 Gruppen mit
+ *          mehreren Terminen (gleicher Titel, gleicher Text, nur anderes Startdatum), jede mit
+ *          Canonical auf sich selbst und auf index,follow. Dazu stand jede davon in
+ *          /livento-kurse.xml. Google musste sich eine aussuchen, Links und Autoritaet
+ *          verteilten sich auf bis zu fuenf Adressen desselben Kurses.
+ *          Jetzt: livento_cc_canonical_slug() bildet jeden Termin-Slug auf den Gruppenfuehrer ab
+ *          (dieselbe Gruppierung wie die Katalogkarten, v1.58.0). livento_cc_seo_values() setzt
+ *          damit Canonical, og:url, die Course-URL im JSON-LD und die letzte Brotkrume; die
+ *          Sitemap nimmt nur noch Gruppenfuehrer auf.
+ *          Kein noindex auf den Zweitfassungen — noindex plus Canonical auf eine andere Seite
+ *          sind widerspruechliche Signale. Die Termin-Seiten bleiben erreichbar und buchbar.
+ *          Offen: dauerhaft stabiler waere eine eigene Kurs-URL mit den Terminen nur zur
+ *          Auswahl. So wandert das Canonical, wenn ein Durchgang auslaeuft.
  *
  * v1.67.0: Abschnitt „Für dein Team“ auf der Kursdetailseite: Inhouse-Anfrage direkt am Kurs
  *          (Termin-Kurse und Weiterbildungen, auch mit Bildungsgutschein). REST-Proxy
@@ -958,6 +974,59 @@ function livento_cc_group_offerings($offerings) {
     return $out;
 }
 
+/**
+ * v1.68.0: Kanonischer Slug einer Kursgruppe.
+ *
+ * In Campus Connect ist jeder Durchgang ein eigenes Programm, also bekommt jeder Termin
+ * eine eigene Detailseite. Fuer Suchmaschinen sind das Dubletten: gleicher Titel,
+ * gleicher Text, nur ein anderes Startdatum. Stand 23.11.2026: 95 Termin-Adressen fuer
+ * 56 Kurse, 39 davon Zweitfassungen — jede mit Canonical auf sich selbst und auf
+ * index,follow. Google musste sich eine aussuchen, Links und Autoritaet verteilten sich
+ * auf bis zu fuenf Adressen desselben Kurses.
+ *
+ * Deshalb zeigen jetzt alle Termine einer Gruppe auf denselben Gruppenfuehrer — genau
+ * die Seite, die auch die Karte im Katalog verlinkt. Interne Verlinkung und Canonical
+ * sagen damit dasselbe.
+ *
+ * Bewusste Abwaegung: Gruppenfuehrer ist der naechste Termin (livento_cc_group_offerings
+ * sortiert nach Startdatum). Laeuft ein Durchgang aus, wandert das Canonical auf den
+ * folgenden Termin. Das kostet etwas Ranking-Stabilitaet, dafuer zeigt es nie auf eine
+ * Seite, die aus dem Katalog verschwindet. Dauerhaft stabiler waere eine eigene
+ * Kurs-URL, auf der die Termine nur zur Auswahl stehen — das ist ein groesserer Umbau
+ * (Routing, Cache-Schluessel, Sitemap) und hier absichtlich nicht enthalten.
+ *
+ * Kein noindex auf den Zweitfassungen: noindex und ein Canonical auf eine andere Seite
+ * sind widerspruechliche Signale. Die Termin-Seiten bleiben erreichbar und buchbar
+ * (Anzeigen, Direktlinks, Bildungsgutschein-Beratung), nur eben nicht eigenstaendig
+ * indexiert.
+ */
+function livento_cc_canonical_slug($o) {
+    static $map = null;
+    if ($map === null) {
+        $map = array();
+        foreach (livento_cc_group_offerings(livento_cc_augment(livento_cc_get_offerings())) as $g) {
+            $lead = (string) ($g['lead']['slug'] ?? '');
+            if ($lead === '') {
+                continue;
+            }
+            foreach ($g['members'] as $m) {
+                $s = (string) ($m['slug'] ?? '');
+                if ($s !== '') {
+                    $map[$s] = $lead;
+                }
+            }
+        }
+    }
+    $slug = (string) ($o['slug'] ?? '');
+    return ($slug !== '' && isset($map[$slug])) ? $map[$slug] : $slug;
+}
+
+/** v1.68.0: true, wenn dieser Slug der Gruppenfuehrer ist (also selbst kanonisch). */
+function livento_cc_is_canonical_slug($o) {
+    $slug = (string) ($o['slug'] ?? '');
+    return $slug !== '' && livento_cc_canonical_slug($o) === $slug;
+}
+
 /** v1.58.0: Zahl der Kurse (Gruppen) je Angebotsart — fuer den Admin-Tab „Kurslisten“. */
 function livento_cc_art_counts() {
     static $counts = null;
@@ -1672,6 +1741,12 @@ function livento_cc_build_sitemap_xml($offerings) {
         if (empty($o['slug'])) {
             continue;
         }
+        // v1.68.0: Nur den Gruppenfuehrer eintragen. Vorher standen alle Termine einer
+        // Kursgruppe in der Sitemap — wir haben Google also aktiv aufgefordert, die
+        // Dubletten zu indexieren, waehrend das Canonical auf eine andere Seite zeigt.
+        if (!livento_cc_is_canonical_slug($o)) {
+            continue;
+        }
         $lastmod = '';
         if (!empty($o['published_at'])) {
             $lastmod = substr($o['published_at'], 0, 10);
@@ -2009,7 +2084,11 @@ function livento_cc_seo_values($o) {
         ? $o['meta_description']
         : ($o['public_description'] ?: ($o['short_description'] ?: $o['title']));
     return array(
-        'url'   => livento_cc_detail_url($o['slug']),
+        // v1.68.0: Nicht die eigene Adresse, sondern die der Kursgruppe. Jeder Durchgang
+        // hat eine eigene Detailseite; ohne das zeigten bis zu fuenf gleiche Seiten je
+        // Kurs mit Canonical auf sich selbst. Wirkt auf Canonical, og:url, die Course-URL
+        // im JSON-LD und die letzte Brotkrume — alle sollen dieselbe Seite benennen.
+        'url'   => livento_cc_detail_url(livento_cc_canonical_slug($o)),
         'title' => $o['title'] . ' | Livento',
         'descr' => mb_substr(trim(wp_strip_all_tags($descr_src)), 0, 160),
         'img'   => $o['public_image_url'] ?? '',

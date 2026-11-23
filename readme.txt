@@ -3,12 +3,19 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.67.0
+Stable tag: 1.68.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.68.0 =
+* Suchmaschinen: Alle Termine eines Kurses zeigen jetzt mit rel=canonical auf dieselbe Seite. In Campus Connect ist jeder Durchgang ein eigenes Programm, darum hatte jeder Termin eine eigene Detailseite - am 23.11.2026 waren das 95 Adressen fuer 56 Kurse, 39 davon Zweitfassungen mit gleichem Titel und Text und nur anderem Startdatum, jede mit Canonical auf sich selbst. Google musste sich eine aussuchen, Links und Autoritaet verteilten sich auf bis zu fuenf Adressen je Kurs.
+* Kanonisch ist der Gruppenfuehrer, also genau die Seite, die auch die Karte im Katalog verlinkt. Das gilt zugleich fuer og:url, die Course-URL im JSON-LD und die letzte Brotkrume.
+* Sitemap livento-kurse.xml listet nur noch Gruppenfuehrer: 56 statt 95 URLs. Vorher stand jede Zweitfassung darin, was Google aufforderte, die Dubletten zu indexieren.
+* Die Termin-Seiten bleiben erreichbar und buchbar (Anzeigen, Direktlinks, Beratung zum Bildungsgutschein) - sie werden nur nicht mehr eigenstaendig indexiert. Bewusst kein noindex: noindex und ein Canonical auf eine andere Seite sind widerspruechliche Signale.
+* Bekannte Einschraenkung: Gruppenfuehrer ist der naechste Termin. Laeuft ein Durchgang aus, wandert das Canonical auf den folgenden Termin.
 
 = 1.67.0 =
 * Kursdetailseite: neuer Abschnitt "Fuer dein Team" mit Inhouse-Anfrage direkt am Kurs (Termin-Kurse und Weiterbildungen, auch mit Bildungsgutschein). Die Anfrage landet in Campus Connect unter Akquise > Inhouse-Anfragen mit dem Kurs als Bezug und geht an GoHighLevel. Bei AZAV-Kursen Hinweis auf Foerderung nach Paragraf 82 SGB III. Link mit #inhouse oeffnet das Formular.
