@@ -3,12 +3,19 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.71.1
+Stable tag: 1.72.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.72.0 =
+* Das Intro der Uebersichtsseite verschwindet auf den Detailseiten jetzt wirklich. 1.71.0 und 1.71.1 haben es ueber einen Elementor-Filter versucht; auf livento-bildung.de wirkt der nicht verlaesslich. Nach dem Update auf 1.71.1 blendete er nichts mehr aus - auch nicht den Fall, der unter 1.71.0 nachweislich funktionierte - und auch nicht nach dem Leeren von Elementors eigenem Cache: 81 von 83 Seiten trugen wieder zwei H1.
+* Geprueft und ausgeschlossen: falsche Version, nicht geladene Datei, Slug-Erkennung, Seiten-Cache, Elementor-Cache. Die Ursache liess sich von aussen nicht feststellen.
+* Jetzt schneidet ein Ausgabepuffer, der nur auf Detailseiten startet, den Abschnitt aus der fertigen Seite. Das laeuft nach Elementor und ist von dessen Rendering und Cache unabhaengig.
+* Erkannt wird der Abschnitt an der CSS-Klasse am <section>: lv-intro oder lv-ahero. Dein eigenes Intro blendest du aus, indem du seinem <section> eine dieser Klassen gibst; es bleibt stehen, wenn du die Klasse weglaesst - dann mach aus dem H1 darin aber ein H2 oder einen Absatz.
+* Verschachtelte <section> werden mitgezaehlt. Findet sich das Muster nicht oder fehlt das passende Ende, geht die Seite unveraendert durch - lieber zwei H1 als eine zerschnittene Seite.
 
 = 1.71.1 =
 * Bugfix zu 1.71.0: Auf den 25 Foerder-Detailseiten standen weiter zwei H1. Der Filter suchte nur die Klasse lv-intro - so heisst das Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst aber lv-ahero, dort griff er deshalb nie.

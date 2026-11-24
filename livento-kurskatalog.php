@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.71.1
+ * Version:           1.72.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,19 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.72.0: Das Intro der Uebersichtsseite verschwindet auf den Detailseiten jetzt
+ *          wirklich. v1.71.0/.1 haben es ueber den Filter elementor/widget/render_content
+ *          versucht; auf livento-bildung.de wirkt der nicht verlaesslich. Nach dem Update
+ *          auf 1.71.1 blendete er nichts mehr aus, auch nicht den Fall, der unter 1.71.0
+ *          nachweislich funktionierte, und auch nicht nach dem Leeren von Elementors
+ *          eigenem Cache (24.11.2026: 81 von 83 Seiten wieder mit zwei H1).
+ *          Ausgeschlossen wurden falsche Version, nicht geladene Datei, Slug-Erkennung
+ *          und Seiten-Cache; die Ursache blieb von aussen unauffindbar.
+ *          Jetzt schneidet ein Ausgabepuffer, der nur auf Detailseiten startet, den
+ *          Abschnitt aus der fertigen Seite — unabhaengig davon, ob Elementor das
+ *          Widget neu rendert. Verschachtelte <section> werden mitgezaehlt; passt das
+ *          Muster nicht, geht die Seite unveraendert durch.
  *
  * v1.71.1: Bugfix zu v1.71.0: Der Intro-Filter kannte nur die Klasse lv-intro, also das
  *          Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst lv-ahero — dort
@@ -1770,45 +1783,105 @@ function livento_cc_current_slug() {
 }
 
 /**
- * v1.71.0: Auf den Detailseiten das Intro der Uebersichtsseite ausblenden.
+ * Auf den Detailseiten das Intro der Uebersichtsseite ausblenden.
  *
  * /kurse/ und /foerdermoeglichkeiten/ tragen je ein Elementor-HTML-Widget mit dem
  * Seitenintro, und darin ein <h1>. Die Detailseiten werden ueber dieselbe WP-Seite
- * ausgeliefert, also erschien dieses H1 dort ein zweites Mal, neben dem Kurstitel —
- * am 24.11.2026 auf 56 Kurs- und 25 Foerder-Detailseiten. Zwei H1 sind nicht nur ein
- * SEO-Fehler: der Intro-Text passt inhaltlich nur zur Uebersicht und schob den
- * eigentlichen Kurs nach unten.
+ * ausgeliefert, also erscheint dieses H1 dort ein zweites Mal, neben dem Kurstitel —
+ * am 24.11.2026 auf 56 Kurs- und 25 Foerder-Detailseiten gemessen. Zwei H1 sind nicht
+ * nur ein SEO-Fehler: der Intro-Text passt inhaltlich nur zur Uebersicht und schiebt
+ * den eigentlichen Kurs nach unten.
  *
- * Die Bedingung greift nur, wenn ein Detail-Slug anliegt. Auf der Uebersichtsseite
- * selbst bleibt das Intro unveraendert — dort ist sein H1 das richtige.
+ * v1.72.0: Zweiter Anlauf, anderer Weg. v1.71.0/.1 haben das ueber den Filter
+ * elementor/widget/render_content versucht. Auf dieser Website wirkt der nicht
+ * verlaesslich: nach dem Update auf 1.71.1 blendete er nichts mehr aus — auch nicht
+ * den lv-intro-Fall, der unter 1.71.0 nachweislich funktionierte — und auch nicht nach
+ * dem Leeren von Elementors eigenem Daten- und Dateicache. Geprueft und ausgeschlossen
+ * wurden: falsche Version (readme.txt auf dem Server sagte 1.71.1), nicht geladene
+ * Datei (die Titelfunktionen derselben Datei wirkten), Slug-Erkennung (schoene URL und
+ * ?kurs= verhielten sich gleich) und der Seiten-Cache (Zufallsparameter in der URL).
+ * Warum der Filter nicht greift, liess sich von aussen nicht feststellen.
  *
- * Erkannt wird das Widget an seinem Inhalt — an der CSS-Klasse des aeusseren
- * Containers, nicht an der Elementor-ID: IDs wechseln, sobald das Widget neu angelegt
- * wird. Ohne Elementor laeuft der Filter nie, das Plugin bleibt davon unberuehrt.
+ * Deshalb jetzt ein Weg, der nicht davon abhaengt, dass Elementor das Widget bei jedem
+ * Aufruf neu rendert: ein Ausgabepuffer, der NUR auf Detailseiten startet und den
+ * Abschnitt aus der fertigen Seite schneidet. Erkannt wird er an der Klasse am
+ * <section>, nicht an einer Elementor-ID — IDs wechseln, sobald ein Widget neu
+ * angelegt wird. Findet sich das Muster nicht, geht die Seite unveraendert durch.
  *
- * v1.71.1: Die Klassen stehen in einer Liste, nicht einzeln im Code. v1.71.0 kannte nur
- * lv-intro — das Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst aber
- * lv-ahero, dort griff der Filter also nie, und nach dem Update standen auf den 25
- * Foerder-Detailseiten weiter zwei H1 (nachgemessen am 24.11.2026). Kommt ein dritter
- * Einstieg dazu, gehoert seine Klasse in den Filter livento_cc_intro_klassen — oder,
- * einfacher, der neue Container traegt eine der bekannten Klassen.
+ * Auf der Uebersichtsseite aendert sich nichts: ohne Detail-Slug startet kein Puffer.
  */
-add_filter('elementor/widget/render_content', function ($content, $widget) {
-    if (!is_object($widget) || !method_exists($widget, 'get_name') || $widget->get_name() !== 'html') {
-        return $content;
+add_action('template_redirect', function () {
+    if (is_admin() || is_feed() || (defined('REST_REQUEST') && REST_REQUEST)) {
+        return;
     }
     if (!livento_cc_current_slug() && !livento_cc_foerder_current_slug()) {
-        return $content;
+        return;
+    }
+    ob_start('livento_cc_intro_entfernen');
+}, 99);
+
+/** Ruft fuer jede bekannte Intro-Klasse den Schnitt auf. Rueckgabe geht an den Browser. */
+function livento_cc_intro_entfernen($html) {
+    if (!is_string($html) || $html === '' || stripos($html, '<section') === false) {
+        return $html;
     }
     $klassen = apply_filters('livento_cc_intro_klassen', array('lv-intro', 'lv-ahero'));
     foreach ((array) $klassen as $k) {
         $k = trim((string) $k);
-        if ($k !== '' && strpos($content, $k) !== false) {
-            return '';
+        if ($k !== '') {
+            $html = livento_cc_section_schneiden($html, $k);
         }
     }
-    return $content;
-}, 10, 2);
+    return $html;
+}
+
+/**
+ * Schneidet jedes <section ... class="... $klasse ..."> ... </section> heraus.
+ *
+ * Verschachtelte <section> werden mitgezaehlt, damit nicht am ersten </section> im
+ * Inneren geschnitten wird. Ist der Abschnitt unvollstaendig (kein passendes
+ * </section>), bleibt das HTML unangetastet — lieber zwei H1 als eine zerschnittene
+ * Seite. Der <style>-Block vor dem Abschnitt bleibt stehen: er stylt nur Klassen, die
+ * danach nicht mehr vorkommen, und ihn mitzunehmen waere ein zweites, unnoetiges
+ * Muster.
+ */
+function livento_cc_section_schneiden($html, $klasse) {
+    $muster = '/<section\b[^>]*\bclass\s*=\s*(["\'])[^"\']*(?<![-\w])'
+            . preg_quote($klasse, '/') . '(?![-\w])[^"\']*\1[^>]*>/i';
+    $schutz = 0;
+    while (preg_match($muster, $html, $m, PREG_OFFSET_CAPTURE)) {
+        if (++$schutz > 20) {
+            return $html;
+        }
+        $start = $m[0][1];
+        $pos   = $start + strlen($m[0][0]);
+        $tiefe = 1;
+        $len   = strlen($html);
+        while ($tiefe > 0 && $pos < $len) {
+            $auf = stripos($html, '<section', $pos);
+            $zu  = stripos($html, '</section', $pos);
+            if ($zu === false) {
+                return $html;
+            }
+            if ($auf !== false && $auf < $zu) {
+                $tiefe++;
+                $pos = $auf + 8;
+            } else {
+                $tiefe--;
+                $pos = $zu + 9;
+            }
+        }
+        if ($tiefe !== 0) {
+            return $html;
+        }
+        $ende = strpos($html, '>', $pos);
+        if ($ende === false) {
+            return $html;
+        }
+        $html = substr($html, 0, $start) . substr($html, $ende + 1);
+    }
+    return $html;
+}
 
 /**
  * v1.71.0: Den Titelteil auf hoechstens $platz Zeichen bringen, an der Wortgrenze.
