@@ -3,12 +3,20 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.70.0
+Stable tag: 1.71.0
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.71.0 =
+* Ein H1 je Seite. /kurse/ und /foerdermoeglichkeiten/ tragen je ein Elementor-HTML-Widget mit dem Seitenintro, darin ein H1. Weil die Detailseiten ueber dieselbe WordPress-Seite ausgeliefert werden, stand dieses H1 auf jeder Detailseite ein zweites Mal, neben dem Kurstitel. Gemessen am 24.11.2026: 56 Kurs- und 25 Foerder-Detailseiten mit zwei H1, bei 83 Seiten in der Sitemap.
+* WICHTIG: Das Plugin blendet dieses Intro auf Detailseiten jetzt aus. Fehlt dir dort dein Seitenintro, ist das kein Fehler, sondern dieses Verhalten. Auf der Uebersichtsseite aendert sich nichts - dort ist das Intro-H1 das richtige. Soll das Intro auf Detailseiten bleiben, nimm das H1 darin heraus (ein H2 oder ein Absatz ist dort richtig). Erkannt wird das Widget an seinem Inhalt (Klasse lv-intro), nicht an seiner Elementor-ID. Ohne Elementor aendert sich nichts.
+* Mit dem Intro faellt auf den Detailseiten auch der Satz "Hier finden Sie unsere Weiterbildungen ..." weg, der nur zur Uebersicht passt und den eigentlichen Kurs nach unten drueckte (57 Seiten betroffen).
+* Der Titel der Foerderseiten wird nicht mehr mitten im Wort abgeschnitten. Live stand dort "Weiterbildungsfoerderung Brandenburg (Weiterbildungsrichtlinie - Foerderung | Livento": mitten im Wort, mit offener Klammer, 84 Zeichen. Jetzt wird an der Wortgrenze gekuerzt, und eine Klammer, die erst nach dem Schnitt zugehen wuerde, faellt mit ihrem Inhalt weg. 11 von 25 Titeln werden kuerzer, danach sind 3 noch ueber 60 Zeichen statt 14.
+* Gekuerzt wird nur, wenn der kurze Titel eindeutig bleibt. "Sachsen-Anhalt WEITERBILDUNG - individueller Zugang" und "... - betrieblicher Zugang" fielen sonst beide auf "Sachsen-Anhalt WEITERBILDUNG" zusammen; zwei Seiten mit demselben Titel sind schlimmer als ein langer. Beide bleiben deshalb ganz.
+* Die Kurstitel sind bewusst nicht angefasst: 29 von 56 Kursdetailseiten haben einen Titel ueber 60 Zeichen, aber dort steht die unterscheidende Angabe oft hinten ("... - Abendkurs", "... - Tageskurs"). Ein automatischer Schnitt wuerde genau sie wegnehmen. Das ist Redaktionsarbeit oder ein eigenes Titelfeld in Campus Connect.
 
 = 1.70.0 =
 * Neuer Block "Das wirst du koennen" auf der Kursdetailseite, zwischen Zielgruppe und "Dein Nutzen" - die erste Antwort auf "was kann ich danach", bevor argumentiert wird.

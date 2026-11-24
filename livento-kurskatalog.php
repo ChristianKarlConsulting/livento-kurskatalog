@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.70.0
+ * Version:           1.71.0
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -140,6 +140,28 @@
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
  *
+ * v1.71.0: Zweites H1 auf allen Detailseiten weg, und der Foerder-Titel wird nicht mehr
+ *          mitten im Wort abgeschnitten.
+ *          (a) /kurse/ und /foerdermoeglichkeiten/ tragen je ein Elementor-HTML-Widget mit
+ *          dem Seitenintro, darin ein <h1>. Weil die Detailseiten ueber dieselbe WP-Seite
+ *          ausgeliefert werden, stand dieses H1 auf jeder Detailseite ein zweites Mal —
+ *          gemessen am 24.11.2026: 56 Kurs- und 25 Foerder-Detailseiten mit zwei H1, bei
+ *          83 Seiten in der Sitemap. Dazu Text, der nur zur Uebersicht passt („Hier finden
+ *          Sie unsere Weiterbildungen …", auf 57 Seiten) und den Kurs nach unten drueckte.
+ *          Auf der Uebersichtsseite bleibt alles: dort ist das Intro-H1 richtig.
+ *          (b) Der Foerder-Titel entstand aus mb_substr($titel, 0, 62) + Zusatz. Live stand
+ *          damit „Weiterbildungsfoerderung Brandenburg (Weiterbildungsrichtlinie – Foerderung
+ *          | Livento" — mitten im Wort, mit offener Klammer, 83 Zeichen. Jetzt kuerzt
+ *          livento_cc_titel_kuerzen() an der Wortgrenze und nimmt eine Klammer, die erst
+ *          nach dem Schnitt geschlossen wuerde, mit ihrem Inhalt weg. Gekuerzt wird nur,
+ *          wenn der kurze Titel eindeutig bleibt: „Sachsen-Anhalt WEITERBILDUNG –
+ *          individueller Zugang" und „… – betrieblicher Zugang" fielen sonst beide auf
+ *          „Sachsen-Anhalt WEITERBILDUNG" zusammen — zwei Seiten mit demselben Titel sind
+ *          schlimmer als ein langer. Ein Titel ohne Leerzeichen bleibt ebenfalls ganz.
+ *          NICHT angefasst: die 29 Kurstitel ueber 60 Zeichen. Dort steht die
+ *          unterscheidende Angabe oft hinten („… – Abendkurs", „… – Tageskurs"); ein
+ *          automatischer Schnitt wuerde genau sie wegnehmen und zwei Seiten gleich
+ *          benennen. Das ist Redaktionsarbeit oder ein eigenes Titelfeld.
  * v1.70.0: Block "Das wirst du koennen" auf der Kursdetailseite (braucht Campus Connect
  *          v4.63.0, Feld learning_outcomes). Steht zwischen Zielgruppe und "Dein Nutzen" —
  *          die erste Antwort auf "was kann ich danach", bevor argumentiert wird.
@@ -1738,6 +1760,111 @@ function livento_cc_current_slug() {
         $slug = sanitize_title(wp_unslash($_GET['kurs']));
     }
     return $slug ? sanitize_title($slug) : '';
+}
+
+/**
+ * v1.71.0: Auf den Detailseiten das Intro der Uebersichtsseite ausblenden.
+ *
+ * /kurse/ und /foerdermoeglichkeiten/ tragen je ein Elementor-HTML-Widget mit dem
+ * Seitenintro, und darin ein <h1>. Die Detailseiten werden ueber dieselbe WP-Seite
+ * ausgeliefert, also erschien dieses H1 dort ein zweites Mal, neben dem Kurstitel —
+ * am 24.11.2026 auf 56 Kurs- und 25 Foerder-Detailseiten. Zwei H1 sind nicht nur ein
+ * SEO-Fehler: der Intro-Text passt inhaltlich nur zur Uebersicht und schob den
+ * eigentlichen Kurs nach unten.
+ *
+ * Die Bedingung greift nur, wenn ein Detail-Slug anliegt. Auf der Uebersichtsseite
+ * selbst bleibt das Intro unveraendert — dort ist sein H1 das richtige.
+ *
+ * Erkannt wird das Widget an seinem Inhalt (Klasse lv-intro), nicht an seiner
+ * Elementor-ID: IDs wechseln, sobald das Widget neu angelegt wird. Passt das Muster
+ * eines Tages nicht mehr, erscheint das Intro wieder — sichtbar, aber harmlos. Ohne
+ * Elementor laeuft der Filter nie, das Plugin bleibt davon unberuehrt.
+ */
+add_filter('elementor/widget/render_content', function ($content, $widget) {
+    if (!is_object($widget) || !method_exists($widget, 'get_name') || $widget->get_name() !== 'html') {
+        return $content;
+    }
+    if (strpos($content, 'lv-intro') === false) {
+        return $content;
+    }
+    if (!livento_cc_current_slug() && !livento_cc_foerder_current_slug()) {
+        return $content;
+    }
+    return '';
+}, 10, 2);
+
+/**
+ * v1.71.0: Den Titelteil auf hoechstens $platz Zeichen bringen, an der Wortgrenze.
+ *
+ * Gibt '' zurueck, wenn das nicht geht, ohne ein Wort zu zerschneiden — etwa bei einem
+ * Titel ohne Leerzeichen. Der Aufrufer nimmt dann den ganzen Titel.
+ */
+function livento_cc_titel_stamm($titel, $platz) {
+    if (mb_strlen($titel) <= $platz) {
+        return $titel;
+    }
+    $kurz = mb_substr($titel, 0, $platz);
+    $lz   = mb_strrpos($kurz, ' ');
+    if ($lz === false || $lz < 20) {
+        return '';
+    }
+    $kurz = mb_substr($kurz, 0, $lz);
+    // Eine Klammer, die erst nach dem Schnitt geschlossen wuerde, mit ihrem Inhalt weg.
+    $auf = mb_strrpos($kurz, '(');
+    $zu  = mb_strrpos($kurz, ')');
+    if ($auf !== false && ($zu === false || $zu < $auf)) {
+        $kurz = mb_substr($kurz, 0, $auf);
+    }
+    // Trenn- und Satzzeichen am Ende weg. Mit /u, damit der Gedankenstrich ein Zeichen
+    // bleibt — rtrim() arbeitet byteweise und wuerde ihn in Bruchstuecke zerlegen.
+    $kurz = preg_replace('/[\s\x{00A0}\-\x{2013}\x{2014},;:\x{00B7}|\/]+$/u', '', $kurz);
+    return mb_strlen($kurz) >= 20 ? $kurz : '';
+}
+
+/**
+ * v1.71.0: Dokumenttitel bauen — Titel + Zusatz, moeglichst unter $max Zeichen.
+ *
+ * Vorher schnitt die Foerderseite mit mb_substr($titel, 0, 62) hart ab und hing den
+ * Zusatz an. Live stand damit am 24.11.2026 „Weiterbildungsfoerderung Brandenburg
+ * (Weiterbildungsrichtlinie – Foerderung | Livento": mitten im Wort, mit offener
+ * Klammer, zusammen 84 Zeichen.
+ *
+ * $andere nimmt die Titel der uebrigen Seiten derselben Familie. Wuerde die Kuerzung
+ * zwei Seiten gleich benennen, bleibt der Titel ganz: ein langer eindeutiger Titel ist
+ * besser als zwei identische. Bei den Foerderprogrammen trifft das zu —
+ * „Sachsen-Anhalt WEITERBILDUNG – individueller Zugang" und „… – betrieblicher
+ * Zugang" fielen sonst beide auf „Sachsen-Anhalt WEITERBILDUNG" zusammen (gemessen
+ * 24.11.2026). Ohne $andere wird ohne diese Pruefung gekuerzt.
+ *
+ * Gekuerzt wird nur der Titel, der Zusatz bleibt: er sagt, worum es auf der Seite geht.
+ */
+function livento_cc_titel_kuerzen($titel, $max, $zusatz = '', $andere = array()) {
+    $titel = trim(preg_replace('/\s+/u', ' ', (string) $titel));
+    if ($titel === '') {
+        return trim(preg_replace('/^[\s\x{2013}\x{2014}\-|]+/u', '', $zusatz));
+    }
+    if (mb_strlen($titel . $zusatz) <= $max) {
+        return $titel . $zusatz;
+    }
+    $platz = $max - mb_strlen($zusatz);
+    if ($platz < 25) {
+        // Der Zusatz frisst den Titel auf. Dann bleibt der Titel, wie er ist.
+        return $titel . $zusatz;
+    }
+    $kurz = livento_cc_titel_stamm($titel, $platz);
+    if ($kurz === '' || $kurz === $titel) {
+        return $titel . $zusatz;
+    }
+    foreach ((array) $andere as $a) {
+        $a = trim(preg_replace('/\s+/u', ' ', (string) $a));
+        if ($a === '' || $a === $titel) {
+            continue;
+        }
+        if (livento_cc_titel_stamm($a, $platz) === $kurz) {
+            return $titel . $zusatz;
+        }
+    }
+    return $kurz . $zusatz;
 }
 
 /* ============================================================
@@ -7842,7 +7969,13 @@ add_action('wp', function () {
         return;
     }
     add_filter('pre_get_document_title', function () use ($f) {
-        return mb_substr($f['title'], 0, 62) . ' – Förderung | Livento';
+        // v1.71.0: nicht mehr mb_substr(..., 0, 62) — das schnitt mitten im Wort.
+        // Die uebrigen Programmtitel mitgeben, damit die Kuerzung keine zwei Seiten
+        // gleich benennt.
+        return livento_cc_titel_kuerzen(
+            $f['title'], 60, ' – Förderung | Livento',
+            wp_list_pluck(livento_cc_foerderungen(), 'title')
+        );
     }, 20);
     add_action('wp_head', function () use ($f) {
         $url  = livento_cc_foerder_url($f['slug']);

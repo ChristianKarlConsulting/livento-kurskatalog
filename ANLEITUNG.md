@@ -69,6 +69,29 @@ Lege je eine WordPress-**Seite** an und setze den jeweiligen Shortcode in den In
 
 > **Wichtig:** Der Seiten-Slug muss zur jeweiligen Basis passen. Katalog = `kurse`, Förderungen = `foerdermoeglichkeiten`. Die Detailseiten (`/kurse/<slug>/`, `/foerdermoeglichkeiten/<slug>/`) entstehen automatisch unter dieser Seite.
 
+### Dein Seitenintro auf den Detailseiten (ab 1.71.0)
+
+**Auf den Detailseiten blendet das Plugin das Intro der Übersichtsseite aus.** Fehlt dir
+auf `/kurse/<slug>/` plötzlich dein Seitenintro, ist das kein Fehler, sondern dieses
+Verhalten.
+
+Der Grund: Die Detailseiten entstehen unter **derselben** WordPress-Seite. Alles, was du
+dort in den Inhalt setzt, erscheint also auch auf jeder Detailseite — ein `<h1>` im Intro
+damit ein zweites Mal, neben dem Kurstitel. Am 24.11.2026 war das auf 56 Kurs- und 25
+Förder-Detailseiten so. Zwei H1 auf einer Seite sind ein SEO-Fehler, und Intro-Text, der
+nur zur Übersicht passt, schiebt den eigentlichen Kurs nach unten.
+
+- **Auf der Übersichtsseite ändert sich nichts.** Dort ist das Intro richtig.
+- Erkannt wird das Intro an der CSS-Klasse **`lv-intro`** am äußeren Container deines
+  HTML-Widgets. Baust du ein eigenes Intro, das auf Detailseiten verschwinden soll, gib ihm
+  diese Klasse.
+- **Soll dein Intro auf den Detailseiten bleiben?** Dann nimm die Klasse `lv-intro` weg
+  — und mach aus dem `<h1>` darin ein `<h2>` oder einen Absatz. Sonst stehen wieder zwei
+  H1 auf der Seite.
+- Nutzt du Elementor nicht, ändert sich nichts.
+
+---
+
 ---
 
 ## 5. Shortcode-Referenz
