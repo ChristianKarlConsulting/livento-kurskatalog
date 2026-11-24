@@ -3,12 +3,17 @@ Contributors: livento
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.71.0
+Stable tag: 1.71.1
 License: Proprietär
 
 Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 
 == Changelog ==
+
+= 1.71.1 =
+* Bugfix zu 1.71.0: Auf den 25 Foerder-Detailseiten standen weiter zwei H1. Der Filter suchte nur die Klasse lv-intro - so heisst das Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst aber lv-ahero, dort griff er deshalb nie.
+* Nachgemessen nach dem Einspielen von 1.71.0: Kursseiten sauber (56 Detailseiten mit genau einem H1, Sie-Form-Satz von allen Seiten weg), Foerderseiten unveraendert. Die Titelkuerzung derselben Seiten hatte gewirkt - die Seiten sahen also angefasst aus.
+* Bekannt sind jetzt beide Klassen, lv-intro und lv-ahero. Ein dritter Einstieg laesst sich ueber den Filter livento_cc_intro_klassen ergaenzen, ohne den Code zu aendern - oder sein Container traegt eine der beiden bekannten Klassen.
 
 = 1.71.0 =
 * Ein H1 je Seite. /kurse/ und /foerdermoeglichkeiten/ tragen je ein Elementor-HTML-Widget mit dem Seitenintro, darin ein H1. Weil die Detailseiten ueber dieselbe WordPress-Seite ausgeliefert werden, stand dieses H1 auf jeder Detailseite ein zweites Mal, neben dem Kurstitel. Gemessen am 24.11.2026: 56 Kurs- und 25 Foerder-Detailseiten mit zwei H1, bei 83 Seiten in der Sitemap.

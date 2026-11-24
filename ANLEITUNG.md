@@ -82,12 +82,13 @@ Förder-Detailseiten so. Zwei H1 auf einer Seite sind ein SEO-Fehler, und Intro-
 nur zur Übersicht passt, schiebt den eigentlichen Kurs nach unten.
 
 - **Auf der Übersichtsseite ändert sich nichts.** Dort ist das Intro richtig.
-- Erkannt wird das Intro an der CSS-Klasse **`lv-intro`** am äußeren Container deines
-  HTML-Widgets. Baust du ein eigenes Intro, das auf Detailseiten verschwinden soll, gib ihm
-  diese Klasse.
-- **Soll dein Intro auf den Detailseiten bleiben?** Dann nimm die Klasse `lv-intro` weg
-  — und mach aus dem `<h1>` darin ein `<h2>` oder einen Absatz. Sonst stehen wieder zwei
-  H1 auf der Seite.
+- Erkannt wird das Intro an der CSS-Klasse am äußeren Container deines HTML-Widgets:
+  **`lv-intro`** (auf `/kurse/`) oder **`lv-ahero`** (auf `/foerdermoeglichkeiten/`).
+  Baust du ein eigenes Intro, das auf Detailseiten verschwinden soll, gib ihm eine dieser
+  beiden Klassen.
+- **Soll dein Intro auf den Detailseiten bleiben?** Dann nimm die Klasse weg — und mach
+  aus dem `<h1>` darin ein `<h2>` oder einen Absatz. Sonst stehen wieder zwei H1 auf der
+  Seite.
 - Nutzt du Elementor nicht, ändert sich nichts.
 
 ---

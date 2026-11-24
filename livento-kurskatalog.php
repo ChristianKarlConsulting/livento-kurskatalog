@@ -3,7 +3,7 @@
  * Plugin Name:       Livento Kurskatalog (nativ)
  * Plugin URI:        https://campus-connect.livento-bildung.de
  * Description:        Rendert den oeffentlichen Kurskatalog aus Campus Connect serverseitig nativ in WordPress (statt iframe) — damit der Katalog auf der WordPress-Domain indexierbar wird. Holt die Daten aus der Supabase-View `public_offerings` via PostgREST, cached sie als Transient und erzeugt Karten, Detailseiten, Filter, Schema.org-JSON-LD und kanonische URLs.
- * Version:           1.71.0
+ * Version:           1.71.1
  * Author:            Livento – Privates Bildungsinstitut für Pflege und Gesundheit UG (haftungsbeschränkt)
  * Update URI:        https://github.com/ChristianKarlConsulting/livento-kurskatalog
  * License:           proprietär
@@ -139,6 +139,13 @@
  *          livento_cc_funding_labels()). Out-of-the-box vorbelegt mit „Anpassungsqualifizierung".
  *          HINWEIS: plugin-only — ein eigener Tag filtert nur Kurse, wenn Campus Connect denselben
  *          funding-Wert kennt; sonst reines Label/Verlinkungsziel.
+ *
+ * v1.71.1: Bugfix zu v1.71.0: Der Intro-Filter kannte nur die Klasse lv-intro, also das
+ *          Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst lv-ahero — dort
+ *          griff er nie, und nach dem Update standen auf den 25 Foerder-Detailseiten weiter
+ *          zwei H1 (beim Nachmessen am 24.11.2026 aufgefallen: Kursseiten sauber, 57 Seiten
+ *          mit genau einem H1, Foerderseiten unveraendert). Die Klassen stehen jetzt in einer
+ *          Liste, erweiterbar ueber den Filter livento_cc_intro_klassen.
  *
  * v1.71.0: Zweites H1 auf allen Detailseiten weg, und der Foerder-Titel wird nicht mehr
  *          mitten im Wort abgeschnitten.
@@ -1775,22 +1782,32 @@ function livento_cc_current_slug() {
  * Die Bedingung greift nur, wenn ein Detail-Slug anliegt. Auf der Uebersichtsseite
  * selbst bleibt das Intro unveraendert — dort ist sein H1 das richtige.
  *
- * Erkannt wird das Widget an seinem Inhalt (Klasse lv-intro), nicht an seiner
- * Elementor-ID: IDs wechseln, sobald das Widget neu angelegt wird. Passt das Muster
- * eines Tages nicht mehr, erscheint das Intro wieder — sichtbar, aber harmlos. Ohne
- * Elementor laeuft der Filter nie, das Plugin bleibt davon unberuehrt.
+ * Erkannt wird das Widget an seinem Inhalt — an der CSS-Klasse des aeusseren
+ * Containers, nicht an der Elementor-ID: IDs wechseln, sobald das Widget neu angelegt
+ * wird. Ohne Elementor laeuft der Filter nie, das Plugin bleibt davon unberuehrt.
+ *
+ * v1.71.1: Die Klassen stehen in einer Liste, nicht einzeln im Code. v1.71.0 kannte nur
+ * lv-intro — das Intro von /kurse/. Das Intro von /foerdermoeglichkeiten/ heisst aber
+ * lv-ahero, dort griff der Filter also nie, und nach dem Update standen auf den 25
+ * Foerder-Detailseiten weiter zwei H1 (nachgemessen am 24.11.2026). Kommt ein dritter
+ * Einstieg dazu, gehoert seine Klasse in den Filter livento_cc_intro_klassen — oder,
+ * einfacher, der neue Container traegt eine der bekannten Klassen.
  */
 add_filter('elementor/widget/render_content', function ($content, $widget) {
     if (!is_object($widget) || !method_exists($widget, 'get_name') || $widget->get_name() !== 'html') {
         return $content;
     }
-    if (strpos($content, 'lv-intro') === false) {
-        return $content;
-    }
     if (!livento_cc_current_slug() && !livento_cc_foerder_current_slug()) {
         return $content;
     }
-    return '';
+    $klassen = apply_filters('livento_cc_intro_klassen', array('lv-intro', 'lv-ahero'));
+    foreach ((array) $klassen as $k) {
+        $k = trim((string) $k);
+        if ($k !== '' && strpos($content, $k) !== false) {
+            return '';
+        }
+    }
+    return $content;
 }, 10, 2);
 
 /**
