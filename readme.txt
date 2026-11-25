@@ -34,14 +34,14 @@ Rendert den oeffentlichen Kurskatalog aus Campus Connect nativ in WordPress.
 * Neuer Block "Das wirst du koennen" auf der Kursdetailseite, zwischen Zielgruppe und "Dein Nutzen" - die erste Antwort auf "was kann ich danach", bevor argumentiert wird.
 * Anlass war der Aufbauvergleich mit kenbi-akademie.com am 23.11.2026: dort tragen 60 von 62 Kursseiten an dieser Stelle genau vier knappe Punkte, zusammen rund 42 Woerter. Unsere Seiten hatten dort nur "Dein Nutzen" mit im Schnitt 6 argumentierenden Punkten - das ist Verkauf, keine Lernzielliste; das Koennen stand erst nach mehr als 400 Woertern.
 * Haken statt Aufzaehlungspunkt, ab 640px zweispaltig, hoechstens 6 Punkte (wie die CHECK-Bedingung in Campus Connect).
-* Braucht Campus Connect v4.63.0 (Feld learning_outcomes, gepflegt je Kurs unter Lehrgaenge bzw. Anfragekurse). Kennt die Datenbank die Spalte noch nicht, entfaellt der Block stillschweigend - Plugin- und App-Release bleiben unabhaengig.
+* Braucht Campus Connect v4.65.0 - bis 25.11.2026 war das Feature dort als v4.63.0 nummeriert (Feld learning_outcomes, gepflegt je Kurs unter Lehrgaenge bzw. Anfragekurse). Kennt die Datenbank die Spalte noch nicht, entfaellt der Block stillschweigend - Plugin- und App-Release bleiben unabhaengig.
 * Leeres Feld = kein Block. Bewusst ohne Rueckfall auf benefit, course_contents oder die Modul-Lernziele: ein automatisch gefuellter Block waere laenger und unpraeziser als keiner. Solange die Felder leer sind, sieht man nichts.
 
 = 1.69.0 =
 * Bewertungen zaehlen jetzt je Kurs, nicht je Durchgang. Sterne und aggregateRating gibt es seit 1.59.0, sie erschienen aber nirgends: sichtbar werden sie ab 5 freigegebenen Bewertungen, und weil in Campus Connect jeder Durchgang ein eigener Kurs ist, zaehlte jeder fuer sich. Am 23.11.2026 lagen 19 Bewertungen auf 17 Kursen, hoechstens 2 je Kurs - und 15 davon auf Durchgaengen, die nicht mehr oeffentlich sind, also dauerhaft unsichtbar.
 * Jetzt werden die Bewertungen aller Durchgaenge eines Kurses zusammengefasst, gruppiert wie die Karten im Katalog. Das wirkt an einer Stelle fuer Karte, Detailseite, aggregateRating und die Sortierung "Beste Bewertung".
 * Schwelle und der Hinweis nach Paragraf 5b Abs. 3 UWG bleiben unveraendert: was im Schema steht, steht auch sichtbar auf der Seite.
-* Braucht Campus Connect v4.62.0 (Funktion fn_public_offering_group_ratings). Faellt der Abruf aus, gelten weiter die Einzelwerte.
+* Braucht Campus Connect v4.64.0 - bis 25.11.2026 als v4.62.0 nummeriert (Funktion fn_public_offering_group_ratings). Faellt der Abruf aus, gelten weiter die Einzelwerte.
 * Ohne sichtbare Folge, solange kein Kurs 5 Bewertungen hat - es ist der Unterschied zwischen "irgendwann erscheinen Sterne" und "es erscheinen nie welche".
 
 = 1.68.0 =

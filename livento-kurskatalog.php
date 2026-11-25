@@ -183,7 +183,7 @@
  *          automatischer Schnitt wuerde genau sie wegnehmen und zwei Seiten gleich
  *          benennen. Das ist Redaktionsarbeit oder ein eigenes Titelfeld.
  * v1.70.0: Block "Das wirst du koennen" auf der Kursdetailseite (braucht Campus Connect
- *          v4.63.0, Feld learning_outcomes). Steht zwischen Zielgruppe und "Dein Nutzen" —
+ *          v4.65.0, Feld learning_outcomes). Steht zwischen Zielgruppe und "Dein Nutzen" —
  *          die erste Antwort auf "was kann ich danach", bevor argumentiert wird.
  *          Anlass war der Aufbauvergleich mit kenbi-akademie.com am 23.11.2026: dort tragen
  *          60 von 62 Seiten an dieser Stelle genau vier knappe Punkte (zusammen rund 42
@@ -197,7 +197,7 @@
  *          unpraeziser als keiner. Kennt die Datenbank die Spalte noch nicht, entfaellt der
  *          Block stillschweigend (Detailseite liest select=*).
  *
- * v1.69.0: Bewertungen je Kurs statt je Durchgang (braucht Campus Connect v4.62.0).
+ * v1.69.0: Bewertungen je Kurs statt je Durchgang (braucht Campus Connect v4.64.0).
  *          Sterne und aggregateRating gibt es seit v1.59.0, sie erschienen aber nirgends: die
  *          Schwelle liegt bei 5 freigegebenen Bewertungen (LIVENTO_CC_RATING_MIN), und weil
  *          jeder Durchgang ein eigenes Programm ist, zaehlt jeder fuer sich. Am 23.11.2026
@@ -2322,7 +2322,7 @@ function livento_cc_jsonld_tariff_product($family, $url) {
 }
 
 /**
- * v1.70.0: Block „Das wirst du koennen" (Campus Connect v4.63.0, learning_outcomes).
+ * v1.70.0: Block „Das wirst du koennen" (Campus Connect v4.65.0, learning_outcomes).
  *
  * Steht auf der Detailseite zwischen Zielgruppe und „Dein Nutzen" — die erste Antwort auf
  * „was kann ich danach", bevor argumentiert wird. Vorlage ist der Aufbau von Kenbi: dort
@@ -2629,7 +2629,7 @@ function livento_cc_jsonld_course($o, $url) {
 }
 
 /**
- * v1.69.0: Bewertungen je Kursgruppe (Campus Connect v4.62.0).
+ * v1.69.0: Bewertungen je Kursgruppe (Campus Connect v4.64.0).
  *
  * Jeder Durchgang ist in Campus Connect ein eigenes Programm, Bewertungen haengen also am
  * Durchgang. Pro Durchgang wird LIVENTO_CC_RATING_MIN praktisch nie erreicht, und sobald ein
@@ -2675,7 +2675,7 @@ function livento_cc_get_group_ratings() {
  *
  * v1.69.0: Hat das Angebot einen Slug und kennt Campus Connect dazu Gruppenwerte, gelten
  * diese — eine Bewertung gilt dem Kurs, nicht dem einzelnen Durchgang. Die Gruppenzahl
- * enthaelt die eigene immer mit (Selbsttest der Migration v4.62.0 prueft das). Aufrufe ohne
+ * enthaelt die eigene immer mit (Selbsttest der Migration v4.64.0 prueft das). Aufrufe ohne
  * Slug (livento_cc_family_rating fuer die Ticketseite) bleiben unberuehrt.
  */
 function livento_cc_rating($o) {
